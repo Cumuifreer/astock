@@ -19,6 +19,17 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "signal_mode": "breakout_or_pullback",
     "breakout_lookback": 20,
     "pullback_tolerance": 0.035,
+    "platform_lookback_days": 20,
+    "platform_max_range": 0.08,
+    "platform_min_bullish_ratio": 0.5,
+    "platform_bull_volume_advantage": 1.1,
+    "platform_breakout_volume_ratio": 2.5,
+    "platform_breakout_pct_chg_min": 5.0,
+    "platform_body_strength_min": 1.0,
+    "platform_ma_trend_enabled": True,
+    "platform_ma_rising_required": True,
+    "macd_filter_enabled": True,
+    "macd_position": "dif_dea_above_zero",
     "max_amplitude": 0.12,
     "rps_window": 20,
     "min_rps20": 70.0,
@@ -59,6 +70,20 @@ SYSTEM_PRESETS = [
             "pullback_tolerance": 0.05,
         },
     },
+    {
+        "id": "system-platform-breakout",
+        "name": "平台突破",
+        "is_default": False,
+        "config": {
+            **DEFAULT_STRATEGY_CONFIG,
+            "signal_mode": "platform_breakout",
+            "min_pct_chg": 5.0,
+            "max_pct_chg": 10.5,
+            "volume_ratio_min": 1.0,
+            "max_ma_distance": None,
+            "max_amplitude": 0.18,
+        },
+    },
 ]
 
 
@@ -66,8 +91,10 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     merged = {**DEFAULT_STRATEGY_CONFIG, **(config or {})}
     merged["ma_short_window"] = max(3, int(merged["ma_short_window"]))
     merged["ma_long_window"] = max(merged["ma_short_window"] + 1, int(merged["ma_long_window"]))
+    merged["platform_lookback_days"] = max(10, int(merged["platform_lookback_days"]))
     merged["candidate_limit"] = max(1, min(500, int(merged["candidate_limit"])))
     merged["sort_by"] = merged.get("sort_by") or "signal_score"
+    merged["macd_position"] = merged.get("macd_position") or "dif_dea_above_zero"
     return merged
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -53,6 +54,128 @@ def compute_rps_scores(
         for code, value in ranked.items():
             scores.setdefault(str(code), {})[f"rps{window}"] = round(float(value), 2)
     return scores
+
+
+def compute_platform_breakout_metrics(group: pd.DataFrame, strategy: Dict[str, Any]) -> Dict[str, Any]:
+    platform_days = max(5, int(strategy.get("platform_lookback_days") or 20))
+    if len(group) < platform_days + 1:
+        return {"platform_ready": False}
+
+    clean = group.copy().sort_values("date")
+    for column in ["open", "high", "low", "close", "prev_close", "volume", "pct_chg"]:
+        clean[column] = pd.to_numeric(clean.get(column), errors="coerce")
+    latest = clean.iloc[-1]
+    platform = clean.iloc[-platform_days - 1 : -1].dropna(subset=["open", "high", "low", "close", "volume"])
+    if len(platform) < platform_days:
+        return {"platform_ready": False}
+
+    platform_high = safe_float(platform["high"].max())
+    platform_low = safe_float(platform["low"].min())
+    platform_range = (
+        (platform_high - platform_low) / platform_low
+        if platform_high is not None and platform_low is not None and platform_low > 0
+        else None
+    )
+    bullish = platform[platform["close"] > platform["open"]]
+    bearish = platform[platform["close"] < platform["open"]]
+    bullish_ratio = len(bullish) / len(platform) if len(platform) else None
+    bull_avg_volume = safe_float(bullish["volume"].mean()) if not bullish.empty else None
+    bear_avg_volume = safe_float(bearish["volume"].mean()) if not bearish.empty else None
+    if bull_avg_volume is not None and (bear_avg_volume is None or bear_avg_volume <= 0):
+        bull_volume_ratio = float("inf")
+    elif bull_avg_volume is not None and bear_avg_volume is not None:
+        bull_volume_ratio = bull_avg_volume / bear_avg_volume
+    else:
+        bull_volume_ratio = None
+
+    latest_volume = safe_float(latest.get("volume"))
+    platform_avg_volume = safe_float(platform["volume"].mean())
+    breakout_volume_ratio = (
+        latest_volume / platform_avg_volume
+        if latest_volume is not None and platform_avg_volume is not None and platform_avg_volume > 0
+        else None
+    )
+    open_value = safe_float(latest.get("open"))
+    high_value = safe_float(latest.get("high"))
+    low_value = safe_float(latest.get("low"))
+    close_value = safe_float(latest.get("close"))
+    pct_chg = safe_float(latest.get("pct_chg"))
+    breakout_bullish = bool(close_value is not None and open_value is not None and close_value > open_value)
+    body_strength = None
+    if breakout_bullish and high_value is not None and low_value is not None:
+        body = close_value - open_value
+        shadows = max(0.0, high_value - close_value) + max(0.0, open_value - low_value)
+        body_strength = float("inf") if shadows == 0 else body / shadows
+
+    ma_fast, ma_mid, ma_slow = _platform_ma_values(clean["close"])
+    prev_fast, prev_mid, prev_slow = _platform_ma_values(clean["close"].iloc[:-1])
+    ma_bullish = _ordered_positive(ma_fast, ma_mid, ma_slow)
+    ma_rising = (
+        ma_bullish
+        and prev_fast is not None
+        and prev_mid is not None
+        and prev_slow is not None
+        and ma_fast > prev_fast
+        and ma_mid > prev_mid
+        and ma_slow > prev_slow
+    )
+    macd_dif, macd_dea = _macd_values(clean["close"])
+
+    return {
+        "platform_ready": True,
+        "platform_range": _round_optional(platform_range, 6),
+        "platform_bullish_ratio": _round_optional(bullish_ratio, 6),
+        "platform_bull_volume_ratio": _round_optional(bull_volume_ratio, 6),
+        "platform_breakout_volume_ratio": _round_optional(breakout_volume_ratio, 6),
+        "platform_breakout_bullish": breakout_bullish,
+        "platform_breakout_pct_chg": pct_chg,
+        "platform_body_strength": _round_optional(body_strength, 6),
+        "platform_ma_fast": _round_optional(ma_fast, 6),
+        "platform_ma_mid": _round_optional(ma_mid, 6),
+        "platform_ma_slow": _round_optional(ma_slow, 6),
+        "platform_ma_bullish": ma_bullish,
+        "platform_ma_rising": bool(ma_rising),
+        "macd_dif": _round_optional(macd_dif, 6),
+        "macd_dea": _round_optional(macd_dea, 6),
+    }
+
+
+def _platform_ma_values(closes: pd.Series) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    clean = pd.to_numeric(closes, errors="coerce").dropna()
+    if len(clean) < 20:
+        return None, None, None
+    return (
+        float(clean.tail(5).mean()),
+        float(clean.tail(10).mean()),
+        float(clean.tail(20).mean()),
+    )
+
+
+def _ordered_positive(
+    fast: Optional[float],
+    mid: Optional[float],
+    slow: Optional[float],
+) -> bool:
+    return fast is not None and mid is not None and slow is not None and fast > mid > slow
+
+
+def _macd_values(closes: pd.Series) -> Tuple[Optional[float], Optional[float]]:
+    clean = pd.to_numeric(closes, errors="coerce").dropna()
+    if len(clean) < 26:
+        return None, None
+    ema12 = clean.ewm(span=12, adjust=False).mean()
+    ema26 = clean.ewm(span=26, adjust=False).mean()
+    dif = ema12 - ema26
+    dea = dif.ewm(span=9, adjust=False).mean()
+    return float(dif.iloc[-1]), float(dea.iloc[-1])
+
+
+def _round_optional(value: Optional[float], digits: int) -> Optional[float]:
+    if value is None:
+        return None
+    if not math.isfinite(float(value)):
+        return 999.0
+    return round(float(value), digits)
 
 
 def apply_strategy_filters(
@@ -150,6 +273,8 @@ def apply_strategy_filters(
         "均线偏离",
         funnel,
     )
+    if strategy.get("signal_mode") == "platform_breakout":
+        working = _apply_platform_breakout_filters(working, strategy, funnel)
 
     if working.empty:
         zero_reason = _zero_reason(funnel)
@@ -213,7 +338,115 @@ def _numeric_filter(
     return filtered
 
 
+def _apply_platform_breakout_filters(
+    frame: pd.DataFrame,
+    strategy: Dict[str, Any],
+    funnel: List[Dict[str, Any]],
+) -> pd.DataFrame:
+    working = _bool_filter(frame, "platform_ready", "平台数据", funnel, "需要足够历史 K 线")
+    working = _numeric_filter(
+        working,
+        "platform_range",
+        None,
+        strategy.get("platform_max_range"),
+        "平台振幅",
+        funnel,
+    )
+    working = _numeric_filter(
+        working,
+        "platform_bullish_ratio",
+        strategy.get("platform_min_bullish_ratio"),
+        None,
+        "阳线占比",
+        funnel,
+    )
+    working = _numeric_filter(
+        working,
+        "platform_bull_volume_ratio",
+        strategy.get("platform_bull_volume_advantage"),
+        None,
+        "阳线量能",
+        funnel,
+    )
+    working = _numeric_filter(
+        working,
+        "platform_breakout_volume_ratio",
+        strategy.get("platform_breakout_volume_ratio"),
+        None,
+        "突破量比",
+        funnel,
+    )
+    working = _numeric_filter(
+        working,
+        "platform_breakout_pct_chg",
+        strategy.get("platform_breakout_pct_chg_min"),
+        None,
+        "突破涨幅",
+        funnel,
+    )
+    working = _bool_filter(working, "platform_breakout_bullish", "突破阳线", funnel, "突破当日为红柱")
+    working = _numeric_filter(
+        working,
+        "platform_body_strength",
+        strategy.get("platform_body_strength_min"),
+        None,
+        "实体强度",
+        funnel,
+    )
+    if strategy.get("platform_ma_trend_enabled"):
+        working = _bool_filter(working, "platform_ma_bullish", "MA5/10/20 多头", funnel, "MA5 > MA10 > MA20")
+    if strategy.get("platform_ma_rising_required"):
+        working = _bool_filter(working, "platform_ma_rising", "均线上升", funnel, "MA5/10/20 均向上")
+    if strategy.get("macd_filter_enabled"):
+        before = len(working)
+        dif = pd.to_numeric(working.get("macd_dif"), errors="coerce")
+        dea = pd.to_numeric(working.get("macd_dea"), errors="coerce")
+        if strategy.get("macd_position") == "dif_dea_above_zero":
+            mask = (dif > 0) & (dea > 0)
+            note = "DIF 与 DEA 在 0 轴上方"
+        else:
+            mask = dif > 0
+            note = "DIF 在 0 轴上方"
+        working = working[mask]
+        funnel.append(
+            {
+                "step_name": "MACD 位置",
+                "before_count": int(before),
+                "after_count": int(len(working)),
+                "removed_count": int(before - len(working)),
+                "note": note,
+            }
+        )
+    return working
+
+
+def _bool_filter(
+    frame: pd.DataFrame,
+    column: str,
+    step_name: str,
+    funnel: List[Dict[str, Any]],
+    note: str = "",
+) -> pd.DataFrame:
+    before = len(frame)
+    if column not in frame:
+        filtered = frame.iloc[0:0]
+    else:
+        filtered = frame[frame[column] == True]
+    funnel.append(
+        {
+            "step_name": step_name,
+            "before_count": int(before),
+            "after_count": int(len(filtered)),
+            "removed_count": int(before - len(filtered)),
+            "note": note,
+        }
+    )
+    return filtered
+
+
 def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
+    if strategy.get("signal_mode") == "platform_breakout":
+        return "平台突破"
     distance = safe_float(row.get("ma_distance"))
     volume_ratio = safe_float(row.get("volume_ratio")) or 0
     if strategy.get("signal_mode") == "pullback":
@@ -227,6 +460,14 @@ def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
 
 def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
     rps = safe_float(row.get(f"rps{int(strategy.get('rps_window') or 20)}")) or safe_float(row.get("rps20")) or 0
+    if strategy.get("signal_mode") == "platform_breakout":
+        breakout_volume = min((safe_float(row.get("platform_breakout_volume_ratio")) or 0) * 7, 24)
+        bull_volume = min((safe_float(row.get("platform_bull_volume_ratio")) or 0) * 7, 14)
+        pct_bonus = min(max(safe_float(row.get("platform_breakout_pct_chg")) or 0, 0) * 1.2, 14)
+        trend_bonus = 10 if row.get("platform_ma_bullish") else 0
+        macd_bonus = 6 if (safe_float(row.get("macd_dif")) or 0) > 0 else 0
+        range_penalty = min((safe_float(row.get("platform_range")) or 0) * 80, 8)
+        return round(float(rps) * 0.45 + breakout_volume + bull_volume + pct_bonus + trend_bonus + macd_bonus - range_penalty, 2)
     volume_ratio = min((safe_float(row.get("volume_ratio")) or 0) * 8, 20)
     trend_bonus = 12 if (safe_float(row.get("ma_short")) or 0) > (safe_float(row.get("ma_long")) or 0) else 0
     turnover = min((safe_float(row.get("turnover_rate")) or 0) * 1.5, 12)
@@ -254,6 +495,21 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
         reasons.append(f"换手率 {turnover:.2f}%")
     if safe_float(row.get("float_market_value")) is None:
         reasons.append("流通市值缺失，按策略降级")
+    if strategy.get("signal_mode") == "platform_breakout":
+        platform_range = safe_float(row.get("platform_range"))
+        if platform_range is not None:
+            reasons.append(f"平台振幅 {platform_range * 100:.2f}%")
+        breakout_volume = safe_float(row.get("platform_breakout_volume_ratio"))
+        if breakout_volume is not None:
+            reasons.append(f"突破量比 {breakout_volume:.2f}x")
+        body_strength = safe_float(row.get("platform_body_strength"))
+        if body_strength is not None:
+            reasons.append(f"实体强度 {body_strength:.2f}")
+        if row.get("platform_ma_bullish"):
+            reasons.append("MA5/10/20 多头")
+        macd_dif = safe_float(row.get("macd_dif"))
+        if macd_dif is not None and macd_dif > 0:
+            reasons.append("MACD 位于 0 轴上方")
     return reasons
 
 
@@ -382,6 +638,7 @@ class AnalysisService:
                 safe_float((float_record or {}).get("float_market_value"))
                 or safe_float((snapshot or {}).get("float_market_value"))
             )
+            platform_metrics = compute_platform_breakout_metrics(group, strategy)
             output.append(
                 {
                     "code": code,
@@ -412,6 +669,7 @@ class AnalysisService:
                         "snapshot": (snapshot or {}).get("source"),
                         "float_market_value": (float_record or {}).get("source"),
                     },
+                    **platform_metrics,
                 }
             )
         return pd.DataFrame(output)

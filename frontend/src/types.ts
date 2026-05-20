@@ -54,6 +54,17 @@ export interface StrategyConfig {
   signal_mode: string;
   breakout_lookback: number;
   pullback_tolerance: number;
+  platform_lookback_days: number;
+  platform_max_range: number;
+  platform_min_bullish_ratio: number;
+  platform_bull_volume_advantage: number;
+  platform_breakout_volume_ratio: number;
+  platform_breakout_pct_chg_min: number;
+  platform_body_strength_min: number;
+  platform_ma_trend_enabled: boolean;
+  platform_ma_rising_required: boolean;
+  macd_filter_enabled: boolean;
+  macd_position: string;
   max_amplitude: number;
   rps_window: number;
   min_rps20: number | null;

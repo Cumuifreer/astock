@@ -482,7 +482,34 @@ function StrategyPanel(props: {
           <NumberField label="最大流通市值" value={props.strategy.max_float_market_value} onChange={(value) => update('max_float_market_value', value)} allowBlank />
           <NumberField label="MA 短期" value={props.strategy.ma_short_window} onChange={(value) => update('ma_short_window', value)} />
           <NumberField label="MA 长期" value={props.strategy.ma_long_window} onChange={(value) => update('ma_long_window', value)} />
-          <SelectField label="信号模式" value={props.strategy.signal_mode} onChange={(value) => update('signal_mode', value)} options={[['breakout_or_pullback', '突破或回踩'], ['breakout', '右侧突破'], ['pullback', '左侧回踩']]} />
+          <SelectField label="信号模式" value={props.strategy.signal_mode} onChange={(value) => update('signal_mode', value)} options={[['breakout_or_pullback', '突破或回踩'], ['breakout', '右侧突破'], ['pullback', '左侧回踩'], ['platform_breakout', '平台突破']]} />
+          {props.strategy.signal_mode === 'platform_breakout' && (
+            <>
+              <div className="form-section wide">
+                <span>平台突破</span>
+              </div>
+              <NumberField label="平台观察天数" value={props.strategy.platform_lookback_days} onChange={(value) => update('platform_lookback_days', value)} />
+              <NumberField label="平台最大振幅" value={props.strategy.platform_max_range} onChange={(value) => update('platform_max_range', value)} />
+              <NumberField label="最小阳线占比" value={props.strategy.platform_min_bullish_ratio} onChange={(value) => update('platform_min_bullish_ratio', value)} />
+              <NumberField label="阳线均量优势" value={props.strategy.platform_bull_volume_advantage} onChange={(value) => update('platform_bull_volume_advantage', value)} />
+              <NumberField label="突破量比" value={props.strategy.platform_breakout_volume_ratio} onChange={(value) => update('platform_breakout_volume_ratio', value)} />
+              <NumberField label="突破涨幅下限" value={props.strategy.platform_breakout_pct_chg_min} onChange={(value) => update('platform_breakout_pct_chg_min', value)} />
+              <NumberField label="突破实体强度" value={props.strategy.platform_body_strength_min} onChange={(value) => update('platform_body_strength_min', value)} />
+              <SelectField label="MACD 位置" value={props.strategy.macd_position} onChange={(value) => update('macd_position', value)} options={[['dif_above_zero', 'DIF 在 0 轴上方'], ['dif_dea_above_zero', 'DIF 与 DEA 均在 0 轴上方']]} />
+              <label className="toggle">
+                <input type="checkbox" checked={props.strategy.platform_ma_trend_enabled} onChange={(event) => update('platform_ma_trend_enabled', event.target.checked)} />
+                <span>启用 MA5/10/20 多头排列</span>
+              </label>
+              <label className="toggle">
+                <input type="checkbox" checked={props.strategy.platform_ma_rising_required} onChange={(event) => update('platform_ma_rising_required', event.target.checked)} />
+                <span>要求均线上升</span>
+              </label>
+              <label className="toggle">
+                <input type="checkbox" checked={props.strategy.macd_filter_enabled} onChange={(event) => update('macd_filter_enabled', event.target.checked)} />
+                <span>启用 MACD 过滤</span>
+              </label>
+            </>
+          )}
           <NumberField label="振幅上限" value={props.strategy.max_amplitude} onChange={(value) => update('max_amplitude', value)} />
           <SelectField label="RPS 周期" value={String(props.strategy.rps_window)} onChange={(value) => update('rps_window', Number(value))} options={[['20', 'RPS20'], ['60', 'RPS60'], ['120', 'RPS120']]} />
           <NumberField label="RPS20 下限" value={props.strategy.min_rps20} onChange={(value) => update('min_rps20', value)} allowBlank />
