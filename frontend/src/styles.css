@@ -813,17 +813,16 @@ tr:hover td {
 
 .diagnostic-head,
 .diagnostic-summary,
-.funnel-layout,
-.diagnostic-step,
-.step-track small,
-.bottleneck-rank div {
+.funnel-row,
+.funnel-pass,
+.funnel-pass i {
   display: flex;
-  gap: 12px;
 }
 
 .diagnostic-head {
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
 }
 
 .diagnostic-head .panel-title {
@@ -833,134 +832,111 @@ tr:hover td {
 .diagnostic-summary {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 10px;
 }
 
 .diagnostic-summary > div {
-  border: 1px solid rgba(59, 240, 193, 0.16);
-  background: rgba(59, 240, 193, 0.035);
-  padding: 12px;
+  border-top: 1px solid rgba(59, 240, 193, 0.16);
+  padding: 10px 0 0;
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .diagnostic-summary span,
 .diagnostic-summary small,
-.step-label span,
-.step-track small,
-.bottleneck-rank span,
-.bottleneck-rank small {
+.funnel-name span,
+.funnel-table-head,
+.funnel-row em {
   color: var(--muted);
   font-size: 12px;
 }
 
 .diagnostic-summary strong {
-  font-size: 24px;
+  font-size: 20px;
   font-family: "DIN Condensed", "Aptos Display", sans-serif;
 }
 
-.funnel-layout {
-  align-items: start;
+.funnel-table {
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  background: rgba(255, 255, 255, 0.014);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 250px;
 }
 
-.funnel-groups {
+.funnel-table-head,
+.funnel-row {
   display: grid;
-  gap: 14px;
-}
-
-.funnel-group {
-  display: grid;
-  gap: 8px;
-}
-
-.funnel-group h3,
-.bottleneck-rank h3 {
-  color: var(--soft);
-  font-size: 13px;
-  margin: 0;
-}
-
-.diagnostic-step {
+  grid-template-columns: minmax(180px, 1.2fr) minmax(190px, 1fr) 90px 90px 88px;
   align-items: center;
-  grid-template-columns: 190px minmax(0, 1fr) 72px;
-  display: grid;
-  padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.018);
+  gap: 12px;
 }
 
-.diagnostic-step.major {
-  border-color: rgba(255, 189, 90, 0.32);
-  background: rgba(255, 189, 90, 0.055);
+.funnel-table-head {
+  min-height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.diagnostic-step.tight {
-  box-shadow: inset 3px 0 0 rgba(255, 92, 122, 0.62);
+.funnel-group-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  padding: 12px 12px 5px;
 }
 
-.step-label {
+.funnel-row {
+  min-height: 48px;
+  padding: 7px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.funnel-row.bottleneck {
+  background: rgba(255, 189, 90, 0.035);
+}
+
+.funnel-name {
   display: grid;
   gap: 3px;
   min-width: 0;
 }
 
-.step-label strong {
+.funnel-name strong {
   color: var(--text);
 }
 
-.step-track {
-  display: grid;
-  gap: 6px;
+.funnel-pass {
+  align-items: center;
+  gap: 9px;
   min-width: 0;
 }
 
-.step-track > div {
-  height: 10px;
+.funnel-pass span {
+  color: var(--soft);
+  font-size: 12px;
+  width: 92px;
+}
+
+.funnel-pass i {
+  flex: 1;
+  min-width: 48px;
+  height: 5px;
   border: 1px solid var(--line);
   background: #071012;
   overflow: hidden;
 }
 
-.step-track i {
+.funnel-pass b {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--teal), var(--lime));
+  background: var(--teal);
 }
 
-.step-track small {
-  align-items: center;
-  justify-content: space-between;
+.funnel-loss {
+  color: var(--soft);
 }
 
-.step-track small b,
-.step-loss,
-.bottleneck-rank b {
-  color: var(--text);
-}
-
-.step-loss {
-  text-align: right;
-}
-
-.bottleneck-rank {
-  border: 1px solid rgba(255, 189, 90, 0.18);
-  background: rgba(255, 189, 90, 0.035);
-  padding: 12px;
-  display: grid;
-  gap: 10px;
-}
-
-.bottleneck-rank div {
-  align-items: center;
-  justify-content: space-between;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  padding-top: 9px;
-}
-
-.bottleneck-rank strong {
-  flex: 1;
-  min-width: 0;
+.funnel-row.bottleneck .funnel-loss,
+.funnel-row.bottleneck em {
+  color: var(--amber);
 }
 
 .cap-grid {
@@ -1070,8 +1046,7 @@ a {
     grid-template-columns: 1fr 1fr;
   }
 
-  .diagnostic-summary,
-  .funnel-layout {
+  .diagnostic-summary {
     grid-template-columns: 1fr;
   }
 }
@@ -1113,17 +1088,23 @@ a {
   }
 
   .diagnostic-head,
-  .diagnostic-step,
   .editor-action-strip {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .diagnostic-step {
-    grid-template-columns: 1fr;
+  .funnel-table-head {
+    display: none;
   }
 
-  .step-loss {
-    text-align: left;
+  .funnel-row {
+    grid-template-columns: 1fr;
+    gap: 7px;
+    align-items: start;
+  }
+
+  .funnel-pass span {
+    width: auto;
+    min-width: 82px;
   }
 }

@@ -709,8 +709,8 @@ function Results({
   if (compact) return candidatePanel;
   return (
     <div className="results-stack">
-      <Funnel funnel={funnel} candidateCount={candidates.length} zeroReason={zeroReason} />
       {candidatePanel}
+      <Funnel funnel={funnel} candidateCount={candidates.length} zeroReason={zeroReason} />
     </div>
   );
 }
@@ -841,13 +841,13 @@ function Funnel({
     .filter((step) => step.removed_count > 0)
     .sort((a, b) => b.removed_count - a.removed_count)
     .slice(0, 3);
-  const largestRemoval = Math.max(...funnel.map((step) => step.removed_count), 0);
+  const bottleneckNames = new Set(bottlenecks.map((step) => step.step_name));
   const groups = groupFunnelSteps(funnel);
   return (
     <section className="panel analysis-diagnostic">
       <div className="diagnostic-head">
-        <PanelTitle icon={<BarChart3 size={18} />} title="本次分析诊断" />
-        <span className={candidateCount > 0 ? 'pill good' : 'pill muted'}>{formatInt(candidateCount)} 只候选</span>
+        <PanelTitle icon={<BarChart3 size={18} />} title="分析摘要" />
+        <span className={candidateCount > 0 ? 'pill good' : 'pill muted'}>{formatInt(firstCount)} → {formatInt(finalCount)}</span>
       </div>
       <div className="diagnostic-summary">
         <div>
@@ -861,48 +861,38 @@ function Funnel({
           <small>{bottlenecks.length ? '按淘汰数量排序' : '各层过滤较平缓'}</small>
         </div>
       </div>
-      <div className="funnel-layout">
-        <div className="funnel-groups">
-          {groups.map((group) => (
-            <div className="funnel-group" key={group.name}>
-              <h3>{group.name}</h3>
-              {group.steps.map((step) => {
-                const retention = step.before_count ? step.after_count / step.before_count : 1;
-                const isMajor = step.removed_count > 0 && step.removed_count === largestRemoval;
-                const isTight = retention < 0.35 && step.before_count > 0;
-                return (
-                  <div key={step.step_name} className={`diagnostic-step ${isMajor ? 'major' : ''} ${isTight ? 'tight' : ''}`}>
-                    <div className="step-label">
-                      <strong>{step.step_name}</strong>
-                      {step.note && <span>{step.note}</span>}
-                    </div>
-                    <div className="step-track">
-                      <div>
-                        <i style={{ width: `${Math.max(3, Math.min(100, retention * 100))}%` }} />
-                      </div>
-                      <small>
-                        {formatInt(step.after_count)} / {formatInt(step.before_count)}
-                        <b>{formatRetainRate(retention)}</b>
-                      </small>
-                    </div>
-                    <b className="step-loss">{step.removed_count ? `-${formatInt(step.removed_count)}` : '0'}</b>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+      <div className="funnel-table" role="table" aria-label="筛选路径">
+        <div className="funnel-table-head" role="row">
+          <span>条件</span>
+          <span>通过</span>
+          <span>淘汰</span>
+          <span>保留率</span>
+          <span />
         </div>
-        <aside className="bottleneck-rank">
-          <h3>瓶颈排行</h3>
-          {bottlenecks.length === 0 && <span>暂无明显瓶颈</span>}
-          {bottlenecks.map((step, index) => (
-            <div key={step.step_name}>
-              <small>#{index + 1}</small>
-              <strong>{step.step_name}</strong>
-              <b>{formatInt(step.removed_count)}</b>
-            </div>
-          ))}
-        </aside>
+        {groups.map((group) => (
+          <div className="funnel-section" key={group.name}>
+            <div className="funnel-group-label">{group.name}</div>
+            {group.steps.map((step) => {
+              const retention = step.before_count ? step.after_count / step.before_count : 1;
+              const isBottleneck = bottleneckNames.has(step.step_name);
+              return (
+                <div key={step.step_name} className={isBottleneck ? 'funnel-row bottleneck' : 'funnel-row'} role="row">
+                  <div className="funnel-name">
+                    <strong>{step.step_name}</strong>
+                    {step.note && <span>{step.note}</span>}
+                  </div>
+                  <div className="funnel-pass">
+                    <span>{formatInt(step.after_count)} / {formatInt(step.before_count)}</span>
+                    <i><b style={{ width: `${Math.max(3, Math.min(100, retention * 100))}%` }} /></i>
+                  </div>
+                  <b className="funnel-loss">{step.removed_count ? `-${formatInt(step.removed_count)}` : '-'}</b>
+                  <span>{formatRetainRate(retention)}</span>
+                  <em>{isBottleneck ? '主要卡点' : ''}</em>
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
     </section>
   );
