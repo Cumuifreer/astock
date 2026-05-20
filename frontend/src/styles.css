@@ -459,6 +459,64 @@ h1 {
   grid-column: span 2;
 }
 
+.strategy-readout {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(59, 240, 193, 0.2);
+  background: rgba(59, 240, 193, 0.055);
+  color: var(--soft);
+}
+
+.strategy-readout span {
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.strategy-readout b {
+  font-weight: 650;
+}
+
+.mode-tabs {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.mode-tabs button {
+  display: grid;
+  justify-items: start;
+  min-height: 56px;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.mode-tabs button.active {
+  color: var(--text);
+  border-color: rgba(59, 240, 193, 0.54);
+  background: rgba(59, 240, 193, 0.1);
+}
+
+.mode-tabs small,
+.field-hint,
+.field-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.field-hint.danger {
+  color: var(--red);
+}
+
+.field-note {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
 .form-section {
   min-height: 40px;
   display: flex;
@@ -764,6 +822,10 @@ a {
   .form-grid {
     grid-template-columns: 1fr 1fr;
   }
+
+  .mode-tabs {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -786,8 +848,20 @@ a {
   }
 
   .field.wide,
+  .form-section.wide,
+  .mode-tabs,
+  .field-note,
   .wide-panel {
     grid-column: auto;
+  }
+
+  .mode-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .strategy-readout {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .funnel-step {

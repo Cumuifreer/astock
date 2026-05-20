@@ -44,6 +44,13 @@ const navItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: 'status', label: '运行状态', icon: <Workflow size={17} /> },
 ];
 
+const signalModes: Array<{ id: string; label: string; sub: string }> = [
+  { id: 'breakout_or_pullback', label: '突破或回踩', sub: '双形态' },
+  { id: 'breakout', label: '右侧突破', sub: '放量上攻' },
+  { id: 'pullback', label: '左侧回踩', sub: '趋势低吸' },
+  { id: 'platform_breakout', label: '平台突破', sub: '压缩放量' },
+];
+
 function App() {
   const [tab, setTab] = useState<Tab>('overview');
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
@@ -425,10 +432,11 @@ function StrategyPanel(props: {
   const update = (key: keyof StrategyConfig, value: unknown) => {
     props.setStrategy({ ...props.strategy, [key]: value });
   };
+  const activeMode = signalModes.find((mode) => mode.id === props.strategy.signal_mode) || signalModes[0];
   return (
     <div className="strategy-layout">
       <section className="panel preset-panel">
-        <PanelTitle icon={<Settings2 size={18} />} title="预设" />
+        <PanelTitle icon={<Settings2 size={18} />} title="策略库" />
         <div className="preset-list">
           {props.presets.map((preset) => (
             <button
@@ -442,19 +450,19 @@ function StrategyPanel(props: {
           ))}
         </div>
         <div className="button-grid">
-          <button className="ghost" onClick={props.duplicate}>复制</button>
+          <button className="ghost" onClick={props.duplicate}>复制为新策略</button>
           <button className="ghost" onClick={props.setDefault}>设默认</button>
           <button className="ghost danger" disabled={Boolean(selected?.is_system)} onClick={props.remove}>
             <Trash2 size={15} />
-            删除
+            删除自定义
           </button>
-          <button className="ghost" onClick={props.reset}>恢复</button>
+          <button className="ghost" onClick={props.reset}>恢复模板</button>
         </div>
       </section>
 
       <section className="panel editor-panel">
         <div className="table-toolbar">
-          <PanelTitle icon={<SlidersHorizontal size={18} />} title="指标配置" />
+          <PanelTitle icon={<SlidersHorizontal size={18} />} title="策略编辑" />
           <div className="quick-actions">
             <button className="ghost" onClick={() => props.saveStrategy(false)}>
               <Save size={16} />
@@ -470,23 +478,49 @@ function StrategyPanel(props: {
             </button>
           </div>
         </div>
+        <div className="strategy-readout">
+          <span>{activeMode.label}</span>
+          <b>{strategySummary(props.strategy)}</b>
+        </div>
 
         <div className="form-grid">
           <label className="field wide">
             <span>预设名称</span>
             <input value={props.strategyName} onChange={(event) => props.setStrategyName(event.target.value)} />
           </label>
+          <div className="mode-tabs wide">
+            {signalModes.map((mode) => (
+              <button
+                key={mode.id}
+                className={mode.id === props.strategy.signal_mode ? 'active' : ''}
+                onClick={() => update('signal_mode', mode.id)}
+                type="button"
+              >
+                <strong>{mode.label}</strong>
+                <small>{mode.sub}</small>
+              </button>
+            ))}
+          </div>
+          <div className="form-section wide">
+            <span>基础股票池</span>
+          </div>
           <NumberField label="最低股价" value={props.strategy.min_price} onChange={(value) => update('min_price', value)} />
-          <NumberField label="成交额门槛" value={props.strategy.min_amount} onChange={(value) => update('min_amount', value)} />
-          <NumberField label="最小流通市值" value={props.strategy.min_float_market_value} onChange={(value) => update('min_float_market_value', value)} allowBlank />
-          <NumberField label="最大流通市值" value={props.strategy.max_float_market_value} onChange={(value) => update('max_float_market_value', value)} allowBlank />
-          <NumberField label="MA 短期" value={props.strategy.ma_short_window} onChange={(value) => update('ma_short_window', value)} />
-          <NumberField label="MA 长期" value={props.strategy.ma_long_window} onChange={(value) => update('ma_long_window', value)} />
-          <SelectField label="信号模式" value={props.strategy.signal_mode} onChange={(value) => update('signal_mode', value)} options={[['breakout_or_pullback', '突破或回踩'], ['breakout', '右侧突破'], ['pullback', '左侧回踩'], ['platform_breakout', '平台突破']]} />
+          <MoneyField label="成交额门槛" value={props.strategy.min_amount} onChange={(value) => update('min_amount', value)} />
+          <MoneyField label="最小流通市值" value={props.strategy.min_float_market_value} onChange={(value) => update('min_float_market_value', value)} allowBlank />
+          <MoneyField label="最大流通市值" value={props.strategy.max_float_market_value} onChange={(value) => update('max_float_market_value', value)} allowBlank />
+          <label className="toggle">
+            <input type="checkbox" checked={props.strategy.include_bj} onChange={(event) => update('include_bj', event.target.checked)} />
+            <span>包含北交所</span>
+          </label>
+          <label className="toggle">
+            <input type="checkbox" checked={props.strategy.exclude_star_board} onChange={(event) => update('exclude_star_board', event.target.checked)} />
+            <span>排除科创板</span>
+          </label>
+
           {props.strategy.signal_mode === 'platform_breakout' && (
             <>
               <div className="form-section wide">
-                <span>平台突破</span>
+                <span>平台突破形态</span>
               </div>
               <NumberField label="平台观察天数" value={props.strategy.platform_lookback_days} onChange={(value) => update('platform_lookback_days', value)} />
               <NumberField label="平台最大振幅" value={props.strategy.platform_max_range} onChange={(value) => update('platform_max_range', value)} />
@@ -510,11 +544,21 @@ function StrategyPanel(props: {
               </label>
             </>
           )}
-          <NumberField label="振幅上限" value={props.strategy.max_amplitude} onChange={(value) => update('max_amplitude', value)} />
+
+          <div className="form-section wide">
+            <span>强弱与趋势</span>
+          </div>
+          <NumberField label="MA 短期" value={props.strategy.ma_short_window} onChange={(value) => update('ma_short_window', value)} />
+          <NumberField label="MA 长期" value={props.strategy.ma_long_window} onChange={(value) => update('ma_long_window', value)} />
           <SelectField label="RPS 周期" value={String(props.strategy.rps_window)} onChange={(value) => update('rps_window', Number(value))} options={[['20', 'RPS20'], ['60', 'RPS60'], ['120', 'RPS120']]} />
           <NumberField label="RPS20 下限" value={props.strategy.min_rps20} onChange={(value) => update('min_rps20', value)} allowBlank />
           <NumberField label="RPS60 下限" value={props.strategy.min_rps60} onChange={(value) => update('min_rps60', value)} allowBlank />
           <NumberField label="RPS120 下限" value={props.strategy.min_rps120} onChange={(value) => update('min_rps120', value)} allowBlank />
+
+          <div className="form-section wide">
+            <span>量价触发</span>
+          </div>
+          <NumberField label="振幅上限" value={props.strategy.max_amplitude} onChange={(value) => update('max_amplitude', value)} />
           <NumberField label="最小换手率" value={props.strategy.min_turnover} onChange={(value) => update('min_turnover', value)} allowBlank />
           <NumberField label="最大换手率" value={props.strategy.max_turnover} onChange={(value) => update('max_turnover', value)} allowBlank />
           <NumberField label="最小涨跌幅" value={props.strategy.min_pct_chg} onChange={(value) => update('min_pct_chg', value)} allowBlank />
@@ -523,16 +567,15 @@ function StrategyPanel(props: {
           <NumberField label="最大均线偏离" value={props.strategy.max_ma_distance} onChange={(value) => update('max_ma_distance', value)} allowBlank />
           <NumberField label="候选上限" value={props.strategy.candidate_limit} onChange={(value) => update('candidate_limit', value)} />
           <SelectField label="排序" value={props.strategy.sort_by} onChange={(value) => update('sort_by', value)} options={[['signal_score', '信号分数'], ['rps20', 'RPS20'], ['amount', '成交额'], ['pct_chg', '涨跌幅']]} />
-          <SelectField label="缺失换手率" value={props.strategy.missing_turnover_policy} onChange={(value) => update('missing_turnover_policy', value)} options={[['allow', '允许降级'], ['skip', '直接跳过']]} />
-          <SelectField label="缺失市值" value={props.strategy.missing_float_market_value_policy} onChange={(value) => update('missing_float_market_value_policy', value)} options={[['allow', '允许降级'], ['skip', '直接跳过']]} />
-          <label className="toggle">
-            <input type="checkbox" checked={props.strategy.include_bj} onChange={(event) => update('include_bj', event.target.checked)} />
-            <span>包含北交所</span>
-          </label>
-          <label className="toggle">
-            <input type="checkbox" checked={props.strategy.exclude_star_board} onChange={(event) => update('exclude_star_board', event.target.checked)} />
-            <span>排除科创板</span>
-          </label>
+
+          <div className="form-section wide">
+            <span>缺失数据处理</span>
+          </div>
+          <SelectField label="换手率缺失" value={props.strategy.missing_turnover_policy} onChange={(value) => update('missing_turnover_policy', value)} options={[['allow', '保留缺失股票'], ['skip', '跳过缺失股票']]} />
+          <SelectField label="流通市值缺失" value={props.strategy.missing_float_market_value_policy} onChange={(value) => update('missing_float_market_value_policy', value)} options={[['allow', '保留缺失股票'], ['skip', '跳过缺失股票']]} />
+          <div className="field-note wide">
+            空值表示不启用该过滤。保留缺失股票表示字段缺失时不因这一项淘汰；跳过缺失股票表示字段缺失时直接排除该股票。
+          </div>
         </div>
       </section>
     </div>
@@ -794,6 +837,63 @@ function Progress({ value }: { value: number }) {
   );
 }
 
+function MoneyField({
+  label,
+  value,
+  onChange,
+  allowBlank = false,
+}: {
+  label: string;
+  value: number | null;
+  onChange: (value: number | null) => void;
+  allowBlank?: boolean;
+}) {
+  const [draft, setDraft] = useState(value == null ? '' : String(value));
+  const [editing, setEditing] = useState(false);
+  const parsedDraft = parseMoneyInput(draft);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(value == null ? '' : String(value));
+    }
+  }, [value, editing]);
+
+  const changeValue = (raw: string) => {
+    setDraft(raw);
+    if (raw.trim() === '') {
+      onChange(allowBlank ? null : 0);
+      return;
+    }
+    const parsed = parseMoneyInput(raw);
+    if (parsed !== null) {
+      onChange(parsed);
+    }
+  };
+
+  const hintValue = editing && parsedDraft !== null ? parsedDraft : value;
+  const hint = draft.trim() && editing && parsedDraft === null
+    ? '无法识别'
+    : moneyInputHint(hintValue, allowBlank);
+
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input
+        inputMode="decimal"
+        value={editing ? draft : value ?? ''}
+        onBlur={() => {
+          setEditing(false);
+          setDraft(value == null ? '' : String(value));
+        }}
+        onChange={(event) => changeValue(event.target.value)}
+        onFocus={() => setEditing(true)}
+        placeholder={allowBlank ? '不启用' : undefined}
+      />
+      <small className={hint === '无法识别' ? 'field-hint danger' : 'field-hint'}>{hint}</small>
+    </label>
+  );
+}
+
 function NumberField({
   label,
   value,
@@ -838,7 +938,9 @@ function NumberField({
         }}
         onChange={(event) => changeValue(event.target.value)}
         onFocus={() => setEditing(true)}
+        placeholder={allowBlank ? '不启用' : undefined}
       />
+      {allowBlank && <small className="field-hint">{value == null ? '不启用' : '0 表示阈值为 0'}</small>}
     </label>
   );
 }
@@ -890,6 +992,46 @@ function InitialLoading() {
       <span>读取本地状态</span>
     </div>
   );
+}
+
+function strategySummary(strategy: StrategyConfig) {
+  const mode = signalModes.find((item) => item.id === strategy.signal_mode)?.label || '自定义';
+  if (strategy.signal_mode === 'platform_breakout') {
+    return `${mode} · ${strategy.platform_lookback_days}日 · 振幅≤${formatPercentRatio(strategy.platform_max_range)} · 量比≥${formatPrice(strategy.platform_breakout_volume_ratio)}x · 涨幅≥${formatPercent(strategy.platform_breakout_pct_chg_min)}`;
+  }
+  const rpsKey = `RPS${strategy.rps_window}`;
+  const amount = formatMoneyCompact(strategy.min_amount || 0);
+  return `${mode} · 成交额≥${amount} · ${rpsKey} · MA${strategy.ma_short_window}/${strategy.ma_long_window}`;
+}
+
+function parseMoneyInput(raw: string): number | null {
+  const value = raw.trim().replace(/,/g, '').replace(/\s+/g, '').toLowerCase();
+  if (!value) return null;
+  const match = value.match(/^(-?\d+(?:\.\d+)?)(亿|万|w)?$/);
+  if (!match) return null;
+  const base = Number(match[1]);
+  if (!Number.isFinite(base)) return null;
+  const unit = match[2];
+  if (unit === '亿') return base * 100_000_000;
+  if (unit === '万' || unit === 'w') return base * 10_000;
+  return base;
+}
+
+function moneyInputHint(value: number | null, allowBlank: boolean) {
+  if (value == null) return allowBlank ? '不启用' : '请输入数值';
+  if (value === 0) return '阈值为 0';
+  return `≈ ${formatMoneyCompact(value)}`;
+}
+
+function formatMoneyCompact(value: number) {
+  const abs = Math.abs(value);
+  if (abs >= 100_000_000) return `${trimZeros(value / 100_000_000)}亿`;
+  if (abs >= 10_000) return `${trimZeros(value / 10_000)}万`;
+  return trimZeros(value);
+}
+
+function trimZeros(value: number) {
+  return value.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
 }
 
 function numberFromInput(value: string, fallback: number | null): number | null {
