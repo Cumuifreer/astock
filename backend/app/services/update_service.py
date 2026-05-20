@@ -454,32 +454,71 @@ class UpdateService:
             SELECT code, date, latest_price, float_market_value, source
             FROM daily_snapshots
             WHERE date = (SELECT MAX(date) FROM daily_snapshots)
-              AND float_market_value IS NOT NULL
             """
         )
+        history_rows = self.db.query(
+            """
+            SELECT code, volume, turn
+            FROM (
+                SELECT code,
+                       volume,
+                       turn,
+                       ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS rank
+                FROM historical_bars
+                WHERE date <= (SELECT MAX(date) FROM daily_snapshots)
+                  AND volume IS NOT NULL
+                  AND volume > 0
+                  AND turn IS NOT NULL
+                  AND turn > 0
+            )
+            WHERE rank = 1
+            """
+        )
+        history_by_code = {row["code"]: row for row in history_rows}
         rows = []
         for item in snapshots:
             latest = safe_float(item.get("latest_price"))
             float_mv = safe_float(item.get("float_market_value"))
+            source = item.get("source") or "本地缓存"
+            float_shares = float_mv / latest if latest and latest > 0 and float_mv else None
+            if float_mv is None and latest and latest > 0:
+                history = history_by_code.get(item["code"])
+                volume = safe_float((history or {}).get("volume"))
+                turn = safe_float((history or {}).get("turn"))
+                if volume and volume > 0 and turn and turn > 0:
+                    float_shares = volume / (turn / 100)
+                    float_mv = float_shares * latest
+                    source = "Baostock 换手率估算"
+            if float_mv is None:
+                continue
             rows.append(
                 {
                     "code": item["code"],
                     "date": item["date"],
-                    "float_shares": float_mv / latest if latest and latest > 0 and float_mv else None,
+                    "float_shares": float_shares,
                     "float_market_value": float_mv,
-                    "source": item.get("source") or "本地缓存",
+                    "source": source,
                     "updated_at": datetime.utcnow(),
                 }
             )
         count = self.db.upsert("float_market_values", rows, ["code", "date"])
-        if count:
+        estimated_count = sum(1 for row in rows if row["source"] == "Baostock 换手率估算")
+        direct_count = count - estimated_count
+        if direct_count:
             self.public_guard.record(
                 "AkShare 新浪",
                 "流通市值",
                 "available",
-                payload={"rows": count, "method": "snapshot_float_market_value"},
+                payload={"rows": direct_count, "method": "snapshot_float_market_value"},
             )
-        else:
+        if estimated_count:
+            self.baostock_guard.record(
+                "Baostock",
+                "流通市值",
+                "available",
+                payload={"rows": estimated_count, "method": "turnover_implied_float_market_value"},
+            )
+        if not count:
             self.public_guard.record(
                 "本地缓存",
                 "流通市值",
