@@ -778,12 +778,39 @@ function NumberField({
   onChange: (value: number | null) => void;
   allowBlank?: boolean;
 }) {
+  const [draft, setDraft] = useState(value == null ? '' : String(value));
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(value == null ? '' : String(value));
+    }
+  }, [value, editing]);
+
+  const changeValue = (raw: string) => {
+    setDraft(raw);
+    if (raw.trim() === '') {
+      onChange(allowBlank ? null : 0);
+      return;
+    }
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) {
+      onChange(parsed);
+    }
+  };
+
   return (
     <label className="field">
       <span>{label}</span>
       <input
-        value={value ?? ''}
-        onChange={(event) => onChange(numberFromInput(event.target.value, allowBlank ? null : 0))}
+        inputMode="decimal"
+        value={editing ? draft : value ?? ''}
+        onBlur={() => {
+          setEditing(false);
+          setDraft(value == null ? '' : String(value));
+        }}
+        onChange={(event) => changeValue(event.target.value)}
+        onFocus={() => setEditing(true)}
       />
     </label>
   );

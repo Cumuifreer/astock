@@ -400,6 +400,9 @@ class UpdateService:
             FROM (
                 SELECT b.code, MAX(h.date) AS latest_history_date
                 FROM stock_basic b
+                INNER JOIN daily_snapshots s
+                   ON s.code = b.code
+                  AND s.date = (SELECT MAX(date) FROM daily_snapshots)
                 LEFT JOIN historical_bars h ON h.code = b.code
                 GROUP BY b.code
             )
