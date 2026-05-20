@@ -648,7 +648,7 @@ function Results({
   zeroReason: string | null;
   compact?: boolean;
 }) {
-  return (
+  const candidatePanel = (
     <section className="panel">
       <div className="table-toolbar">
         <PanelTitle icon={<BarChart3 size={18} />} title={compact ? '最新候选' : '候选股票'} />
@@ -704,8 +704,14 @@ function Results({
           </table>
         </div>
       )}
-      {!compact && <Funnel funnel={funnel} />}
     </section>
+  );
+  if (compact) return candidatePanel;
+  return (
+    <div className="results-stack">
+      <Funnel funnel={funnel} candidateCount={candidates.length} zeroReason={zeroReason} />
+      {candidatePanel}
+    </div>
   );
 }
 
@@ -819,25 +825,121 @@ function TaskDetail({ task }: { task: TaskRun | null }) {
   );
 }
 
-function Funnel({ funnel }: { funnel: FunnelStep[] }) {
+function Funnel({
+  funnel,
+  candidateCount,
+  zeroReason,
+}: {
+  funnel: FunnelStep[];
+  candidateCount: number;
+  zeroReason: string | null;
+}) {
   if (!funnel.length) return null;
-  const max = Math.max(...funnel.map((step) => step.before_count), 1);
+  const firstCount = funnel[0]?.before_count || 0;
+  const finalCount = funnel[funnel.length - 1]?.after_count ?? candidateCount;
+  const bottlenecks = [...funnel]
+    .filter((step) => step.removed_count > 0)
+    .sort((a, b) => b.removed_count - a.removed_count)
+    .slice(0, 3);
+  const largestRemoval = Math.max(...funnel.map((step) => step.removed_count), 0);
+  const groups = groupFunnelSteps(funnel);
   return (
-    <div className="funnel">
-      {funnel.map((step) => (
-        <div key={step.step_name} className="funnel-step">
-          <div>
-            <strong>{step.step_name}</strong>
-            <span>{step.note}</span>
-          </div>
-          <div className="funnel-bar">
-            <i style={{ width: `${Math.max(4, (step.after_count / max) * 100)}%` }} />
-          </div>
-          <b>{formatInt(step.after_count)}</b>
+    <section className="panel analysis-diagnostic">
+      <div className="diagnostic-head">
+        <PanelTitle icon={<BarChart3 size={18} />} title="本次分析诊断" />
+        <span className={candidateCount > 0 ? 'pill good' : 'pill muted'}>{formatInt(candidateCount)} 只候选</span>
+      </div>
+      <div className="diagnostic-summary">
+        <div>
+          <span>筛选路径</span>
+          <strong>{formatInt(firstCount)} → {formatInt(finalCount)}</strong>
+          <small>{zeroReason || '按当前策略完成筛选。'}</small>
         </div>
-      ))}
-    </div>
+        <div>
+          <span>主要卡点</span>
+          <strong>{bottlenecks.length ? bottlenecks.map((step) => step.step_name).join(' / ') : '无明显卡点'}</strong>
+          <small>{bottlenecks.length ? '按淘汰数量排序' : '各层过滤较平缓'}</small>
+        </div>
+      </div>
+      <div className="funnel-layout">
+        <div className="funnel-groups">
+          {groups.map((group) => (
+            <div className="funnel-group" key={group.name}>
+              <h3>{group.name}</h3>
+              {group.steps.map((step) => {
+                const retention = step.before_count ? step.after_count / step.before_count : 1;
+                const isMajor = step.removed_count > 0 && step.removed_count === largestRemoval;
+                const isTight = retention < 0.35 && step.before_count > 0;
+                return (
+                  <div key={step.step_name} className={`diagnostic-step ${isMajor ? 'major' : ''} ${isTight ? 'tight' : ''}`}>
+                    <div className="step-label">
+                      <strong>{step.step_name}</strong>
+                      {step.note && <span>{step.note}</span>}
+                    </div>
+                    <div className="step-track">
+                      <div>
+                        <i style={{ width: `${Math.max(3, Math.min(100, retention * 100))}%` }} />
+                      </div>
+                      <small>
+                        {formatInt(step.after_count)} / {formatInt(step.before_count)}
+                        <b>{formatRetainRate(retention)}</b>
+                      </small>
+                    </div>
+                    <b className="step-loss">{step.removed_count ? `-${formatInt(step.removed_count)}` : '0'}</b>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        <aside className="bottleneck-rank">
+          <h3>瓶颈排行</h3>
+          {bottlenecks.length === 0 && <span>暂无明显瓶颈</span>}
+          {bottlenecks.map((step, index) => (
+            <div key={step.step_name}>
+              <small>#{index + 1}</small>
+              <strong>{step.step_name}</strong>
+              <b>{formatInt(step.removed_count)}</b>
+            </div>
+          ))}
+        </aside>
+      </div>
+    </section>
   );
+}
+
+function groupFunnelSteps(funnel: FunnelStep[]) {
+  const groupOrder = ['股票池', '趋势强弱', '平台形态', '突破确认', '输出'];
+  const groups = new Map<string, FunnelStep[]>();
+  for (const step of funnel) {
+    const group = funnelGroupName(step.step_name);
+    groups.set(group, [...(groups.get(group) || []), step]);
+  }
+  return groupOrder
+    .filter((name) => groups.has(name))
+    .map((name) => ({ name, steps: groups.get(name) || [] }));
+}
+
+function funnelGroupName(stepName: string) {
+  if (stepName.includes('平台') || stepName.includes('阳线')) return '平台形态';
+  if (stepName.includes('突破') || stepName.includes('实体') || stepName.includes('MACD')) return '突破确认';
+  if (stepName.includes('候选')) return '输出';
+  if (
+    stepName.includes('趋势') ||
+    stepName.includes('RPS') ||
+    stepName.includes('均线') ||
+    stepName.includes('振幅') ||
+    stepName.includes('涨跌幅') ||
+    stepName.includes('成交量')
+  ) {
+    return '趋势强弱';
+  }
+  return '股票池';
+}
+
+function formatRetainRate(value: number) {
+  if (!Number.isFinite(value)) return '100%';
+  return `${trimZeros(Math.max(0, Math.min(100, value * 100)))}%`;
 }
 
 function MetricCard({ label, value, sub, icon }: { label: string; value: string; sub: string; icon: ReactNode }) {

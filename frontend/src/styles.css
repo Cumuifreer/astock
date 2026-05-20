@@ -801,33 +801,166 @@ tr:hover td {
   color: var(--muted);
 }
 
-.funnel {
-  margin-top: 16px;
+.results-stack {
+  display: grid;
+  gap: 18px;
+}
+
+.analysis-diagnostic {
+  display: grid;
+  gap: 14px;
+}
+
+.diagnostic-head,
+.diagnostic-summary,
+.funnel-layout,
+.diagnostic-step,
+.step-track small,
+.bottleneck-rank div {
+  display: flex;
+  gap: 12px;
+}
+
+.diagnostic-head {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.diagnostic-head .panel-title {
+  margin-bottom: 0;
+}
+
+.diagnostic-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+}
+
+.diagnostic-summary > div {
+  border: 1px solid rgba(59, 240, 193, 0.16);
+  background: rgba(59, 240, 193, 0.035);
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.diagnostic-summary span,
+.diagnostic-summary small,
+.step-label span,
+.step-track small,
+.bottleneck-rank span,
+.bottleneck-rank small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.diagnostic-summary strong {
+  font-size: 24px;
+  font-family: "DIN Condensed", "Aptos Display", sans-serif;
+}
+
+.funnel-layout {
+  align-items: start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+}
+
+.funnel-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.funnel-group {
+  display: grid;
+  gap: 8px;
+}
+
+.funnel-group h3,
+.bottleneck-rank h3 {
+  color: var(--soft);
+  font-size: 13px;
+  margin: 0;
+}
+
+.diagnostic-step {
+  align-items: center;
+  grid-template-columns: 190px minmax(0, 1fr) 72px;
+  display: grid;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.diagnostic-step.major {
+  border-color: rgba(255, 189, 90, 0.32);
+  background: rgba(255, 189, 90, 0.055);
+}
+
+.diagnostic-step.tight {
+  box-shadow: inset 3px 0 0 rgba(255, 92, 122, 0.62);
+}
+
+.step-label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.step-label strong {
+  color: var(--text);
+}
+
+.step-track {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.step-track > div {
+  height: 10px;
+  border: 1px solid var(--line);
+  background: #071012;
+  overflow: hidden;
+}
+
+.step-track i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--teal), var(--lime));
+}
+
+.step-track small {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.step-track small b,
+.step-loss,
+.bottleneck-rank b {
+  color: var(--text);
+}
+
+.step-loss {
+  text-align: right;
+}
+
+.bottleneck-rank {
+  border: 1px solid rgba(255, 189, 90, 0.18);
+  background: rgba(255, 189, 90, 0.035);
+  padding: 12px;
   display: grid;
   gap: 10px;
 }
 
-.funnel-step {
-  grid-template-columns: 180px minmax(0, 1fr) 70px;
+.bottleneck-rank div {
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 9px;
 }
 
-.funnel-step span {
-  display: block;
-  color: var(--muted);
-  font-size: 12px;
-  margin-top: 4px;
-}
-
-.funnel-bar {
-  height: 12px;
-  background: #071012;
-  border: 1px solid var(--line);
-}
-
-.funnel-bar i {
-  display: block;
-  height: 100%;
-  background: var(--blue);
+.bottleneck-rank strong {
+  flex: 1;
+  min-width: 0;
 }
 
 .cap-grid {
@@ -936,6 +1069,11 @@ a {
   .mode-tabs {
     grid-template-columns: 1fr 1fr;
   }
+
+  .diagnostic-summary,
+  .funnel-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -974,7 +1112,18 @@ a {
     flex-direction: column;
   }
 
-  .funnel-step {
+  .diagnostic-head,
+  .diagnostic-step,
+  .editor-action-strip {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .diagnostic-step {
     grid-template-columns: 1fr;
+  }
+
+  .step-loss {
+    text-align: left;
   }
 }
