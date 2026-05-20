@@ -10,6 +10,7 @@ import {
   Layers3,
   LineChart,
   Play,
+  Plus,
   RefreshCw,
   Save,
   Settings2,
@@ -61,6 +62,26 @@ function App() {
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [strategy, setStrategy] = useState<StrategyConfig | null>(null);
   const [updateLimit, setUpdateLimit] = useState(0);
+
+  function applyPreset(preset: StrategyPreset) {
+    setSelectedPresetId(preset.id);
+    setStrategyName(preset.name);
+    setStrategy(preset.config);
+  }
+
+  async function loadAndSelect(presetId?: string | null) {
+    const next = await api.bootstrap();
+    setBootstrap(next);
+    if (presetId !== undefined) {
+      const fallback =
+        next.strategies.find((preset) => preset.id === presetId) ||
+        next.strategies.find((preset) => preset.is_default && !preset.is_system) ||
+        next.strategies.find((preset) => !preset.is_system) ||
+        next.strategies.find((preset) => preset.is_default) ||
+        next.strategies[0];
+      if (fallback) applyPreset(fallback);
+    }
+  }
 
   async function load(silent = false) {
     try {
@@ -126,7 +147,8 @@ function App() {
         config: strategy,
         set_default: setDefault,
       };
-      await api.saveStrategy(payload);
+      const result = await api.saveStrategy(payload);
+      applyPreset(result.preset);
       setNotice(setDefault ? '策略已保存并设为默认' : '策略已保存');
       await load(true);
     } catch (err) {
@@ -163,24 +185,28 @@ function App() {
           setStrategy={setStrategy}
           setStrategyName={setStrategyName}
           selectPreset={(preset) => {
-            setSelectedPresetId(preset.id);
-            setStrategyName(preset.name);
-            setStrategy(preset.config);
+            applyPreset(preset);
           }}
           saveStrategy={saveStrategy}
           saveAndRun={saveAndRun}
           duplicate={async () => {
             if (!selectedPresetId) return;
-            await api.duplicateStrategy(selectedPresetId);
+            const result = await api.duplicateStrategy(selectedPresetId);
+            applyPreset(result.preset);
             setNotice('策略已复制');
+            await load(true);
+          }}
+          createFromTemplate={async (preset) => {
+            const result = await api.duplicateStrategy(preset.id);
+            applyPreset(result.preset);
+            setNotice('新策略已创建');
             await load(true);
           }}
           remove={async () => {
             if (!selectedPresetId) return;
             await api.deleteStrategy(selectedPresetId);
             setNotice('策略已删除');
-            setSelectedPresetId(null);
-            await load(true);
+            await loadAndSelect(null);
           }}
           setDefault={async () => {
             if (!selectedPresetId) return;
@@ -424,11 +450,16 @@ function StrategyPanel(props: {
   saveStrategy: (setDefault?: boolean) => Promise<void>;
   saveAndRun: () => Promise<void>;
   duplicate: () => Promise<void>;
+  createFromTemplate: (preset: StrategyPreset) => Promise<void>;
   remove: () => Promise<void>;
   setDefault: () => Promise<void>;
   reset: () => Promise<void>;
 }) {
+  const [templateOpen, setTemplateOpen] = useState(false);
   const selected = props.presets.find((preset) => preset.id === props.selectedPresetId);
+  const customPresets = props.presets.filter((preset) => !preset.is_system);
+  const templates = props.presets.filter((preset) => preset.is_system);
+  const selectedIsTemplate = Boolean(selected?.is_system);
   const update = (key: keyof StrategyConfig, value: unknown) => {
     props.setStrategy({ ...props.strategy, [key]: value });
   };
@@ -436,23 +467,58 @@ function StrategyPanel(props: {
   return (
     <div className="strategy-layout">
       <section className="panel preset-panel">
-        <PanelTitle icon={<Settings2 size={18} />} title="策略库" />
+        <div className="preset-head">
+          <PanelTitle icon={<Settings2 size={18} />} title="策略库" />
+          <button className="primary new-strategy" onClick={() => setTemplateOpen((open) => !open)} type="button">
+            <Plus size={15} />
+            新增
+          </button>
+        </div>
+        <div className="preset-section-title">
+          <span>我的策略</span>
+          <small>{customPresets.length} 个</small>
+        </div>
         <div className="preset-list">
-          {props.presets.map((preset) => (
+          {customPresets.length === 0 && <div className="preset-empty">从模板新建第一个策略。</div>}
+          {customPresets.map((preset) => (
             <button
               key={preset.id}
               className={preset.id === props.selectedPresetId ? 'preset active' : 'preset'}
               onClick={() => props.selectPreset(preset)}
             >
               <span>{preset.name}</span>
-              <small>{preset.is_default ? '默认' : preset.is_system ? '系统' : '自定义'}</small>
+              <small>{preset.is_default ? '默认' : '自定义'}</small>
             </button>
           ))}
         </div>
+        {(templateOpen || customPresets.length === 0) && (
+          <>
+            <div className="preset-section-title template-title">
+              <span>模板</span>
+              <small>点选后生成自定义策略</small>
+            </div>
+            <div className="preset-list template-list">
+              {templates.map((preset) => {
+                const mode = signalModes.find((item) => item.id === preset.config.signal_mode);
+                return (
+                  <button
+                    key={preset.id}
+                    className="preset template"
+                    onClick={() => props.createFromTemplate(preset)}
+                    type="button"
+                  >
+                    <span>{preset.name}</span>
+                    <small>{mode?.label || '模板'}</small>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
         <div className="button-grid">
-          <button className="ghost" onClick={props.duplicate}>复制为新策略</button>
-          <button className="ghost" onClick={props.setDefault}>设默认</button>
-          <button className="ghost danger" disabled={Boolean(selected?.is_system)} onClick={props.remove}>
+          <button className="ghost" disabled={!selected} onClick={props.duplicate}>复制当前</button>
+          <button className="ghost" disabled={!selected || selectedIsTemplate} onClick={props.setDefault}>设默认</button>
+          <button className="ghost danger" disabled={!selected || selectedIsTemplate} onClick={props.remove}>
             <Trash2 size={15} />
             删除自定义
           </button>
@@ -482,10 +548,15 @@ function StrategyPanel(props: {
           <span>{activeMode.label}</span>
           <b>{strategySummary(props.strategy)}</b>
         </div>
+        {selectedIsTemplate && (
+          <div className="template-banner">
+            当前查看的是模板，保存后会进入“我的策略”。
+          </div>
+        )}
 
         <div className="form-grid">
           <label className="field wide">
-            <span>预设名称</span>
+            <span>策略名称</span>
             <input value={props.strategyName} onChange={(event) => props.setStrategyName(event.target.value)} />
           </label>
           <div className="mode-tabs wide">

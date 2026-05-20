@@ -1,4 +1,4 @@
-import type { Bootstrap, StrategyConfig } from './types';
+import type { Bootstrap, StrategyConfig, StrategyPreset } from './types';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -30,9 +30,9 @@ export const api = {
   startAnalyze: (config: StrategyConfig) =>
     request('/api/tasks/analyze', { method: 'POST', body: JSON.stringify({ config }) }),
   saveStrategy: (payload: Record<string, unknown>) =>
-    request('/api/strategies', { method: 'POST', body: JSON.stringify(payload) }),
+    request<{ preset: StrategyPreset }>('/api/strategies', { method: 'POST', body: JSON.stringify(payload) }),
   duplicateStrategy: (id: string) =>
-    request(`/api/strategies/${id}/duplicate`, { method: 'POST' }),
+    request<{ preset: StrategyPreset }>(`/api/strategies/${id}/duplicate`, { method: 'POST' }),
   deleteStrategy: (id: string) =>
     request(`/api/strategies/${id}`, { method: 'DELETE' }),
   setDefaultStrategy: (id: string) =>
