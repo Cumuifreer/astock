@@ -33,6 +33,7 @@ import type {
 import './styles.css';
 
 type Tab = 'overview' | 'warehouse' | 'strategy' | 'results' | 'map' | 'status';
+type UpdateMode = 'full' | 'daily_light';
 
 const navItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: 'overview', label: '总览', icon: <Gauge size={17} /> },
@@ -86,10 +87,10 @@ function App() {
     return () => window.clearInterval(timer);
   }, [updateRunning, analyzeRunning]);
 
-  async function startUpdate(force = false) {
+  async function startUpdate(force = false, mode: UpdateMode = 'full') {
     try {
-      await api.startUpdate({ force, limit: updateLimit || undefined });
-      setNotice('数据更新已开始');
+      await api.startUpdate({ force, mode, limit: updateLimit || undefined });
+      setNotice(mode === 'daily_light' ? '轻量日更已开始' : '数据更新已开始');
       await load(true);
       setTab('status');
     } catch (err) {
@@ -234,8 +235,11 @@ function App() {
             <button className="icon-button" onClick={() => load(true)} title="刷新状态">
               <RefreshCw size={16} />
             </button>
-            <button className="primary" disabled={updateRunning} onClick={() => startUpdate(false)}>
+            <button className="primary" disabled={updateRunning} onClick={() => startUpdate(false, 'daily_light')}>
               <RefreshCw size={16} />
+              轻量日更
+            </button>
+            <button className="ghost" disabled={updateRunning} onClick={() => startUpdate(false)}>
               更新数据
             </button>
             <button className="primary lime" disabled={analyzeRunning || !strategy} onClick={() => startAnalyze(strategy)}>
@@ -263,7 +267,7 @@ function Overview({
   bootstrap: Bootstrap;
   updateLimit: number;
   setUpdateLimit: (value: number) => void;
-  startUpdate: (force?: boolean) => void;
+  startUpdate: (force?: boolean, mode?: UpdateMode) => void;
   startAnalyze: () => void;
 }) {
   const overview = bootstrap.overview;
@@ -287,9 +291,12 @@ function Overview({
               <span>本次上限</span>
               <input value={updateLimit} onChange={(event) => setUpdateLimit(numberFromInput(event.target.value, 0) || 0)} />
             </label>
-            <button onClick={() => startUpdate(false)} className="primary">
+            <button onClick={() => startUpdate(false, 'daily_light')} className="primary">
               <RefreshCw size={16} />
-              更新
+              轻量日更
+            </button>
+            <button onClick={() => startUpdate(false)} className="ghost">
+              更新数据
             </button>
             <button onClick={() => startUpdate(true)} className="ghost">
               强制刷新

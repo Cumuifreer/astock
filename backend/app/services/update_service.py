@@ -190,6 +190,7 @@ class UpdateService:
 
     def _run_update(self, task_id: str, options: Dict[str, Any]) -> None:
         force = bool(options.get("force"))
+        light = options.get("mode") == "daily_light" or bool(options.get("daily_light"))
         include_bj = bool(options.get("include_bj", settings.include_bj))
         exclude_star = bool(options.get("exclude_star_board", settings.exclude_star_board))
         limit = int(options.get("limit") or settings.update_limit or 0)
@@ -204,24 +205,28 @@ class UpdateService:
             success_sources += 1 if stock_count else 0
 
             self._patch_task(task_id, stage="刷新快照", source="AkShare 新浪")
-            snapshot_count = self._update_snapshots(force, include_bj, exclude_star, warnings)
+            snapshot_count = self._update_snapshots(force or light, include_bj, exclude_star, warnings)
             if snapshot_count:
                 success_sources += 1
             else:
                 failed_sources += 1
 
-            stocks = self.db.query(
-                "SELECT code FROM stock_basic ORDER BY code" + (" LIMIT ?" if limit else ""),
-                [limit] if limit else [],
-            )
+            incremental_history = light and not force
+            stocks = self._history_stocks_for_update(limit=limit, light=incremental_history)
             total = len(stocks)
-            self._patch_task(task_id, stage="刷新历史 K 线", source="Baostock", total=total)
+            self._patch_task(
+                task_id,
+                stage="轻量补齐历史 K 线" if incremental_history else "刷新历史 K 线",
+                source="Baostock",
+                total=total,
+            )
             history_success, history_failed, history_skipped = self._update_history(
                 stocks,
                 start,
                 end,
                 force,
                 task_id,
+                incremental=incremental_history,
             )
             if history_success:
                 success_sources += 1
@@ -236,12 +241,15 @@ class UpdateService:
             self._patch_task(
                 task_id,
                 status=status,
-                stage="更新完成" if status == "completed_full" else "部分完成",
+                stage=("轻量日更完成" if light and status == "completed_full" else "更新完成")
+                if status == "completed_full"
+                else "部分完成",
                 success=history_success,
                 failed=history_failed,
                 skipped=history_skipped,
                 warning=warnings[-1] if warnings else None,
                 summary={
+                    "mode": "daily_light" if light else "full",
                     "stock_count": stock_count,
                     "snapshot_count": snapshot_count,
                     "history_success": history_success,
@@ -374,6 +382,36 @@ class UpdateService:
             warnings.append(f"快照全部降级到本地缓存：{chosen.message}")
         return int(today_rows)
 
+    def _history_stocks_for_update(
+        self,
+        limit: int,
+        light: bool,
+        today: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        if not light:
+            return self.db.query(
+                "SELECT code FROM stock_basic ORDER BY code" + (" LIMIT ?" if limit else ""),
+                [limit] if limit else [],
+            )
+
+        cutoff = (today or date.today()) - timedelta(days=3)
+        sql = """
+            SELECT code, latest_history_date
+            FROM (
+                SELECT b.code, MAX(h.date) AS latest_history_date
+                FROM stock_basic b
+                LEFT JOIN historical_bars h ON h.code = b.code
+                GROUP BY b.code
+            )
+            WHERE latest_history_date IS NULL OR latest_history_date < ?
+            ORDER BY code
+        """
+        params: List[Any] = [cutoff]
+        if limit:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return self.db.query(sql, params)
+
     def _update_history(
         self,
         stocks: List[Dict[str, Any]],
@@ -381,6 +419,7 @@ class UpdateService:
         end: date,
         force: bool,
         task_id: str,
+        incremental: bool = False,
     ) -> tuple:
         baostock = BaostockSource()
         adata = ADataSource()
@@ -390,7 +429,9 @@ class UpdateService:
         total = len(stocks)
         for index, row in enumerate(stocks, start=1):
             code = row["code"]
-            latest = self.db.scalar("SELECT MAX(date) FROM historical_bars WHERE code = ?", [code])
+            latest = row.get("latest_history_date")
+            if latest is None:
+                latest = self.db.scalar("SELECT MAX(date) FROM historical_bars WHERE code = ?", [code])
             if latest and not force and str(latest) >= (date.today() - timedelta(days=3)).isoformat():
                 skipped += 1
                 self._patch_task(
@@ -402,9 +443,10 @@ class UpdateService:
                     failed=failed,
                 )
                 continue
+            fetch_start = self._history_fetch_start(start, latest, incremental=incremental)
             try:
                 self.baostock_guard.sleep()
-                frame = baostock.fetch_history(code, start, end)
+                frame = baostock.fetch_history(code, fetch_start, end)
                 if frame.empty:
                     raise RuntimeError("Baostock 历史行情为空")
                 self.db.upsert("historical_bars", frame.to_dict("records"), ["code", "date"])
@@ -412,7 +454,7 @@ class UpdateService:
             except Exception:
                 try:
                     self.public_guard.sleep()
-                    frame = adata.fetch_history(code, start, end)
+                    frame = adata.fetch_history(code, fetch_start, end)
                     self.db.upsert("historical_bars", frame.to_dict("records"), ["code", "date"])
                     self.public_guard.record(
                         "AData",
@@ -447,6 +489,18 @@ class UpdateService:
                 payload={"success": success, "failed": failed, "skipped": skipped},
             )
         return success, failed, skipped
+
+    @staticmethod
+    def _history_fetch_start(default_start: date, latest: Any, incremental: bool) -> date:
+        if not incremental or not latest:
+            return default_start
+        if isinstance(latest, datetime):
+            latest_date = latest.date()
+        elif isinstance(latest, date):
+            latest_date = latest
+        else:
+            latest_date = date.fromisoformat(str(latest)[:10])
+        return latest_date + timedelta(days=1)
 
     def _update_float_values_from_snapshots(self) -> int:
         snapshots = self.db.query(
