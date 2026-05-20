@@ -619,7 +619,7 @@ class AnalysisService:
             latest_bar = group.iloc[-1].to_dict()
             snapshot = _first_record(snapshots, code)
             float_record = _first_record(float_values, code)
-            latest_price = safe_float((snapshot or {}).get("latest_price")) or safe_float(latest_bar.get("close"))
+            latest_price = _first_number((snapshot or {}).get("latest_price"), latest_bar.get("close"))
             ma_short_window = int(strategy.get("ma_short_window") or 20)
             ma_long_window = int(strategy.get("ma_long_window") or 60)
             closes = pd.to_numeric(group["close"], errors="coerce").dropna()
@@ -627,16 +627,22 @@ class AnalysisService:
             ma_short = float(closes.tail(ma_short_window).mean()) if len(closes) >= ma_short_window else None
             ma_long = float(closes.tail(ma_long_window).mean()) if len(closes) >= ma_long_window else None
             prev_volume_mean = float(volumes.iloc[:-1].tail(20).mean()) if len(volumes) > 1 else None
-            latest_volume = safe_float((snapshot or {}).get("volume")) or safe_float(latest_bar.get("volume"))
-            volume_ratio = latest_volume / prev_volume_mean if latest_volume and prev_volume_mean else None
+            latest_volume = _first_number((snapshot or {}).get("volume"), latest_bar.get("volume"))
+            volume_ratio = (
+                latest_volume / prev_volume_mean
+                if latest_volume is not None and prev_volume_mean is not None and prev_volume_mean > 0
+                else None
+            )
             ma_distance = (
                 abs(latest_price - ma_short) / ma_short
                 if latest_price is not None and ma_short is not None and ma_short > 0
                 else None
             )
             float_mv = (
-                safe_float((float_record or {}).get("float_market_value"))
-                or safe_float((snapshot or {}).get("float_market_value"))
+                _first_number(
+                    (float_record or {}).get("float_market_value"),
+                    (snapshot or {}).get("float_market_value"),
+                )
             )
             platform_metrics = compute_platform_breakout_metrics(group, strategy)
             output.append(
@@ -644,11 +650,10 @@ class AnalysisService:
                     "code": code,
                     "name": (snapshot or {}).get("name") or latest_bar.get("name") or code,
                     "latest_price": latest_price,
-                    "pct_chg": safe_float((snapshot or {}).get("pct_chg")) or safe_float(latest_bar.get("pct_chg")),
-                    "amount": safe_float((snapshot or {}).get("amount")) or safe_float(latest_bar.get("amount")),
+                    "pct_chg": _first_number((snapshot or {}).get("pct_chg"), latest_bar.get("pct_chg")),
+                    "amount": _first_number((snapshot or {}).get("amount"), latest_bar.get("amount")),
                     "volume": latest_volume,
-                    "turnover_rate": safe_float((snapshot or {}).get("turnover_rate"))
-                    or safe_float(latest_bar.get("turn")),
+                    "turnover_rate": _first_number((snapshot or {}).get("turnover_rate"), latest_bar.get("turn")),
                     "amplitude": compute_amplitude(
                         safe_float(latest_bar.get("high")),
                         safe_float(latest_bar.get("low")),
@@ -738,6 +743,14 @@ def _first_record(frame: pd.DataFrame, code: str) -> Optional[Dict[str, Any]]:
     if found.empty:
         return None
     return found.iloc[0].to_dict()
+
+
+def _first_number(*values: Any) -> Optional[float]:
+    for value in values:
+        parsed = safe_float(value)
+        if parsed is not None:
+            return parsed
+    return None
 
 
 def _jsonable(row: Dict[str, Any]) -> Dict[str, Any]:
