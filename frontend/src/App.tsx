@@ -5,6 +5,7 @@ import {
   Activity,
   BarChart3,
   CandlestickChart,
+  Copy,
   Database,
   Gauge,
   Layers3,
@@ -12,6 +13,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   Settings2,
   ShieldAlert,
@@ -196,8 +198,15 @@ function App() {
             setNotice('策略已复制');
             await load(true);
           }}
-          createFromTemplate={async (preset) => {
-            const result = await api.duplicateStrategy(preset.id);
+          createBlank={async () => {
+            const seedConfig =
+              bootstrap.strategies.find((preset) => preset.id === 'system-momentum')?.config ||
+              bootstrap.default_strategy;
+            const result = await api.saveStrategy({
+              name: '未命名策略',
+              config: seedConfig,
+              set_default: false,
+            });
             applyPreset(result.preset);
             setNotice('新策略已创建');
             await load(true);
@@ -207,12 +216,6 @@ function App() {
             await api.deleteStrategy(selectedPresetId);
             setNotice('策略已删除');
             await loadAndSelect(null);
-          }}
-          setDefault={async () => {
-            if (!selectedPresetId) return;
-            await api.setDefaultStrategy(selectedPresetId);
-            setNotice('默认策略已更新');
-            await load(true);
           }}
           reset={async () => {
             await api.resetSystemStrategies();
@@ -450,15 +453,12 @@ function StrategyPanel(props: {
   saveStrategy: (setDefault?: boolean) => Promise<void>;
   saveAndRun: () => Promise<void>;
   duplicate: () => Promise<void>;
-  createFromTemplate: (preset: StrategyPreset) => Promise<void>;
+  createBlank: () => Promise<void>;
   remove: () => Promise<void>;
-  setDefault: () => Promise<void>;
   reset: () => Promise<void>;
 }) {
-  const [templateOpen, setTemplateOpen] = useState(false);
   const selected = props.presets.find((preset) => preset.id === props.selectedPresetId);
   const customPresets = props.presets.filter((preset) => !preset.is_system);
-  const templates = props.presets.filter((preset) => preset.is_system);
   const selectedIsTemplate = Boolean(selected?.is_system);
   const update = (key: keyof StrategyConfig, value: unknown) => {
     props.setStrategy({ ...props.strategy, [key]: value });
@@ -469,7 +469,7 @@ function StrategyPanel(props: {
       <section className="panel preset-panel">
         <div className="preset-head">
           <PanelTitle icon={<Settings2 size={18} />} title="策略库" />
-          <button className="primary new-strategy" onClick={() => setTemplateOpen((open) => !open)} type="button">
+          <button className="primary new-strategy" onClick={props.createBlank} type="button">
             <Plus size={15} />
             新增
           </button>
@@ -479,7 +479,7 @@ function StrategyPanel(props: {
           <small>{customPresets.length} 个</small>
         </div>
         <div className="preset-list">
-          {customPresets.length === 0 && <div className="preset-empty">从模板新建第一个策略。</div>}
+          {customPresets.length === 0 && <div className="preset-empty">点击新增创建第一个策略。</div>}
           {customPresets.map((preset) => (
             <button
               key={preset.id}
@@ -491,39 +491,10 @@ function StrategyPanel(props: {
             </button>
           ))}
         </div>
-        {(templateOpen || customPresets.length === 0) && (
-          <>
-            <div className="preset-section-title template-title">
-              <span>模板</span>
-              <small>点选后生成自定义策略</small>
-            </div>
-            <div className="preset-list template-list">
-              {templates.map((preset) => {
-                const mode = signalModes.find((item) => item.id === preset.config.signal_mode);
-                return (
-                  <button
-                    key={preset.id}
-                    className="preset template"
-                    onClick={() => props.createFromTemplate(preset)}
-                    type="button"
-                  >
-                    <span>{preset.name}</span>
-                    <small>{mode?.label || '模板'}</small>
-                  </button>
-                );
-              })}
-            </div>
-          </>
-        )}
-        <div className="button-grid">
-          <button className="ghost" disabled={!selected} onClick={props.duplicate}>复制当前</button>
-          <button className="ghost" disabled={!selected || selectedIsTemplate} onClick={props.setDefault}>设默认</button>
-          <button className="ghost danger" disabled={!selected || selectedIsTemplate} onClick={props.remove}>
-            <Trash2 size={15} />
-            删除自定义
-          </button>
-          <button className="ghost" onClick={props.reset}>恢复模板</button>
-        </div>
+        <button className="text-action restore-action" onClick={props.reset} type="button">
+          <RotateCcw size={14} />
+          恢复系统默认策略
+        </button>
       </section>
 
       <section className="panel editor-panel">
@@ -544,13 +515,26 @@ function StrategyPanel(props: {
             </button>
           </div>
         </div>
+        <div className="editor-action-strip">
+          <span>{selectedIsTemplate ? '基础参数' : selected?.is_default ? '当前默认策略' : '当前策略'}</span>
+          <div>
+            <button className="ghost compact" disabled={!selected || selectedIsTemplate} onClick={props.duplicate}>
+              <Copy size={14} />
+              复制
+            </button>
+            <button className="ghost compact danger" disabled={!selected || selectedIsTemplate} onClick={props.remove}>
+              <Trash2 size={14} />
+              删除
+            </button>
+          </div>
+        </div>
         <div className="strategy-readout">
           <span>{activeMode.label}</span>
           <b>{strategySummary(props.strategy)}</b>
         </div>
         {selectedIsTemplate && (
           <div className="template-banner">
-            当前查看的是模板，保存后会进入“我的策略”。
+            保存后会进入“我的策略”。
           </div>
         )}
 
@@ -958,7 +942,7 @@ function MoneyField({
         }}
         onChange={(event) => changeValue(event.target.value)}
         onFocus={() => setEditing(true)}
-        placeholder={allowBlank ? '不启用' : undefined}
+        placeholder={allowBlank ? '留空不启用' : undefined}
       />
       <small className={hint === '无法识别' ? 'field-hint danger' : 'field-hint'}>{hint}</small>
     </label>
@@ -1009,9 +993,9 @@ function NumberField({
         }}
         onChange={(event) => changeValue(event.target.value)}
         onFocus={() => setEditing(true)}
-        placeholder={allowBlank ? '不启用' : undefined}
+        placeholder={allowBlank ? '留空不启用' : undefined}
       />
-      {allowBlank && <small className="field-hint">{value == null ? '不启用' : '0 表示阈值为 0'}</small>}
+      {allowBlank && <small className="field-hint">{numberInputHint(value)}</small>}
     </label>
   );
 }
@@ -1089,9 +1073,15 @@ function parseMoneyInput(raw: string): number | null {
 }
 
 function moneyInputHint(value: number | null, allowBlank: boolean) {
-  if (value == null) return allowBlank ? '不启用' : '请输入数值';
-  if (value === 0) return '阈值为 0';
+  if (value == null) return allowBlank ? '当前未参与过滤' : '请输入数值';
+  if (value === 0) return '阈值为 0，仍会参与过滤';
   return `≈ ${formatMoneyCompact(value)}`;
+}
+
+function numberInputHint(value: number | null) {
+  if (value == null) return '当前未参与过滤';
+  if (value === 0) return '阈值为 0，仍会参与过滤';
+  return `当前阈值：${trimZeros(value)}`;
 }
 
 function formatMoneyCompact(value: number) {
