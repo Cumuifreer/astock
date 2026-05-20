@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "install:frontend": "npm --prefix frontend install",
+    "build": "npm --prefix frontend run build",
+    "dev": "npm --prefix frontend run dev",
+    "serve": "python3 -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000"
+  }
+}

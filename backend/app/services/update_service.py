@@ -1,0 +1,561 @@
+from __future__ import annotations
+
+import json
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+import pandas as pd
+
+from backend.app.config import settings
+from backend.app.db import Database
+from backend.app.services.data_service import DataService
+from backend.app.services.market_utils import safe_float
+from backend.app.sources.adata_source import ADataSource
+from backend.app.sources.akshare_source import AkShareSource
+from backend.app.sources.baostock_source import BaostockSource
+from backend.app.sources.base import SourceGuard
+
+
+class TaskBusy(RuntimeError):
+    pass
+
+
+class UpdateService:
+    def __init__(self, db: Database):
+        self.db = db
+        self.executor = ThreadPoolExecutor(max_workers=2)
+        self.data_service = DataService(db)
+        self.public_guard = SourceGuard(
+            db,
+            min_delay=settings.public_source_min_delay,
+            max_delay=settings.public_source_max_delay,
+        )
+        self.baostock_guard = SourceGuard(
+            db,
+            min_delay=settings.baostock_min_delay,
+            max_delay=settings.baostock_max_delay,
+        )
+
+    def start_update(self, options: Optional[Dict[str, Any]] = None) -> str:
+        running = self.db.scalar(
+            "SELECT COUNT(*) FROM task_runs WHERE kind = 'update' AND status = 'running'"
+        )
+        if running:
+            raise TaskBusy("已有数据更新正在运行。")
+        task_id = f"update-{uuid.uuid4().hex[:12]}"
+        self._write_task(
+            task_id,
+            kind="update",
+            status="running",
+            stage="准备更新",
+            source=None,
+            current_stock=None,
+            total=0,
+            processed=0,
+            success=0,
+            failed=0,
+            skipped=0,
+            warning=None,
+            summary={},
+            error_message=None,
+            started_at=datetime.utcnow(),
+        )
+        self.executor.submit(self._run_update, task_id, options or {})
+        return task_id
+
+    def start_analysis(self, config: Dict[str, Any], analysis_runner: Any) -> str:
+        running = self.db.scalar(
+            "SELECT COUNT(*) FROM task_runs WHERE kind = 'analyze' AND status = 'running'"
+        )
+        if running:
+            raise TaskBusy("已有分析正在运行。")
+        task_id = f"analyze-{uuid.uuid4().hex[:12]}"
+        self._write_task(
+            task_id,
+            kind="analyze",
+            status="running",
+            stage="准备分析",
+            source="本地仓库",
+            current_stock=None,
+            total=0,
+            processed=0,
+            success=0,
+            failed=0,
+            skipped=0,
+            warning=None,
+            summary={},
+            error_message=None,
+            started_at=datetime.utcnow(),
+        )
+        self.executor.submit(self._run_analysis, task_id, config, analysis_runner)
+        return task_id
+
+    def probe_sources(self, options: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        options = options or {}
+        include_bj = bool(options.get("include_bj", settings.include_bj))
+        exclude_star = bool(options.get("exclude_star_board", settings.exclude_star_board))
+        sample_codes = [
+            item["code"].split(".")[0]
+            for item in self.db.query("SELECT code FROM stock_basic ORDER BY code LIMIT 20")
+        ] or ["000001", "600000"]
+        results = []
+        probes = [
+            (
+                self.baostock_guard,
+                "Baostock",
+                "股票基础信息",
+                lambda: BaostockSource().fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
+            ),
+            (
+                self.public_guard,
+                "AkShare 新浪",
+                "当天行情快照",
+                lambda: AkShareSource().fetch_sina_snapshot(include_bj=include_bj, exclude_star=exclude_star),
+            ),
+            (
+                self.public_guard,
+                "AkShare 腾讯",
+                "当天行情快照",
+                lambda: AkShareSource().fetch_tencent_snapshot(include_bj=include_bj, exclude_star=exclude_star),
+            ),
+            (
+                self.public_guard,
+                "AData",
+                "股票基础信息",
+                lambda: ADataSource().fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
+            ),
+            (
+                self.public_guard,
+                "AData",
+                "当天行情快照",
+                lambda: ADataSource().fetch_snapshot(
+                    include_bj=include_bj,
+                    exclude_star=exclude_star,
+                    code_list=sample_codes,
+                ),
+            ),
+        ]
+        for guard, source, capability, fetcher in probes:
+            result = guard.call(
+                source,
+                capability,
+                fetcher,
+                ttl_minutes=settings.source_probe_ttl_minutes,
+                max_attempts=1,
+                ignore_circuit=True,
+            )
+            results.append(
+                {
+                    "source": source,
+                    "capability": capability,
+                    "status": result.status,
+                    "rows": len(result.frame) if not result.frame.empty else 0,
+                    "message": result.message,
+                }
+            )
+        self.data_service.refresh_capabilities()
+        return results
+
+    def _run_analysis(self, task_id: str, config: Dict[str, Any], analysis_runner: Any) -> None:
+        try:
+            self._patch_task(task_id, stage="读取本地数据", processed=1, total=3)
+            run_id = analysis_runner.run(config)
+            candidates = self.data_service.candidates(run_id, limit=1)
+            self._patch_task(
+                task_id,
+                status="completed_full",
+                stage="分析完成",
+                processed=3,
+                success=1,
+                summary={
+                    "analysis_run_id": run_id,
+                    "candidate_count": len(candidates.get("rows", [])),
+                    "zero_reason": candidates.get("zero_reason"),
+                },
+                finished_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            self._patch_task(
+                task_id,
+                status="failed",
+                stage="分析失败",
+                failed=1,
+                error_message=str(exc),
+                warning=str(exc),
+                finished_at=datetime.utcnow(),
+            )
+
+    def _run_update(self, task_id: str, options: Dict[str, Any]) -> None:
+        force = bool(options.get("force"))
+        include_bj = bool(options.get("include_bj", settings.include_bj))
+        exclude_star = bool(options.get("exclude_star_board", settings.exclude_star_board))
+        limit = int(options.get("limit") or settings.update_limit or 0)
+        warnings: List[str] = []
+        failed_sources = 0
+        success_sources = 0
+        start = date.today() - timedelta(days=settings.default_history_days)
+        end = date.today()
+        try:
+            self._patch_task(task_id, stage="刷新股票池", source="Baostock")
+            stock_count = self._update_basics(force, include_bj, exclude_star, warnings)
+            success_sources += 1 if stock_count else 0
+
+            self._patch_task(task_id, stage="刷新快照", source="AkShare 新浪")
+            snapshot_count = self._update_snapshots(force, include_bj, exclude_star, warnings)
+            if snapshot_count:
+                success_sources += 1
+            else:
+                failed_sources += 1
+
+            stocks = self.db.query(
+                "SELECT code FROM stock_basic ORDER BY code" + (" LIMIT ?" if limit else ""),
+                [limit] if limit else [],
+            )
+            total = len(stocks)
+            self._patch_task(task_id, stage="刷新历史 K 线", source="Baostock", total=total)
+            history_success, history_failed, history_skipped = self._update_history(
+                stocks,
+                start,
+                end,
+                force,
+                task_id,
+            )
+            if history_success:
+                success_sources += 1
+            if history_failed:
+                failed_sources += 1
+
+            self._patch_task(task_id, stage="刷新流通市值", source="本地缓存")
+            float_count = self._update_float_values_from_snapshots()
+
+            self.data_service.refresh_capabilities()
+            status = "completed_full" if failed_sources == 0 and not warnings else "completed_partial"
+            self._patch_task(
+                task_id,
+                status=status,
+                stage="更新完成" if status == "completed_full" else "部分完成",
+                success=history_success,
+                failed=history_failed,
+                skipped=history_skipped,
+                warning=warnings[-1] if warnings else None,
+                summary={
+                    "stock_count": stock_count,
+                    "snapshot_count": snapshot_count,
+                    "history_success": history_success,
+                    "history_failed": history_failed,
+                    "history_skipped": history_skipped,
+                    "float_market_value_count": float_count,
+                    "warnings": warnings,
+                    "success_sources": success_sources,
+                    "failed_sources": failed_sources,
+                },
+                finished_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            self._patch_task(
+                task_id,
+                status="failed",
+                stage="更新失败",
+                failed=failed_sources + 1,
+                error_message=str(exc),
+                warning=str(exc),
+                finished_at=datetime.utcnow(),
+            )
+
+    def _update_basics(
+        self,
+        force: bool,
+        include_bj: bool,
+        exclude_star: bool,
+        warnings: List[str],
+    ) -> int:
+        existing = self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0
+        rows_written = 0
+        if existing and not force:
+            self.public_guard.record(
+                "本地缓存",
+                "股票基础信息",
+                "available",
+                payload={"rows": existing, "cache": True},
+            )
+            return int(existing)
+        baostock = BaostockSource()
+        try:
+            frame = baostock.fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star)
+            rows_written += self.db.upsert("stock_basic", frame.to_dict("records"), ["code"])
+            self.baostock_guard.record(
+                "Baostock",
+                "股票基础信息",
+                "available",
+                payload={"rows": len(frame)},
+            )
+        except Exception as exc:
+            warnings.append(f"Baostock 股票池失败：{exc}")
+            self.baostock_guard.record("Baostock", "股票基础信息", "failed", message=str(exc))
+
+        adata = ADataSource()
+        result = self.public_guard.call(
+            "AData",
+            "股票基础信息",
+            lambda: adata.fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
+            ttl_minutes=settings.source_probe_ttl_minutes,
+            max_attempts=1,
+        )
+        if result.status == "available":
+            rows_written += self._merge_basic_names(result.frame)
+        elif result.message:
+            warnings.append(f"AData 股票基础信息跳过：{result.message}")
+        return rows_written or int(existing)
+
+    def _update_snapshots(
+        self,
+        force: bool,
+        include_bj: bool,
+        exclude_star: bool,
+        warnings: List[str],
+    ) -> int:
+        today_rows = self.db.scalar(
+            "SELECT COUNT(*) FROM daily_snapshots WHERE date = current_date"
+        ) or 0
+        if today_rows and not force:
+            self.public_guard.record(
+                "本地缓存",
+                "当天行情快照",
+                "available",
+                payload={"rows": today_rows, "cache": True},
+            )
+            return int(today_rows)
+        ak = AkShareSource()
+        result = self.public_guard.call(
+            "AkShare 新浪",
+            "当天行情快照",
+            lambda: ak.fetch_sina_snapshot(include_bj=include_bj, exclude_star=exclude_star),
+            ttl_minutes=settings.source_probe_ttl_minutes,
+            max_attempts=2,
+        )
+        chosen = result
+        if result.status != "available":
+            warnings.append(f"新浪快照失败：{result.message}")
+            chosen = self.public_guard.call(
+                "AkShare 腾讯",
+                "当天行情快照",
+                lambda: ak.fetch_tencent_snapshot(include_bj=include_bj, exclude_star=exclude_star),
+                ttl_minutes=settings.source_probe_ttl_minutes,
+                max_attempts=1,
+            )
+        if chosen.status != "available":
+            if chosen.message:
+                warnings.append(f"腾讯快照跳过：{chosen.message}")
+            adata = ADataSource()
+            codes = [
+                item["code"].split(".")[0]
+                for item in self.db.query("SELECT code FROM stock_basic ORDER BY code LIMIT 500")
+            ]
+            chosen = self.public_guard.call(
+                "AData",
+                "当天行情快照",
+                lambda: adata.fetch_snapshot(
+                    include_bj=include_bj,
+                    exclude_star=exclude_star,
+                    code_list=codes,
+                ),
+                ttl_minutes=settings.source_probe_ttl_minutes,
+                max_attempts=1,
+            )
+        if chosen.status == "available":
+            records = chosen.frame.to_dict("records")
+            count = self.db.upsert("daily_snapshots", records, ["code", "date"])
+            self._merge_snapshot_names(chosen.frame)
+            return count
+        if chosen.message:
+            warnings.append(f"快照全部降级到本地缓存：{chosen.message}")
+        return int(today_rows)
+
+    def _update_history(
+        self,
+        stocks: List[Dict[str, Any]],
+        start: date,
+        end: date,
+        force: bool,
+        task_id: str,
+    ) -> tuple:
+        baostock = BaostockSource()
+        adata = ADataSource()
+        success = 0
+        failed = 0
+        skipped = 0
+        total = len(stocks)
+        for index, row in enumerate(stocks, start=1):
+            code = row["code"]
+            latest = self.db.scalar("SELECT MAX(date) FROM historical_bars WHERE code = ?", [code])
+            if latest and not force and str(latest) >= (date.today() - timedelta(days=3)).isoformat():
+                skipped += 1
+                self._patch_task(
+                    task_id,
+                    current_stock=code,
+                    processed=index,
+                    skipped=skipped,
+                    success=success,
+                    failed=failed,
+                )
+                continue
+            try:
+                self.baostock_guard.sleep()
+                frame = baostock.fetch_history(code, start, end)
+                if frame.empty:
+                    raise RuntimeError("Baostock 历史行情为空")
+                self.db.upsert("historical_bars", frame.to_dict("records"), ["code", "date"])
+                success += 1
+            except Exception:
+                try:
+                    self.public_guard.sleep()
+                    frame = adata.fetch_history(code, start, end)
+                    self.db.upsert("historical_bars", frame.to_dict("records"), ["code", "date"])
+                    self.public_guard.record(
+                        "AData",
+                        "历史 K 线",
+                        "available",
+                        payload={"code": code, "rows": len(frame)},
+                    )
+                    success += 1
+                except Exception as fallback_exc:
+                    failed += 1
+                    self.baostock_guard.record(
+                        "Baostock",
+                        "历史 K 线",
+                        "failed",
+                        message=f"{code}: {fallback_exc}",
+                        ttl_minutes=15,
+                    )
+            self._patch_task(
+                task_id,
+                current_stock=code,
+                total=total,
+                processed=index,
+                success=success,
+                failed=failed,
+                skipped=skipped,
+            )
+        if success:
+            self.baostock_guard.record(
+                "Baostock",
+                "历史 K 线",
+                "available",
+                payload={"success": success, "failed": failed, "skipped": skipped},
+            )
+        return success, failed, skipped
+
+    def _update_float_values_from_snapshots(self) -> int:
+        snapshots = self.db.query(
+            """
+            SELECT code, date, latest_price, float_market_value, source
+            FROM daily_snapshots
+            WHERE date = (SELECT MAX(date) FROM daily_snapshots)
+              AND float_market_value IS NOT NULL
+            """
+        )
+        rows = []
+        for item in snapshots:
+            latest = safe_float(item.get("latest_price"))
+            float_mv = safe_float(item.get("float_market_value"))
+            rows.append(
+                {
+                    "code": item["code"],
+                    "date": item["date"],
+                    "float_shares": float_mv / latest if latest and latest > 0 and float_mv else None,
+                    "float_market_value": float_mv,
+                    "source": item.get("source") or "本地缓存",
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+        count = self.db.upsert("float_market_values", rows, ["code", "date"])
+        if count:
+            self.public_guard.record(
+                "AkShare 新浪",
+                "流通市值",
+                "available",
+                payload={"rows": count, "method": "snapshot_float_market_value"},
+            )
+        else:
+            self.public_guard.record(
+                "本地缓存",
+                "流通市值",
+                "available",
+                payload={"rows": 0, "cache": True},
+            )
+        return count
+
+    def _merge_basic_names(self, frame: pd.DataFrame) -> int:
+        if frame.empty:
+            return 0
+        existing_rows = self.db.query("SELECT code, name FROM stock_basic")
+        existing = {row["code"]: row.get("name") for row in existing_rows}
+        rows = []
+        name_updates = []
+        for item in frame.to_dict("records"):
+            if item["code"] in existing:
+                if item.get("name") and not existing[item["code"]]:
+                    name_updates.append(item)
+            else:
+                rows.append(item)
+        if name_updates:
+            for item in name_updates:
+                self.db.execute(
+                    "UPDATE stock_basic SET name = ?, updated_at = ? WHERE code = ?",
+                    [item["name"], datetime.utcnow(), item["code"]],
+                    write=True,
+                )
+        inserted = self.db.upsert("stock_basic", rows, ["code"]) if rows else 0
+        return inserted + len(name_updates)
+
+    def _merge_snapshot_names(self, frame: pd.DataFrame) -> None:
+        for item in frame.to_dict("records"):
+            if item.get("name"):
+                self.db.execute(
+                    """
+                    UPDATE stock_basic
+                    SET name = COALESCE(NULLIF(name, ''), ?), updated_at = ?
+                    WHERE code = ?
+                    """,
+                    [item["name"], datetime.utcnow(), item["code"]],
+                    write=True,
+                )
+
+    def _write_task(self, task_id: str, **values: Any) -> None:
+        now = datetime.utcnow()
+        row = {
+            "id": task_id,
+            "kind": values.get("kind"),
+            "status": values.get("status"),
+            "stage": values.get("stage"),
+            "source": values.get("source"),
+            "current_stock": values.get("current_stock"),
+            "total": values.get("total", 0),
+            "processed": values.get("processed", 0),
+            "success": values.get("success", 0),
+            "failed": values.get("failed", 0),
+            "skipped": values.get("skipped", 0),
+            "warning": values.get("warning"),
+            "summary_json": json.dumps(values.get("summary") or {}, ensure_ascii=False),
+            "cancel_requested": False,
+            "started_at": values.get("started_at") or now,
+            "updated_at": now,
+            "finished_at": values.get("finished_at"),
+            "error_message": values.get("error_message"),
+        }
+        self.db.upsert("task_runs", [row], ["id"])
+
+    def _patch_task(self, task_id: str, **changes: Any) -> None:
+        current = self.db.query("SELECT * FROM task_runs WHERE id = ?", [task_id])
+        if not current:
+            return
+        row = current[0]
+        summary = changes.pop("summary", None)
+        if summary is not None:
+            changes["summary_json"] = json.dumps(summary, ensure_ascii=False)
+        changes["updated_at"] = datetime.utcnow()
+        merged = {**row, **changes}
+        self.db.upsert("task_runs", [merged], ["id"])

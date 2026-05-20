@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime
+
+from backend.app.db import Database
+from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG, SYSTEM_PRESETS
+
+
+SCHEMA_VERSION = 1
+
+
+MIGRATIONS = [
+    """
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS stock_basic (
+        code TEXT PRIMARY KEY,
+        name TEXT,
+        exchange TEXT,
+        list_date DATE,
+        source TEXT,
+        is_st BOOLEAN DEFAULT FALSE,
+        suspended BOOLEAN DEFAULT FALSE,
+        updated_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS historical_bars (
+        code TEXT,
+        date DATE,
+        open DOUBLE,
+        high DOUBLE,
+        low DOUBLE,
+        close DOUBLE,
+        prev_close DOUBLE,
+        volume DOUBLE,
+        amount DOUBLE,
+        turn DOUBLE,
+        pct_chg DOUBLE,
+        tradestatus TEXT,
+        is_st BOOLEAN,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS daily_snapshots (
+        code TEXT,
+        date DATE,
+        name TEXT,
+        latest_price DOUBLE,
+        pct_chg DOUBLE,
+        high DOUBLE,
+        low DOUBLE,
+        volume DOUBLE,
+        amount DOUBLE,
+        turnover_rate DOUBLE,
+        float_market_value DOUBLE,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS float_market_values (
+        code TEXT,
+        date DATE,
+        float_shares DOUBLE,
+        float_market_value DOUBLE,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS source_status (
+        source TEXT,
+        capability TEXT,
+        status TEXT,
+        last_checked TIMESTAMP,
+        last_success TIMESTAMP,
+        last_failure TIMESTAMP,
+        failure_reason TEXT,
+        ttl_until TIMESTAMP,
+        payload_json TEXT,
+        PRIMARY KEY (source, capability)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS data_capabilities (
+        capability TEXT PRIMARY KEY,
+        actual_sources TEXT,
+        fallback_sources TEXT,
+        coverage_count INTEGER,
+        missing_count INTEGER,
+        latest_update TIMESTAMP,
+        last_failure_reason TEXT,
+        uses_cache BOOLEAN,
+        can_backfill BOOLEAN,
+        participates_in_analysis BOOLEAN,
+        updated_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS strategy_presets (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        config_json TEXT,
+        is_system BOOLEAN,
+        is_default BOOLEAN,
+        created_at TIMESTAMP,
+        updated_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS task_runs (
+        id TEXT PRIMARY KEY,
+        kind TEXT,
+        status TEXT,
+        stage TEXT,
+        source TEXT,
+        current_stock TEXT,
+        total INTEGER,
+        processed INTEGER,
+        success INTEGER,
+        failed INTEGER,
+        skipped INTEGER,
+        warning TEXT,
+        summary_json TEXT,
+        cancel_requested BOOLEAN DEFAULT FALSE,
+        started_at TIMESTAMP,
+        updated_at TIMESTAMP,
+        finished_at TIMESTAMP,
+        error_message TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS analysis_runs (
+        id TEXT PRIMARY KEY,
+        status TEXT,
+        started_at TIMESTAMP,
+        finished_at TIMESTAMP,
+        config_json TEXT,
+        summary_json TEXT,
+        error_message TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS funnel_stats (
+        run_id TEXT,
+        order_index INTEGER,
+        step_name TEXT,
+        before_count INTEGER,
+        after_count INTEGER,
+        removed_count INTEGER,
+        note TEXT,
+        PRIMARY KEY (run_id, order_index)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS candidate_results (
+        run_id TEXT,
+        rank INTEGER,
+        code TEXT,
+        name TEXT,
+        latest_price DOUBLE,
+        pct_chg DOUBLE,
+        amount DOUBLE,
+        volume DOUBLE,
+        turnover_rate DOUBLE,
+        amplitude DOUBLE,
+        rps20 DOUBLE,
+        rps60 DOUBLE,
+        rps120 DOUBLE,
+        ma_short DOUBLE,
+        ma_long DOUBLE,
+        float_market_value DOUBLE,
+        signal_type TEXT,
+        signal_score DOUBLE,
+        data_sources TEXT,
+        reasons_json TEXT,
+        chart_url TEXT,
+        metrics_json TEXT,
+        created_at TIMESTAMP,
+        PRIMARY KEY (run_id, code)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS warnings (
+        id TEXT PRIMARY KEY,
+        scope TEXT,
+        level TEXT,
+        message TEXT,
+        detail TEXT,
+        created_at TIMESTAMP
+    )
+    """,
+]
+
+
+def migrate(db: Database) -> None:
+    for sql in MIGRATIONS:
+        db.execute(sql, write=True)
+    db.upsert(
+        "schema_migrations",
+        [{"version": SCHEMA_VERSION, "applied_at": datetime.utcnow()}],
+        ["version"],
+    )
+    seed_strategy_presets(db)
+
+
+def seed_strategy_presets(db: Database) -> None:
+    now = datetime.utcnow()
+    existing = db.query("SELECT id FROM strategy_presets")
+    existing_ids = {row["id"] for row in existing}
+    rows = []
+    for preset in SYSTEM_PRESETS:
+        rows.append(
+            {
+                "id": preset["id"],
+                "name": preset["name"],
+                "config_json": json.dumps(preset["config"], ensure_ascii=False),
+                "is_system": True,
+                "is_default": preset.get("is_default", False),
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+    if not existing_ids:
+        db.upsert("strategy_presets", rows, ["id"])
+        return
+    for row in rows:
+        if row["id"] not in existing_ids:
+            db.upsert("strategy_presets", [row], ["id"])
+    if not db.scalar("SELECT COUNT(*) FROM strategy_presets WHERE is_default = TRUE"):
+        db.execute(
+            "UPDATE strategy_presets SET is_default = TRUE WHERE id = ?",
+            [SYSTEM_PRESETS[0]["id"]],
+            write=True,
+        )

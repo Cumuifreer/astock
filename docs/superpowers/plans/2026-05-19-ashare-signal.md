@@ -83,5 +83,5 @@
 - Create: `scripts/backup_db.py`
 
 - [ ] Document Ubuntu deployment, frontend build, backend startup, migrations, backup, and systemd.
-- [ ] Verify Python compile, migration, key APIs, frontend install/build, backend static serving, no banned EastMoney calls, and source detection.
+- [ ] Verify Python compile, migration, key APIs, frontend install/build, backend static serving, banned-source absence, and source detection.
 - [ ] Commit and push to `main`.

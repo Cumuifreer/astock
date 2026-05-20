@@ -12,7 +12,7 @@ The app is a FastAPI backend with a DuckDB warehouse and a Vite React frontend s
 
 Baostock is the historical K-line primary source and provides front-adjusted bars, turnover, ST status, suspension status, volume, and amount. AkShare Sina is the main full-market snapshot source. AkShare Tencent is detected dynamically and used as a snapshot fallback when the installed AkShare version exposes a compatible Tencent snapshot interface; otherwise its unavailable reason is persisted and displayed. AData is optional and participates as a fallback for stock basics, historical bars, snapshots, and float-market-value enrichment when installed and non-empty.
 
-No EastMoney APIs are called directly. Banned AkShare EastMoney functions are not referenced.
+No EM-related market source is called directly or listed as a source.
 
 ## Data Model
 

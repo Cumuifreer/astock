@@ -1,0 +1,115 @@
+# A-Share Signal
+
+A-Share Signal 是一个私人使用的 A 股技术分析 Web 应用。它只做本地数据缓存、技术策略配置、后台分析和候选解释，不接券商账户，不做登录权限，也不做自动交易。
+
+## 架构
+
+- 后端：FastAPI，负责 API、后台任务、数据源适配和前端静态文件托管。
+- 数据仓库：DuckDB，默认文件为 `data/ashare_signal.duckdb`，不会提交到 Git。
+- 前端：Vite + React + TypeScript，构建产物由后端托管。
+- 任务：数据更新和分析分开运行；点击后立即返回，前端轮询真实进度。
+
+## 数据源
+
+- Baostock：历史 K 线主源，使用前复权，保存成交量、成交额、换手率 `turn`、ST、停牌状态。
+- AkShare 新浪：当天行情快照主源，保存最新价、涨跌幅、最高、最低、成交量、成交额、名称，能取到流通市值时一并缓存。
+- AkShare 腾讯：当天行情快照备用源。系统会检测当前 AkShare 是否暴露兼容接口；不可用时会记录原因并在数据地图显示。
+- AData：可选备用源。安装后自动检测，用于股票基础信息、快照、历史行情 fallback；接口返回空或不可用不会影响主流程。
+- 本地缓存：页面刷新、服务重启、外部源失败时都从 DuckDB 恢复已有状态。
+
+项目不接入东财 / EM 相关接口；数据源名称和数据地图中也不会把它列为可用来源。
+
+## 指标
+
+- 换手率：优先来自 Baostock 历史 K 线字段 `turn`；缺失会计入覆盖率，策略可选择跳过或降级。
+- RPS：直接用本地历史收盘价计算 RPS20、RPS60、RPS120。计算方式为近 N 日涨幅在本地股票池中的百分位排名乘以 100。
+- 振幅：直接用本地 K 线计算，`(high - low) / prev_close`。
+- 流通市值：优先使用本地缓存；AkShare 新浪快照提供流通市值字段时写入缓存。缺失时按策略配置跳过或降级，不会导致分析失败。
+
+## 本地启动
+
+```bash
+python3 -m pip install -r requirements.txt
+npm --prefix frontend install
+npm --prefix frontend run build
+python3 scripts/init_db.py
+python3 -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+```
+
+打开 `http://127.0.0.1:8000`。
+
+开发前端时可以另开 Vite：
+
+```bash
+npm --prefix frontend run dev
+```
+
+Vite 会把 `/api` 代理到 `127.0.0.1:8000`。
+
+## Ubuntu 部署
+
+```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip nodejs npm git
+git clone <your-repo-url> /opt/ashare-signal
+cd /opt/ashare-signal
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+npm --prefix frontend install
+npm --prefix frontend run build
+python scripts/init_db.py
+python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+```
+
+更新部署：
+
+```bash
+cd /opt/ashare-signal
+git pull
+. .venv/bin/activate
+pip install -r requirements.txt
+npm --prefix frontend install
+npm --prefix frontend run build
+python scripts/init_db.py
+sudo systemctl restart ashare-signal
+```
+
+## systemd 示例
+
+```ini
+[Unit]
+Description=A-Share Signal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/ashare-signal
+Environment=ASHARE_DB_PATH=/opt/ashare-signal/data/ashare_signal.duckdb
+ExecStart=/opt/ashare-signal/.venv/bin/python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## 备份
+
+```bash
+python scripts/backup_db.py
+```
+
+备份文件会写入 `data/backups/`。
+
+## API 快速检查
+
+```bash
+curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:8000/api/bootstrap
+curl http://127.0.0.1:8000/api/status/update
+curl http://127.0.0.1:8000/api/status/analyze
+curl http://127.0.0.1:8000/api/candidates
+curl http://127.0.0.1:8000/api/data/overview
+curl http://127.0.0.1:8000/api/data/capabilities
+```
