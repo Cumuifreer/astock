@@ -8,6 +8,7 @@ import {
   Copy,
   Database,
   Gauge,
+  History,
   Layers3,
   LineChart,
   Play,
@@ -26,6 +27,8 @@ import {
 import { api } from './api';
 import type {
   Bootstrap,
+  BacktestResult,
+  BacktestSignal,
   Candidate,
   CandidateBundle,
   Capability,
@@ -38,7 +41,7 @@ import type {
 } from './types';
 import './styles.css';
 
-type Tab = 'overview' | 'warehouse' | 'strategy' | 'results' | 'map' | 'status';
+type Tab = 'overview' | 'warehouse' | 'strategy' | 'results' | 'backtest' | 'map' | 'status';
 type UpdateMode = 'full' | 'daily_light';
 
 const navItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
@@ -46,6 +49,7 @@ const navItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: 'warehouse', label: '数据仓库', icon: <Database size={17} /> },
   { id: 'strategy', label: '策略', icon: <SlidersHorizontal size={17} /> },
   { id: 'results', label: '分析结果', icon: <BarChart3 size={17} /> },
+  { id: 'backtest', label: '回测', icon: <History size={17} /> },
   { id: 'map', label: '数据地图', icon: <Layers3 size={17} /> },
   { id: 'status', label: '运行状态', icon: <Workflow size={17} /> },
 ];
@@ -118,12 +122,13 @@ function App() {
 
   const updateRunning = bootstrap?.update_status?.status === 'running';
   const analyzeRunning = bootstrap?.analyze_status?.status === 'running';
+  const backtestRunning = bootstrap?.backtest_status?.status === 'running';
 
   useEffect(() => {
-    if (!updateRunning && !analyzeRunning) return;
+    if (!updateRunning && !analyzeRunning && !backtestRunning) return;
     const timer = window.setInterval(() => void load(true), 2200);
     return () => window.clearInterval(timer);
-  }, [updateRunning, analyzeRunning]);
+  }, [updateRunning, analyzeRunning, backtestRunning]);
 
   async function startUpdate(force = false, mode: UpdateMode = 'full') {
     try {
@@ -145,6 +150,18 @@ function App() {
       setTab('status');
     } catch (err) {
       setError(err instanceof Error ? err.message : '无法启动分析');
+    }
+  }
+
+  async function startBacktest(options: Record<string, unknown>) {
+    if (!strategy) return;
+    try {
+      await api.startBacktest({ ...options, config: strategy });
+      setNotice('回测已开始');
+      await load(true);
+      setTab('backtest');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '无法启动回测');
     }
   }
 
@@ -232,10 +249,20 @@ function App() {
       );
     }
     if (tab === 'results') return <Results candidates={bootstrap.candidates.rows} funnel={bootstrap.candidates.funnel} zeroReason={bootstrap.candidates.zero_reason} runId={bootstrap.candidates.run_id} />;
+    if (tab === 'backtest') {
+      return (
+        <BacktestPage
+          result={bootstrap.backtest}
+          task={bootstrap.backtest_status}
+          strategy={strategy}
+          startBacktest={startBacktest}
+        />
+      );
+    }
     if (tab === 'map') {
       return <DataMap capabilities={bootstrap.capabilities} afterProbe={() => load(true)} />;
     }
-    return <StatusBoard update={bootstrap.update_status} analyze={bootstrap.analyze_status} latestAnalysis={bootstrap.latest_analysis} />;
+    return <StatusBoard update={bootstrap.update_status} analyze={bootstrap.analyze_status} backtest={bootstrap.backtest_status} latestAnalysis={bootstrap.latest_analysis} />;
   }, [bootstrap, tab, strategy, strategyName, selectedPresetId]);
 
   return (
@@ -264,6 +291,7 @@ function App() {
         <div className="rail-footer">
           <StatusDot task={bootstrap?.update_status} label="更新" />
           <StatusDot task={bootstrap?.analyze_status} label="分析" />
+          <StatusDot task={bootstrap?.backtest_status} label="回测" />
         </div>
       </aside>
 
@@ -915,6 +943,159 @@ function ReportSelector({
   );
 }
 
+function BacktestPage({
+  result,
+  task,
+  strategy,
+  startBacktest,
+}: {
+  result: BacktestResult;
+  task: TaskRun | null;
+  strategy: StrategyConfig;
+  startBacktest: (options: Record<string, unknown>) => Promise<void>;
+}) {
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [step, setStep] = useState('5');
+  const [candidateLimit, setCandidateLimit] = useState(String(strategy.candidate_limit || 50));
+  const running = task?.status === 'running';
+
+  useEffect(() => {
+    setCandidateLimit(String(strategy.candidate_limit || 50));
+  }, [strategy.candidate_limit]);
+
+  async function runBacktest() {
+    await startBacktest({
+      start_date: startDate || undefined,
+      end_date: endDate || undefined,
+      step: Number(step) || 5,
+      candidate_limit: Number(candidateLimit) || strategy.candidate_limit || 50,
+    });
+  }
+
+  return (
+    <div className="page-stack">
+      <section className="panel backtest-console">
+        <div className="table-toolbar">
+          <PanelTitle icon={<History size={18} />} title="历史回放" />
+          <button className="primary lime" disabled={running} onClick={runBacktest}>
+            <Play size={16} />
+            开始回测
+          </button>
+        </div>
+        <div className="backtest-form">
+          <label className="field">
+            <span>开始日期</span>
+            <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+            <small className="field-hint">留空使用最近区间</small>
+          </label>
+          <label className="field">
+            <span>结束日期</span>
+            <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            <small className="field-hint">留空避开未完成标签</small>
+          </label>
+          <label className="field">
+            <span>采样间隔</span>
+            <input inputMode="numeric" value={step} onChange={(event) => setStep(event.target.value)} />
+            <small className="field-hint">每隔 N 个交易日回放一次</small>
+          </label>
+          <label className="field">
+            <span>每次候选上限</span>
+            <input inputMode="numeric" value={candidateLimit} onChange={(event) => setCandidateLimit(event.target.value)} />
+            <small className="field-hint">沿用当前策略，可临时覆盖</small>
+          </label>
+        </div>
+        <div className="backtest-mode-readout">
+          <span>{analysisModeLabel(strategy.analysis_mode)}</span>
+          <b>{strategySummary(strategy)}</b>
+        </div>
+        <TaskStrip task={task} fallback="回测尚未启动" />
+      </section>
+
+      <BacktestSummary result={result} />
+      <BacktestSignals signals={result?.signals || []} />
+    </div>
+  );
+}
+
+function BacktestSummary({ result }: { result: BacktestResult }) {
+  const run = result?.run;
+  const summary = run?.summary || {};
+  return (
+    <section className="backtest-summary-grid">
+      <MetricCard label="信号数" value={formatInt(summary.signal_count)} sub={run ? formatShortDateTime(run.finished_at || run.started_at) : '暂无回测'} icon={<History size={18} />} />
+      <MetricCard label="10日均值" value={formatPercentRatio(summary.avg_return_10d)} sub={`20日标签 ${formatPercentRatio(summary.label_20d_coverage)}`} icon={<LineChart size={18} />} />
+      <MetricCard label="+5% 命中" value={formatPercentRatio(summary.hit_5pct_10d_rate)} sub={`+8% ${formatPercentRatio(summary.hit_8pct_10d_rate)}`} icon={<Star size={18} />} />
+      <MetricCard label="10日回撤" value={formatPercentRatio(summary.median_max_drawdown_10d)} sub={`回测日 ${formatInt(summary.evaluated_dates)}`} icon={<ShieldAlert size={18} />} />
+      {run && (
+        <div className="panel backtest-runline">
+          <span className={`status-badge ${run.status}`}>{statusLabel(run.status)}</span>
+          <strong>{formatDate(summary.start_date)} → {formatDate(summary.end_date)}</strong>
+          <small>每 {formatInt(summary.step)} 个交易日采样 · {analysisModeLabel(run.config?.analysis_mode)}</small>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function BacktestSignals({ signals }: { signals: BacktestSignal[] }) {
+  return (
+    <section className="panel">
+      <div className="table-toolbar">
+        <PanelTitle icon={<BarChart3 size={18} />} title="回测信号" />
+        <span className="pill">{formatInt(signals.length)} 条</span>
+      </div>
+      {signals.length === 0 ? (
+        <EmptyState text="暂无回测信号。" />
+      ) : (
+        <div className="table-wrap">
+          <table className="backtest-table">
+            <thead>
+              <tr>
+                <th>信号日</th>
+                <th>#</th>
+                <th>代码</th>
+                <th>名称</th>
+                <th>信号</th>
+                <th>分数</th>
+                <th>入场</th>
+                <th>5日</th>
+                <th>10日</th>
+                <th>20日</th>
+                <th>10日最高</th>
+                <th>10日回撤</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signals.map((row) => (
+                <tr key={`${row.run_id}-${row.as_of_date}-${row.code}`}>
+                  <td className="mono">{formatDate(row.as_of_date)}</td>
+                  <td>{row.rank}</td>
+                  <td className="mono">{row.code}</td>
+                  <td>
+                    <div className="name-cell">
+                      <strong>{row.name}</strong>
+                      <span>{row.reasons?.slice(0, 2).join(' / ')}</span>
+                    </div>
+                  </td>
+                  <td><span className="signal">{row.signal_type}</span></td>
+                  <td><strong>{formatPrice(row.signal_score)}</strong></td>
+                  <td>{formatDate(row.entry_date)} · {formatPrice(row.entry_price)}</td>
+                  <td className={toneClass(Number(row.return_5d || 0))}>{formatPercentRatio(row.return_5d)}</td>
+                  <td className={toneClass(Number(row.return_10d || 0))}>{formatPercentRatio(row.return_10d)}</td>
+                  <td className={toneClass(Number(row.return_20d || 0))}>{formatPercentRatio(row.return_20d)}</td>
+                  <td className={toneClass(Number(row.max_return_10d || 0))}>{formatPercentRatio(row.max_return_10d)}</td>
+                  <td className={toneClass(Number(row.max_drawdown_10d || 0))}>{formatPercentRatio(row.max_drawdown_10d)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DataMap({ capabilities, afterProbe }: { capabilities: Capability[]; afterProbe: () => Promise<void> }) {
   const [probing, setProbing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -977,10 +1158,12 @@ function DataMap({ capabilities, afterProbe }: { capabilities: Capability[]; aft
 function StatusBoard({
   update,
   analyze,
+  backtest,
   latestAnalysis,
 }: {
   update: TaskRun | null;
   analyze: TaskRun | null;
+  backtest: TaskRun | null;
   latestAnalysis: unknown;
 }) {
   return (
@@ -992,6 +1175,10 @@ function StatusBoard({
       <section className="panel">
         <PanelTitle icon={<Play size={18} />} title="运行分析" />
         <TaskDetail task={analyze} />
+      </section>
+      <section className="panel">
+        <PanelTitle icon={<History size={18} />} title="策略回测" />
+        <TaskDetail task={backtest} />
       </section>
       <section className="panel wide-panel">
         <PanelTitle icon={<BarChart3 size={18} />} title="最近分析" />
@@ -1433,6 +1620,11 @@ function formatShortDateTime(value: string | null | undefined) {
     minute: '2-digit',
     hour12: false,
   }).format(date).replace(/\//g, '-');
+}
+
+function formatDate(value: unknown) {
+  if (!value) return '-';
+  return String(value).slice(0, 10);
 }
 
 function parseBackendUtc(value: string) {

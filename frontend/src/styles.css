@@ -243,6 +243,12 @@ h1 {
   gap: 14px;
 }
 
+.backtest-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 14px;
+}
+
 .metric-card,
 .panel,
 .cap-card {
@@ -554,6 +560,55 @@ h1 {
   gap: 12px;
 }
 
+.backtest-console {
+  display: grid;
+  gap: 12px;
+}
+
+.backtest-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.backtest-mode-readout {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid rgba(59, 240, 193, 0.16);
+  background: rgba(59, 240, 193, 0.04);
+  color: var(--soft);
+}
+
+.backtest-mode-readout span {
+  color: var(--lime);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.backtest-mode-readout b {
+  font-weight: 650;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.backtest-runline {
+  min-height: 144px;
+  display: grid;
+  align-content: center;
+  gap: 10px;
+}
+
+.backtest-runline strong {
+  font-size: 24px;
+  font-family: "DIN Condensed", "Aptos Display", sans-serif;
+}
+
+.backtest-runline small {
+  color: var(--muted);
+}
+
 .toggle {
   min-height: 40px;
   display: flex;
@@ -706,6 +761,10 @@ table {
   width: 100%;
   min-width: 980px;
   border-collapse: collapse;
+}
+
+.backtest-table {
+  min-width: 1220px;
 }
 
 th,
@@ -1135,11 +1194,13 @@ a {
 
   nav,
   .metric-grid,
+  .backtest-summary-grid,
   .split,
   .strategy-layout,
   .status-grid,
   .cap-grid,
-  .form-grid {
+  .form-grid,
+  .backtest-form {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1169,6 +1230,8 @@ a {
   .status-grid,
   .cap-grid,
   .form-grid,
+  .backtest-form,
+  .backtest-summary-grid,
   .metric-grid {
     grid-template-columns: 1fr;
   }
@@ -1197,6 +1260,11 @@ a {
   }
 
   .strategy-readout {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .backtest-mode-readout {
     align-items: flex-start;
     flex-direction: column;
   }

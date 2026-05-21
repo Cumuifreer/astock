@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from backend.app.db import get_database
 from backend.app.schema import migrate
 from backend.app.services.analysis_service import AnalysisService
+from backend.app.services.backtest_service import BacktestService
 from backend.app.services.data_service import DataService
 from backend.app.services.strategy_service import StrategyService
 from backend.app.services.update_service import TaskBusy, UpdateService
@@ -20,6 +21,7 @@ data_service = DataService(db)
 strategy_service = StrategyService(db)
 analysis_service = AnalysisService(db)
 update_service = UpdateService(db)
+backtest_service = BacktestService(db, analysis_service)
 
 
 @router.get("/health")
@@ -40,8 +42,11 @@ def bootstrap() -> Dict[str, Any]:
         "default_strategy": strategy_service.default_config(),
         "update_status": data_service.latest_task("update"),
         "analyze_status": data_service.latest_task("analyze"),
+        "backtest_status": data_service.latest_task("backtest"),
         "latest_analysis": data_service.latest_analysis_run(),
+        "latest_backtest": data_service.latest_backtest_run(),
         "candidates": data_service.candidates(limit=50),
+        "backtest": data_service.backtest_result(limit=200),
     }
 
 
@@ -109,6 +114,26 @@ def analyze_status() -> Dict[str, Any]:
     }
 
 
+@router.post("/tasks/backtest")
+def start_backtest(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    body = payload or {}
+    config = body.get("config") or strategy_service.default_config()
+    body["config"] = config
+    try:
+        task_id, run_id = backtest_service.start(body)
+    except TaskBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"task_id": task_id, "run_id": run_id, "status": "running"}
+
+
+@router.get("/status/backtest")
+def backtest_status() -> Dict[str, Any]:
+    return {
+        "task": data_service.latest_task("backtest"),
+        "backtest": data_service.latest_backtest_run(),
+    }
+
+
 @router.get("/candidates")
 def candidates(
     run_id: Optional[str] = None,
@@ -136,6 +161,29 @@ def analysis_report(
     if not report.get("analysis"):
         raise HTTPException(status_code=404, detail="分析报告不存在。")
     return report
+
+
+@router.get("/backtests")
+def backtest_runs() -> Dict[str, Any]:
+    return {"rows": data_service.backtest_runs()}
+
+
+@router.get("/backtests/latest")
+def latest_backtest(
+    limit: int = Query(default=500, ge=1, le=2000),
+) -> Dict[str, Any]:
+    return data_service.backtest_result(limit=limit)
+
+
+@router.get("/backtests/{run_id}")
+def backtest_result(
+    run_id: str,
+    limit: int = Query(default=500, ge=1, le=2000),
+) -> Dict[str, Any]:
+    result = data_service.backtest_result(run_id=run_id, limit=limit)
+    if not result.get("run"):
+        raise HTTPException(status_code=404, detail="回测报告不存在。")
+    return result
 
 
 @router.get("/strategies")

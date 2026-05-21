@@ -7,7 +7,7 @@ from backend.app.db import Database
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG, SYSTEM_PRESETS
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 MIGRATIONS = [
@@ -199,6 +199,43 @@ MIGRATIONS = [
         message TEXT,
         detail TEXT,
         created_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS backtest_runs (
+        id TEXT PRIMARY KEY,
+        status TEXT,
+        started_at TIMESTAMP,
+        finished_at TIMESTAMP,
+        config_json TEXT,
+        summary_json TEXT,
+        error_message TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS backtest_signals (
+        run_id TEXT,
+        as_of_date DATE,
+        rank INTEGER,
+        code TEXT,
+        name TEXT,
+        latest_price DOUBLE,
+        signal_type TEXT,
+        signal_score DOUBLE,
+        reasons_json TEXT,
+        metrics_json TEXT,
+        entry_date DATE,
+        entry_price DOUBLE,
+        return_5d DOUBLE,
+        return_10d DOUBLE,
+        return_20d DOUBLE,
+        max_return_10d DOUBLE,
+        max_drawdown_10d DOUBLE,
+        hit_5pct_10d BOOLEAN,
+        hit_8pct_10d BOOLEAN,
+        hit_stop_5pct_10d BOOLEAN,
+        created_at TIMESTAMP,
+        PRIMARY KEY (run_id, as_of_date, code)
     )
     """,
 ]

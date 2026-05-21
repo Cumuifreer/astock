@@ -2,7 +2,7 @@ export type TaskStatus = 'running' | 'completed_full' | 'completed_partial' | 'f
 
 export interface TaskRun {
   id: string;
-  kind: 'update' | 'analyze';
+  kind: 'update' | 'analyze' | 'backtest';
   status: TaskStatus;
   stage: string | null;
   source: string | null;
@@ -148,6 +148,44 @@ export interface AnalysisReportDetail {
   candidates: CandidateBundle;
 }
 
+export interface BacktestRun {
+  id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  summary: Record<string, unknown>;
+  config: StrategyConfig;
+  error_message: string | null;
+}
+
+export interface BacktestSignal {
+  run_id: string;
+  as_of_date: string;
+  rank: number;
+  code: string;
+  name: string;
+  latest_price: number | null;
+  signal_type: string;
+  signal_score: number | null;
+  reasons: string[];
+  metrics: Record<string, unknown>;
+  entry_date: string | null;
+  entry_price: number | null;
+  return_5d: number | null;
+  return_10d: number | null;
+  return_20d: number | null;
+  max_return_10d: number | null;
+  max_drawdown_10d: number | null;
+  hit_5pct_10d: boolean | null;
+  hit_8pct_10d: boolean | null;
+  hit_stop_5pct_10d: boolean | null;
+}
+
+export interface BacktestResult {
+  run: BacktestRun | null;
+  signals: BacktestSignal[];
+}
+
 export interface Candidate {
   rank: number;
   code: string;
@@ -178,6 +216,9 @@ export interface Bootstrap {
   default_strategy: StrategyConfig;
   update_status: TaskRun | null;
   analyze_status: TaskRun | null;
+  backtest_status: TaskRun | null;
   latest_analysis: AnalysisRun | null;
+  latest_backtest: BacktestRun | null;
   candidates: CandidateBundle;
+  backtest: BacktestResult;
 }

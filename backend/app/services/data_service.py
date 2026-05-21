@@ -152,6 +152,40 @@ class DataService:
             row.update(decoded)
         return rows
 
+    def latest_backtest_run(self) -> Optional[Dict[str, Any]]:
+        rows = self.db.query("SELECT * FROM backtest_runs ORDER BY started_at DESC LIMIT 1")
+        if not rows:
+            return None
+        return self._decode_backtest_row(rows[0])
+
+    def backtest_runs(self) -> List[Dict[str, Any]]:
+        rows = self.db.query("SELECT * FROM backtest_runs ORDER BY started_at DESC LIMIT 20")
+        return [self._decode_backtest_row(row) for row in rows]
+
+    def backtest_result(self, run_id: Optional[str] = None, limit: int = 500) -> Dict[str, Any]:
+        target = run_id or self.db.scalar(
+            "SELECT id FROM backtest_runs ORDER BY started_at DESC LIMIT 1"
+        )
+        if not target:
+            return {"run": None, "signals": []}
+        runs = self.db.query("SELECT * FROM backtest_runs WHERE id = ?", [target])
+        if not runs:
+            return {"run": None, "signals": []}
+        rows = self.db.query(
+            """
+            SELECT *
+            FROM backtest_signals
+            WHERE run_id = ?
+            ORDER BY as_of_date DESC, rank
+            LIMIT ?
+            """,
+            [target, max(1, min(limit, 2000))],
+        )
+        for row in rows:
+            row["reasons"] = json.loads(row.pop("reasons_json") or "[]")
+            row["metrics"] = json.loads(row.pop("metrics_json") or "{}")
+        return {"run": self._decode_backtest_row(runs[0]), "signals": rows}
+
     def analysis_reports(self, per_mode_limit: int = 3) -> Dict[str, Any]:
         rows = self.db.query(
             """
@@ -221,6 +255,13 @@ class DataService:
 
     @staticmethod
     def _decode_analysis_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        decoded = dict(row)
+        decoded["summary"] = json.loads(decoded.pop("summary_json") or "{}")
+        decoded["config"] = json.loads(decoded.pop("config_json") or "{}")
+        return decoded
+
+    @staticmethod
+    def _decode_backtest_row(row: Dict[str, Any]) -> Dict[str, Any]:
         decoded = dict(row)
         decoded["summary"] = json.loads(decoded.pop("summary_json") or "{}")
         decoded["config"] = json.loads(decoded.pop("config_json") or "{}")

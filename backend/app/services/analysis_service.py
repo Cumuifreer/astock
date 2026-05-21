@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
@@ -920,43 +920,78 @@ class AnalysisService:
             raise
         return run_id
 
-    def _build_analysis_frame(self, strategy: Dict[str, Any]) -> pd.DataFrame:
-        bars = pd.DataFrame(
-            self.db.query(
-                """
-                SELECT h.*, b.name, b.suspended
-                FROM historical_bars h
-                LEFT JOIN stock_basic b USING (code)
-                WHERE h.date >= current_date - INTERVAL 260 DAY
-                ORDER BY h.code, h.date
-                """
+    def _build_analysis_frame(self, strategy: Dict[str, Any], as_of_date: Optional[date] = None) -> pd.DataFrame:
+        target_date = _date_value(as_of_date) if as_of_date else None
+        if target_date:
+            bars = pd.DataFrame(
+                self.db.query(
+                    """
+                    SELECT h.*, b.name, b.suspended
+                    FROM historical_bars h
+                    LEFT JOIN stock_basic b USING (code)
+                    WHERE h.date >= ? AND h.date <= ?
+                    ORDER BY h.code, h.date
+                    """,
+                    [target_date - timedelta(days=380), target_date],
+                )
             )
-        )
+        else:
+            bars = pd.DataFrame(
+                self.db.query(
+                    """
+                    SELECT h.*, b.name, b.suspended
+                    FROM historical_bars h
+                    LEFT JOIN stock_basic b USING (code)
+                    WHERE h.date >= current_date - INTERVAL 260 DAY
+                    ORDER BY h.code, h.date
+                    """
+                )
+            )
         if bars.empty:
             return pd.DataFrame()
-        snapshots = pd.DataFrame(
-            self.db.query(
-                """
-                SELECT *
-                FROM daily_snapshots
-                WHERE date = (SELECT MAX(date) FROM daily_snapshots)
-                """
+        if target_date:
+            snapshots = pd.DataFrame()
+            float_values = pd.DataFrame(
+                self.db.query(
+                    """
+                    SELECT *
+                    FROM (
+                        SELECT *,
+                               ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS row_num
+                        FROM float_market_values
+                        WHERE date <= ?
+                    )
+                    WHERE row_num = 1
+                    """,
+                    [target_date],
+                )
             )
-        )
-        float_values = pd.DataFrame(
-            self.db.query(
-                """
-                SELECT *
-                FROM float_market_values
-                WHERE date = (SELECT MAX(date) FROM float_market_values)
-                """
+        else:
+            snapshots = pd.DataFrame(
+                self.db.query(
+                    """
+                    SELECT *
+                    FROM daily_snapshots
+                    WHERE date = (SELECT MAX(date) FROM daily_snapshots)
+                    """
+                )
             )
-        )
+            float_values = pd.DataFrame(
+                self.db.query(
+                    """
+                    SELECT *
+                    FROM float_market_values
+                    WHERE date = (SELECT MAX(date) FROM float_market_values)
+                    """
+                )
+            )
         rps_scores = compute_rps_scores(bars[["code", "date", "close"]], windows=(20, 60, 120))
         output = []
         for code, group in bars.groupby("code"):
             group = group.sort_values("date")
             latest_bar = group.iloc[-1].to_dict()
+            if target_date and _date_value(latest_bar.get("date")) != target_date:
+                continue
             snapshot = _first_record(snapshots, code)
             float_record = _first_record(float_values, code)
             latest_price = _first_number((snapshot or {}).get("latest_price"), latest_bar.get("close"))
@@ -1105,3 +1140,13 @@ def _jsonable(row: Dict[str, Any]) -> Dict[str, Any]:
         else:
             clean[key] = str(value)
     return clean
+
+
+def _date_value(value: Any) -> Optional[date]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
