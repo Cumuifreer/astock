@@ -1423,9 +1423,21 @@ function formatMoney(value: unknown) {
 
 function formatShortDateTime(value: string | null | undefined) {
   if (!value) return '未完成';
-  const date = new Date(value);
+  const date = parseBackendUtc(value);
   if (Number.isNaN(date.getTime())) return value.slice(0, 16);
-  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date).replace(/\//g, '-');
+}
+
+function parseBackendUtc(value: string) {
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(value)) return new Date(value);
+  return new Date(`${value.replace(' ', 'T')}Z`);
 }
 
 function flattenReports(groups: AnalysisReportGroup[]) {
