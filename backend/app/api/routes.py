@@ -122,6 +122,22 @@ def runs() -> Dict[str, Any]:
     return {"rows": data_service.analysis_runs()}
 
 
+@router.get("/analysis/reports")
+def analysis_reports() -> Dict[str, Any]:
+    return data_service.analysis_reports(per_mode_limit=3)
+
+
+@router.get("/analysis/reports/{run_id}")
+def analysis_report(
+    run_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> Dict[str, Any]:
+    report = data_service.analysis_report(run_id=run_id, limit=limit)
+    if not report.get("analysis"):
+        raise HTTPException(status_code=404, detail="分析报告不存在。")
+    return report
+
+
 @router.get("/strategies")
 def list_strategies() -> Dict[str, Any]:
     return {

@@ -125,6 +125,29 @@ export interface AnalysisRun {
   error_message: string | null;
 }
 
+export interface AnalysisReportSummary extends AnalysisRun {}
+
+export interface AnalysisReportGroup {
+  signal_mode: string;
+  reports: AnalysisReportSummary[];
+}
+
+export interface CandidateBundle {
+  run_id: string | null;
+  rows: Candidate[];
+  funnel: FunnelStep[];
+  zero_reason: string | null;
+}
+
+export interface AnalysisReportsResponse {
+  groups: AnalysisReportGroup[];
+}
+
+export interface AnalysisReportDetail {
+  analysis: AnalysisRun;
+  candidates: CandidateBundle;
+}
+
 export interface Candidate {
   rank: number;
   code: string;
@@ -156,10 +179,5 @@ export interface Bootstrap {
   update_status: TaskRun | null;
   analyze_status: TaskRun | null;
   latest_analysis: AnalysisRun | null;
-  candidates: {
-    run_id: string | null;
-    rows: Candidate[];
-    funnel: FunnelStep[];
-    zero_reason: string | null;
-  };
+  candidates: CandidateBundle;
 }

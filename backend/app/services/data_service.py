@@ -137,9 +137,7 @@ class DataService:
         rows = self.db.query("SELECT * FROM analysis_runs ORDER BY started_at DESC LIMIT 1")
         if not rows:
             return None
-        row = rows[0]
-        row["summary"] = json.loads(row.pop("summary_json") or "{}")
-        row["config"] = json.loads(row.pop("config_json") or "{}")
+        row = self._decode_analysis_row(rows[0])
         row["funnel"] = self.db.query(
             "SELECT * FROM funnel_stats WHERE run_id = ? ORDER BY order_index",
             [row["id"]],
@@ -149,9 +147,45 @@ class DataService:
     def analysis_runs(self) -> List[Dict[str, Any]]:
         rows = self.db.query("SELECT * FROM analysis_runs ORDER BY started_at DESC LIMIT 20")
         for row in rows:
-            row["summary"] = json.loads(row.pop("summary_json") or "{}")
-            row["config"] = json.loads(row.pop("config_json") or "{}")
+            decoded = self._decode_analysis_row(row)
+            row.clear()
+            row.update(decoded)
         return rows
+
+    def analysis_reports(self, per_mode_limit: int = 3) -> Dict[str, Any]:
+        rows = self.db.query(
+            """
+            SELECT *
+            FROM analysis_runs
+            WHERE status LIKE 'completed%'
+            ORDER BY finished_at DESC NULLS LAST, started_at DESC
+            LIMIT 300
+            """
+        )
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            decoded = self._decode_analysis_row(row)
+            signal_mode = decoded.get("config", {}).get("signal_mode") or "unknown"
+            reports = groups.setdefault(signal_mode, [])
+            if len(reports) < max(1, min(per_mode_limit, 10)):
+                reports.append(decoded)
+        return {
+            "groups": [
+                {"signal_mode": signal_mode, "reports": reports}
+                for signal_mode, reports in groups.items()
+            ]
+        }
+
+    def analysis_report(self, run_id: str, limit: int = 100) -> Dict[str, Any]:
+        rows = self.db.query("SELECT * FROM analysis_runs WHERE id = ?", [run_id])
+        if not rows:
+            return {"analysis": None, "candidates": {"run_id": None, "rows": [], "funnel": [], "zero_reason": "分析报告不存在。"}}
+        analysis = self._decode_analysis_row(rows[0])
+        analysis["funnel"] = self.db.query(
+            "SELECT * FROM funnel_stats WHERE run_id = ? ORDER BY order_index",
+            [run_id],
+        )
+        return {"analysis": analysis, "candidates": self.candidates(run_id=run_id, limit=limit)}
 
     def candidates(self, run_id: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
         target = run_id or self.db.scalar(
@@ -184,6 +218,13 @@ class DataService:
             ),
             "zero_reason": summary.get("zero_reason"),
         }
+
+    @staticmethod
+    def _decode_analysis_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        decoded = dict(row)
+        decoded["summary"] = json.loads(decoded.pop("summary_json") or "{}")
+        decoded["config"] = json.loads(decoded.pop("config_json") or "{}")
+        return decoded
 
     def capabilities(self) -> List[Dict[str, Any]]:
         rows = self.db.query("SELECT * FROM data_capabilities ORDER BY capability")

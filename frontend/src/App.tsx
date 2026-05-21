@@ -27,7 +27,10 @@ import { api } from './api';
 import type {
   Bootstrap,
   Candidate,
+  CandidateBundle,
   Capability,
+  AnalysisReportGroup,
+  AnalysisReportSummary,
   FunnelStep,
   StrategyConfig,
   StrategyPreset,
@@ -228,7 +231,7 @@ function App() {
         />
       );
     }
-    if (tab === 'results') return <Results candidates={bootstrap.candidates.rows} funnel={bootstrap.candidates.funnel} zeroReason={bootstrap.candidates.zero_reason} />;
+    if (tab === 'results') return <Results candidates={bootstrap.candidates.rows} funnel={bootstrap.candidates.funnel} zeroReason={bootstrap.candidates.zero_reason} runId={bootstrap.candidates.run_id} />;
     if (tab === 'map') {
       return <DataMap capabilities={bootstrap.capabilities} afterProbe={() => load(true)} />;
     }
@@ -671,17 +674,121 @@ function Results({
   candidates,
   funnel,
   zeroReason,
+  runId = null,
   compact = false,
 }: {
   candidates: Candidate[];
   funnel: FunnelStep[];
   zeroReason: string | null;
+  runId?: string | null;
   compact?: boolean;
 }) {
-  const candidatePanel = (
+  if (compact) {
+    return <CandidatePanel candidates={candidates} zeroReason={zeroReason} title="最新候选" />;
+  }
+  return <ReportResults initialCandidates={{ run_id: runId, rows: candidates, funnel, zero_reason: zeroReason }} />;
+}
+
+function ReportResults({ initialCandidates }: { initialCandidates: CandidateBundle }) {
+  const [groups, setGroups] = useState<AnalysisReportGroup[]>([]);
+  const [selectedMode, setSelectedMode] = useState<string>('');
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialCandidates.run_id);
+  const [bundle, setBundle] = useState<CandidateBundle>(initialCandidates);
+  const [loadingReports, setLoadingReports] = useState(false);
+  const [loadingReport, setLoadingReport] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    async function loadReports() {
+      try {
+        setLoadingReports(true);
+        const result = await api.analysisReports();
+        if (!alive) return;
+        setGroups(result.groups);
+        const flat = flattenReports(result.groups);
+        const preferred = flat.find((report) => report.id === initialCandidates.run_id) || flat[0];
+        setSelectedMode(preferred?.config?.signal_mode || result.groups[0]?.signal_mode || '');
+        setSelectedRunId(preferred?.id || initialCandidates.run_id);
+      } catch (error) {
+        if (alive) setReportError(error instanceof Error ? error.message : '报告列表读取失败');
+      } finally {
+        if (alive) setLoadingReports(false);
+      }
+    }
+    loadReports();
+    return () => {
+      alive = false;
+    };
+  }, [initialCandidates.run_id]);
+
+  useEffect(() => {
+    if (!selectedRunId) {
+      setBundle(initialCandidates);
+      return;
+    }
+    if (selectedRunId === initialCandidates.run_id) {
+      setBundle(initialCandidates);
+    }
+    const runToLoad = selectedRunId;
+    let alive = true;
+    async function loadReport() {
+      try {
+        setLoadingReport(true);
+        const result = await api.analysisReport(runToLoad);
+        if (!alive) return;
+        setBundle(result.candidates);
+        setReportError(null);
+      } catch (error) {
+        if (alive) setReportError(error instanceof Error ? error.message : '报告读取失败');
+      } finally {
+        if (alive) setLoadingReport(false);
+      }
+    }
+    loadReport();
+    return () => {
+      alive = false;
+    };
+  }, [selectedRunId, initialCandidates]);
+
+  const selectedReports = groups.find((group) => group.signal_mode === selectedMode)?.reports || [];
+  const selectedReport = selectedReports.find((report) => report.id === selectedRunId);
+
+  return (
+    <div className="results-stack">
+      <ReportSelector
+        groups={groups}
+        selectedMode={selectedMode}
+        selectedRunId={selectedRunId}
+        selectedReport={selectedReport}
+        loading={loadingReports || loadingReport}
+        error={reportError}
+        onModeChange={(mode) => {
+          const reports = groups.find((group) => group.signal_mode === mode)?.reports || [];
+          setSelectedMode(mode);
+          setSelectedRunId(reports[0]?.id || null);
+        }}
+        onRunChange={setSelectedRunId}
+      />
+      <CandidatePanel candidates={bundle.rows} zeroReason={bundle.zero_reason} title="候选股票" />
+      <Funnel funnel={bundle.funnel} candidateCount={bundle.rows.length} zeroReason={bundle.zero_reason} />
+    </div>
+  );
+}
+
+function CandidatePanel({
+  candidates,
+  zeroReason,
+  title,
+}: {
+  candidates: Candidate[];
+  zeroReason: string | null;
+  title: string;
+}) {
+  return (
     <section className="panel">
       <div className="table-toolbar">
-        <PanelTitle icon={<BarChart3 size={18} />} title={compact ? '最新候选' : '候选股票'} />
+        <PanelTitle icon={<BarChart3 size={18} />} title={title} />
         <span className="pill">{formatInt(candidates.length)} 只</span>
       </div>
       {candidates.length === 0 && <EmptyState text={zeroReason || '暂无候选。'} />}
@@ -736,12 +843,75 @@ function Results({
       )}
     </section>
   );
-  if (compact) return candidatePanel;
+}
+
+function ReportSelector({
+  groups,
+  selectedMode,
+  selectedRunId,
+  selectedReport,
+  loading,
+  error,
+  onModeChange,
+  onRunChange,
+}: {
+  groups: AnalysisReportGroup[];
+  selectedMode: string;
+  selectedRunId: string | null;
+  selectedReport?: AnalysisReportSummary;
+  loading: boolean;
+  error: string | null;
+  onModeChange: (mode: string) => void;
+  onRunChange: (runId: string) => void;
+}) {
+  const selectedReports = groups.find((group) => group.signal_mode === selectedMode)?.reports || [];
   return (
-    <div className="results-stack">
-      {candidatePanel}
-      <Funnel funnel={funnel} candidateCount={candidates.length} zeroReason={zeroReason} />
-    </div>
+    <section className="panel report-panel">
+      <div className="table-toolbar">
+        <PanelTitle icon={<Layers3 size={18} />} title="报告库" />
+        <span className={loading ? 'pill' : 'pill good'}>{loading ? '读取中' : '最近 3 份'}</span>
+      </div>
+      {error && <div className="report-error">{error}</div>}
+      <div className="report-mode-tabs">
+        {signalModes.map((mode) => {
+          const count = groups.find((group) => group.signal_mode === mode.id)?.reports.length || 0;
+          return (
+            <button
+              key={mode.id}
+              className={mode.id === selectedMode ? 'active' : ''}
+              disabled={count === 0}
+              onClick={() => onModeChange(mode.id)}
+              type="button"
+            >
+              <strong>{mode.label}</strong>
+              <small>{count ? `${count} 份` : '暂无'}</small>
+            </button>
+          );
+        })}
+      </div>
+      <div className="report-run-list">
+        {selectedReports.length === 0 && <div className="report-empty">这个信号模式还没有完成的分析报告。</div>}
+        {selectedReports.map((report) => (
+          <button
+            key={report.id}
+            className={report.id === selectedRunId ? 'report-run active' : 'report-run'}
+            onClick={() => onRunChange(report.id)}
+            type="button"
+          >
+            <span>{formatShortDateTime(report.finished_at || report.started_at)}</span>
+            <strong>{formatInt(report.summary?.candidate_count ?? 0)} 只</strong>
+            <small>{analysisModeLabel(report.config?.analysis_mode)} · {strategySummary(report.config)}</small>
+          </button>
+        ))}
+      </div>
+      {selectedReport && (
+        <div className="report-current">
+          <span>当前报告</span>
+          <b>{formatShortDateTime(selectedReport.finished_at || selectedReport.started_at)}</b>
+          <small>{selectedReport.id}</small>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1249,6 +1419,23 @@ function formatMoney(value: unknown) {
   if (Math.abs(number) >= 100_000_000) return `${(number / 100_000_000).toFixed(2)} 亿`;
   if (Math.abs(number) >= 10_000) return `${(number / 10_000).toFixed(2)} 万`;
   return number.toFixed(0);
+}
+
+function formatShortDateTime(value: string | null | undefined) {
+  if (!value) return '未完成';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(0, 16);
+  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function flattenReports(groups: AnalysisReportGroup[]) {
+  return groups
+    .flatMap((group) => group.reports)
+    .sort((a, b) => String(b.finished_at || b.started_at).localeCompare(String(a.finished_at || a.started_at)));
+}
+
+function analysisModeLabel(mode: string | undefined) {
+  return analysisModes.find((item) => item.id === (mode || 'strict'))?.label || '严格筛选';
 }
 
 function toneClass(value: number) {
