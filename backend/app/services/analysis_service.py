@@ -103,6 +103,7 @@ def compute_platform_breakout_metrics(group: pd.DataFrame, strategy: Dict[str, A
     low_value = safe_float(latest.get("low"))
     close_value = safe_float(latest.get("close"))
     pct_chg = safe_float(latest.get("pct_chg"))
+    min_clearance = float(strategy.get("platform_breakout_clearance") or 0)
     breakout_clearance = (
         (close_value - platform_high) / platform_high
         if close_value is not None and platform_high is not None and platform_high > 0
@@ -110,8 +111,31 @@ def compute_platform_breakout_metrics(group: pd.DataFrame, strategy: Dict[str, A
     )
     breakout_above_upper = (
         breakout_clearance is not None
-        and breakout_clearance >= float(strategy.get("platform_breakout_clearance") or 0)
+        and breakout_clearance >= min_clearance
     )
+    previous_platform_upper = None
+    previous_breakout_clearance = None
+    platform_first_breakout = False
+    if len(clean) >= platform_days + 2:
+        previous_platform = clean.iloc[-platform_days - 2 : -2].dropna(
+            subset=["open", "high", "low", "close", "volume"]
+        )
+        previous_close = safe_float(clean.iloc[-2].get("close"))
+        previous_platform_upper = (
+            safe_float(previous_platform[upper_column].max())
+            if len(previous_platform) >= platform_days
+            else None
+        )
+        previous_breakout_clearance = (
+            (previous_close - previous_platform_upper) / previous_platform_upper
+            if previous_close is not None and previous_platform_upper is not None and previous_platform_upper > 0
+            else None
+        )
+        platform_first_breakout = bool(
+            breakout_above_upper
+            and previous_breakout_clearance is not None
+            and previous_breakout_clearance < min_clearance
+        )
     breakout_bullish = bool(close_value is not None and open_value is not None and close_value > open_value)
     body_strength = None
     if breakout_bullish and high_value is not None and low_value is not None:
@@ -147,6 +171,9 @@ def compute_platform_breakout_metrics(group: pd.DataFrame, strategy: Dict[str, A
         "platform_breakout_close": _round_optional(close_value, 6),
         "platform_breakout_clearance": _round_optional(breakout_clearance, 6),
         "platform_breakout_above_upper": bool(breakout_above_upper),
+        "platform_previous_upper": _round_optional(previous_platform_upper, 6),
+        "platform_previous_breakout_clearance": _round_optional(previous_breakout_clearance, 6),
+        "platform_first_breakout": platform_first_breakout,
         "platform_body_strength": _round_optional(body_strength, 6),
         "platform_ma_fast": _round_optional(ma_fast, 6),
         "platform_ma_mid": _round_optional(ma_mid, 6),
@@ -496,7 +523,12 @@ def _apply_platform_breakout_filters(
         "平台振幅",
         funnel,
     )
-    if strategy.get("platform_breakout_require_close_above"):
+    clearance_mode = _condition_mode(
+        strategy,
+        "platform_breakout_clearance_mode",
+        "must" if strategy.get("platform_breakout_require_close_above") else "off",
+    )
+    if clearance_mode == "must":
         working = _numeric_filter(
             working,
             "platform_breakout_clearance",
@@ -505,6 +537,17 @@ def _apply_platform_breakout_filters(
             "突破上沿",
             funnel,
         )
+    if _condition_mode(strategy, "platform_breakout_max_clearance_mode", "must") == "must":
+        working = _numeric_filter(
+            working,
+            "platform_breakout_clearance",
+            None,
+            strategy.get("platform_breakout_max_clearance"),
+            "突破距离",
+            funnel,
+        )
+    if _condition_mode(strategy, "platform_breakout_first_mode", "score") == "must":
+        working = _bool_filter(working, "platform_first_breakout", "首次突破", funnel, "前一交易日未有效站上平台上沿")
     working = _numeric_filter(
         working,
         "platform_bullish_ratio",
@@ -677,6 +720,13 @@ def _bool_filter(
     return filtered
 
 
+def _condition_mode(strategy: Dict[str, Any], key: str, default: str) -> str:
+    value = strategy.get(key)
+    if value in {"must", "score", "off"}:
+        return str(value)
+    return default
+
+
 def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
     if strategy.get("signal_mode") == "platform_setup":
         return "平台临界"
@@ -780,14 +830,28 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
         min_breakout_volume = safe_float(strategy.get("platform_breakout_volume_ratio"))
         min_breakout_pct = safe_float(strategy.get("platform_breakout_pct_chg_min"))
         min_body_strength = safe_float(strategy.get("platform_body_strength_min"))
+        min_clearance = safe_float(strategy.get("platform_breakout_clearance")) or 0
+        max_clearance = safe_float(strategy.get("platform_breakout_max_clearance"))
         min_rps = safe_float(strategy.get(f"min_rps{int(strategy.get('rps_window') or 20)}")) or safe_float(
             strategy.get("min_rps20")
         )
 
         if max_range is not None and platform_range is not None:
             score += 7 if platform_range <= max_range else -min((platform_range - max_range) * 70, 8)
-        if breakout_clearance is not None:
-            score += 8 if breakout_clearance >= 0 else -8
+        if _condition_mode(strategy, "platform_breakout_clearance_mode", "must") != "off" and breakout_clearance is not None:
+            score += 8 if breakout_clearance >= min_clearance else -8
+        if (
+            _condition_mode(strategy, "platform_breakout_max_clearance_mode", "must") != "off"
+            and breakout_clearance is not None
+            and max_clearance is not None
+            and max_clearance > 0
+        ):
+            if breakout_clearance <= max_clearance:
+                score += max(0.0, (max_clearance - breakout_clearance) / max_clearance) * 8
+            else:
+                score -= min((breakout_clearance - max_clearance) * 160, 18)
+        if _condition_mode(strategy, "platform_breakout_first_mode", "score") != "off":
+            score += 6 if row.get("platform_first_breakout") else -8
         if min_breakout_volume is not None and breakout_volume_ratio is not None:
             if breakout_volume_ratio >= min_breakout_volume:
                 score += 8
@@ -872,6 +936,10 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
         breakout_clearance = safe_float(row.get("platform_breakout_clearance"))
         if breakout_clearance is not None:
             reasons.append(f"突破上沿 {breakout_clearance * 100:.2f}%")
+        if row.get("platform_first_breakout"):
+            reasons.append("首次突破确认")
+        elif _condition_mode(strategy, "platform_breakout_first_mode", "score") != "off":
+            reasons.append("非首次突破，按策略计分")
         breakout_volume = safe_float(row.get("platform_breakout_volume_ratio"))
         if breakout_volume is not None:
             reasons.append(f"突破量比 {breakout_volume:.2f}x")

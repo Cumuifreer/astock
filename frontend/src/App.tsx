@@ -67,6 +67,12 @@ const analysisModes: Array<{ id: string; label: string; sub: string }> = [
   { id: 'score', label: '综合评分', sub: '基础合格后按信号强弱排序' },
 ];
 
+const conditionModes: Array<[string, string]> = [
+  ['must', '必须满足'],
+  ['score', '只参与得分'],
+  ['off', '不启用'],
+];
+
 function App() {
   const [tab, setTab] = useState<Tab>('overview');
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
@@ -624,11 +630,11 @@ function StrategyPanel(props: {
               <div className="form-section wide">
                 <span>突破确认</span>
               </div>
-              <label className="toggle">
-                <input type="checkbox" checked={props.strategy.platform_breakout_require_close_above} onChange={(event) => update('platform_breakout_require_close_above', event.target.checked)} />
-                <span>收盘站上平台上沿</span>
-              </label>
-              <NumberField label="突破上沿幅度" value={props.strategy.platform_breakout_clearance} onChange={(value) => update('platform_breakout_clearance', value)} />
+              <SelectField label="收盘站上平台上沿" value={props.strategy.platform_breakout_clearance_mode} onChange={(value) => update('platform_breakout_clearance_mode', value)} options={conditionModes} />
+              <NumberField label="突破上沿最小幅度" value={props.strategy.platform_breakout_clearance} onChange={(value) => update('platform_breakout_clearance', value)} />
+              <SelectField label="突破上沿最大距离" value={props.strategy.platform_breakout_max_clearance_mode} onChange={(value) => update('platform_breakout_max_clearance_mode', value)} options={conditionModes} />
+              <NumberField label="最大距离数值" value={props.strategy.platform_breakout_max_clearance} onChange={(value) => update('platform_breakout_max_clearance', value)} />
+              <SelectField label="首次突破确认" value={props.strategy.platform_breakout_first_mode} onChange={(value) => update('platform_breakout_first_mode', value)} options={conditionModes} />
               <NumberField label="突破量比" value={props.strategy.platform_breakout_volume_ratio} onChange={(value) => update('platform_breakout_volume_ratio', value)} />
               <NumberField label="突破涨幅下限" value={props.strategy.platform_breakout_pct_chg_min} onChange={(value) => update('platform_breakout_pct_chg_min', value)} />
               <NumberField label="突破实体强度" value={props.strategy.platform_body_strength_min} onChange={(value) => update('platform_body_strength_min', value)} />
@@ -1543,10 +1549,13 @@ function strategySummary(strategy: StrategyConfig) {
     return `${mode} · ${strategy.platform_setup_lookback_days}日 · 距上沿≤${formatPercentRatio(strategy.platform_setup_max_distance_to_high)} · 近5日≤${formatPercentRatio(strategy.platform_setup_max_recent_gain_5d)}`;
   }
   if (strategy.signal_mode === 'platform_breakout') {
-    const clearance = strategy.platform_breakout_require_close_above
+    const clearance = strategy.platform_breakout_clearance_mode !== 'off'
       ? ` · 上沿≥${formatPercentRatio(strategy.platform_breakout_clearance)}`
       : '';
-    return `${mode} · ${strategy.platform_lookback_days}日 · 区间≤${formatPercentRatio(strategy.platform_max_range)}${clearance} · 量比≥${formatPrice(strategy.platform_breakout_volume_ratio)}x · 涨幅≥${formatPercent(strategy.platform_breakout_pct_chg_min)}`;
+    const maxClearance = strategy.platform_breakout_max_clearance_mode !== 'off'
+      ? ` · 上沿≤${formatPercentRatio(strategy.platform_breakout_max_clearance)}`
+      : '';
+    return `${mode} · ${strategy.platform_lookback_days}日 · 区间≤${formatPercentRatio(strategy.platform_max_range)}${clearance}${maxClearance} · 量比≥${formatPrice(strategy.platform_breakout_volume_ratio)}x · 涨幅≥${formatPercent(strategy.platform_breakout_pct_chg_min)}`;
   }
   const rpsKey = `RPS${strategy.rps_window}`;
   const amount = formatMoneyCompact(strategy.min_amount || 0);

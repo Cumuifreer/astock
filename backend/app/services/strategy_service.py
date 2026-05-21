@@ -24,7 +24,11 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "platform_max_range": 0.08,
     "platform_range_basis": "high_low",
     "platform_breakout_require_close_above": True,
+    "platform_breakout_clearance_mode": "must",
     "platform_breakout_clearance": 0.0,
+    "platform_breakout_max_clearance": 0.15,
+    "platform_breakout_max_clearance_mode": "must",
+    "platform_breakout_first_mode": "score",
     "platform_min_bullish_ratio": 0.5,
     "platform_bull_volume_advantage": 1.1,
     "platform_breakout_volume_ratio": 2.5,
@@ -122,6 +126,14 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     merged["platform_setup_lookback_days"] = max(10, int(merged["platform_setup_lookback_days"]))
     if merged.get("platform_range_basis") not in {"high_low", "close"}:
         merged["platform_range_basis"] = "high_low"
+    if merged.get("platform_breakout_clearance_mode") not in {"must", "score", "off"}:
+        merged["platform_breakout_clearance_mode"] = (
+            "must" if merged.get("platform_breakout_require_close_above", True) else "off"
+        )
+    if merged.get("platform_breakout_max_clearance_mode") not in {"must", "score", "off"}:
+        merged["platform_breakout_max_clearance_mode"] = "must"
+    if merged.get("platform_breakout_first_mode") not in {"must", "score", "off"}:
+        merged["platform_breakout_first_mode"] = "score"
     merged["candidate_limit"] = max(1, min(500, int(merged["candidate_limit"])))
     merged["sort_by"] = merged.get("sort_by") or "signal_score"
     merged["macd_position"] = merged.get("macd_position") or "dif_dea_above_zero"

@@ -29,4 +29,8 @@ def test_list_presets_normalizes_missing_new_fields(tmp_path):
 
     assert old["config"]["platform_range_basis"] == "high_low"
     assert old["config"]["platform_breakout_require_close_above"] is True
+    assert old["config"]["platform_breakout_clearance_mode"] == "must"
     assert old["config"]["platform_breakout_clearance"] == 0.0
+    assert old["config"]["platform_breakout_max_clearance"] == 0.15
+    assert old["config"]["platform_breakout_max_clearance_mode"] == "must"
+    assert old["config"]["platform_breakout_first_mode"] == "score"

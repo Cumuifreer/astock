@@ -81,6 +81,7 @@ def test_platform_breakout_metrics_detect_compression_and_volume_breakout():
     assert metrics["platform_upper"] < metrics["platform_breakout_close"]
     assert metrics["platform_breakout_clearance"] > 0
     assert metrics["platform_breakout_above_upper"] is True
+    assert metrics["platform_first_breakout"] is True
     assert metrics["platform_body_strength"] > 1
     assert metrics["platform_ma_bullish"] is True
     assert metrics["platform_ma_rising"] is True
@@ -132,6 +133,35 @@ def test_platform_breakout_metrics_can_use_close_range_to_ignore_wicks():
     assert high_low["platform_range"] > 0.1
     assert close_range["platform_range"] < 0.02
     assert close_range["platform_breakout_above_upper"] is True
+
+
+def test_platform_breakout_metrics_marks_non_first_breakout_after_prior_cross():
+    bars = []
+    start = date(2026, 4, 1)
+    for index in range(22):
+        close = 10.0 + (index % 3) * 0.02
+        if index == 20:
+            close = 10.8
+        if index == 21:
+            close = 11.0
+        bars.append(
+            {
+                "code": "000001.SZ",
+                "date": (start + timedelta(days=index)).isoformat(),
+                "open": close - 0.04,
+                "high": close + 0.06,
+                "low": close - 0.06,
+                "close": close,
+                "prev_close": close - 0.02,
+                "volume": 1000,
+                "pct_chg": 2.0,
+            }
+        )
+
+    metrics = compute_platform_breakout_metrics(pd.DataFrame(bars), DEFAULT_STRATEGY_CONFIG)
+
+    assert metrics["platform_breakout_above_upper"] is True
+    assert metrics["platform_first_breakout"] is False
 
 
 def test_platform_setup_metrics_detect_near_upper_compression_before_breakout():
@@ -194,6 +224,7 @@ def test_platform_breakout_filters_keep_matching_shape():
                 "platform_breakout_pct_chg": 8.15,
                 "platform_breakout_clearance": 0.03,
                 "platform_breakout_above_upper": True,
+                "platform_first_breakout": True,
                 "platform_body_strength": 1.3,
                 "platform_ma_bullish": True,
                 "platform_ma_rising": True,
@@ -225,6 +256,7 @@ def test_platform_breakout_filters_keep_matching_shape():
                 "platform_breakout_pct_chg": 6.0,
                 "platform_breakout_clearance": -0.01,
                 "platform_breakout_above_upper": False,
+                "platform_first_breakout": False,
                 "platform_body_strength": 1.4,
                 "platform_ma_bullish": True,
                 "platform_ma_rising": True,
@@ -253,6 +285,183 @@ def test_platform_breakout_filters_keep_matching_shape():
     assert any(step["step_name"] == "突破上沿" for step in funnel)
     assert any("平台振幅" in reason for reason in candidates[0]["reasons"])
     assert any("突破上沿" in reason for reason in candidates[0]["reasons"])
+
+
+def test_platform_breakout_filters_remove_overheated_clearance_when_required():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "latest_price": 11.0,
+                "amount": 900_000_000,
+                "float_market_value": 80_000_000_000,
+                "ma_short": 10.8,
+                "ma_long": 10.2,
+                "rps20": 88.0,
+                "turnover_rate": 4.2,
+                "pct_chg": 6.0,
+                "amplitude": 0.1,
+                "volume_ratio": 2.7,
+                "ma_distance": 0.04,
+                "platform_ready": True,
+                "platform_range": 0.07,
+                "platform_bullish_ratio": 0.6,
+                "platform_bull_volume_ratio": 1.2,
+                "platform_breakout_volume_ratio": 2.8,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 6.0,
+                "platform_breakout_clearance": 0.08,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": True,
+                "platform_body_strength": 1.3,
+                "platform_ma_bullish": True,
+                "platform_ma_rising": True,
+                "macd_dif": 0.12,
+                "macd_dea": 0.08,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "600000.SH",
+                "name": "浦发银行",
+                "latest_price": 12.0,
+                "amount": 900_000_000,
+                "float_market_value": 80_000_000_000,
+                "ma_short": 11.5,
+                "ma_long": 10.5,
+                "rps20": 90.0,
+                "turnover_rate": 3.0,
+                "pct_chg": 8.0,
+                "amplitude": 0.09,
+                "volume_ratio": 2.6,
+                "ma_distance": 0.02,
+                "platform_ready": True,
+                "platform_range": 0.07,
+                "platform_bullish_ratio": 0.65,
+                "platform_bull_volume_ratio": 1.3,
+                "platform_breakout_volume_ratio": 3.0,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 8.0,
+                "platform_breakout_clearance": 0.22,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": False,
+                "platform_body_strength": 1.4,
+                "platform_ma_bullish": True,
+                "platform_ma_rising": True,
+                "macd_dif": 0.2,
+                "macd_dea": 0.1,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "signal_mode": "platform_breakout",
+        "min_price": 5,
+        "min_amount": 100_000_000,
+        "min_rps20": 70,
+        "platform_breakout_max_clearance": 0.15,
+        "platform_breakout_max_clearance_mode": "must",
+        "platform_breakout_first_mode": "off",
+        "candidate_limit": 10,
+    }
+
+    candidates, funnel, zero_reason = apply_strategy_filters(rows, config)
+
+    assert [row["code"] for row in candidates] == ["000001.SZ"]
+    assert zero_reason is None
+    assert any(step["step_name"] == "突破距离" for step in funnel)
+
+
+def test_platform_breakout_score_mode_keeps_but_penalizes_overextended_breakouts():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "latest_price": 11.0,
+                "amount": 900_000_000,
+                "float_market_value": 80_000_000_000,
+                "ma_short": 10.8,
+                "ma_long": 10.2,
+                "rps20": 88.0,
+                "turnover_rate": 4.2,
+                "pct_chg": 6.0,
+                "amplitude": 0.1,
+                "volume_ratio": 2.7,
+                "ma_distance": 0.04,
+                "platform_ready": True,
+                "platform_range": 0.07,
+                "platform_bullish_ratio": 0.6,
+                "platform_bull_volume_ratio": 1.2,
+                "platform_breakout_volume_ratio": 2.8,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 6.0,
+                "platform_breakout_clearance": 0.08,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": True,
+                "platform_body_strength": 1.3,
+                "platform_ma_bullish": True,
+                "platform_ma_rising": True,
+                "macd_dif": 0.12,
+                "macd_dea": 0.08,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "600000.SH",
+                "name": "浦发银行",
+                "latest_price": 12.0,
+                "amount": 900_000_000,
+                "float_market_value": 80_000_000_000,
+                "ma_short": 11.5,
+                "ma_long": 10.5,
+                "rps20": 90.0,
+                "turnover_rate": 3.0,
+                "pct_chg": 8.0,
+                "amplitude": 0.09,
+                "volume_ratio": 2.6,
+                "ma_distance": 0.02,
+                "platform_ready": True,
+                "platform_range": 0.07,
+                "platform_bullish_ratio": 0.65,
+                "platform_bull_volume_ratio": 1.3,
+                "platform_breakout_volume_ratio": 3.0,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 8.0,
+                "platform_breakout_clearance": 0.22,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": False,
+                "platform_body_strength": 1.4,
+                "platform_ma_bullish": True,
+                "platform_ma_rising": True,
+                "macd_dif": 0.2,
+                "macd_dea": 0.1,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "signal_mode": "platform_breakout",
+        "min_price": 5,
+        "min_amount": 100_000_000,
+        "min_rps20": 70,
+        "platform_breakout_max_clearance": 0.15,
+        "platform_breakout_max_clearance_mode": "score",
+        "platform_breakout_first_mode": "score",
+        "candidate_limit": 10,
+    }
+
+    candidates, _, zero_reason = apply_strategy_filters(rows, config)
+
+    assert {row["code"] for row in candidates} == {"000001.SZ", "600000.SH"}
+    scores = {row["code"]: row["signal_score"] for row in candidates}
+    assert scores["000001.SZ"] > scores["600000.SH"]
+    assert zero_reason is None
 
 
 def test_platform_setup_filters_keep_near_upper_not_overheated_candidates():
