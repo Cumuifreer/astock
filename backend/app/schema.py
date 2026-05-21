@@ -273,7 +273,17 @@ def seed_strategy_presets(db: Database) -> None:
         db.upsert("strategy_presets", rows, ["id"])
         return
     for row in rows:
-        if row["id"] not in existing_ids:
+        if row["id"] in existing_ids:
+            db.execute(
+                """
+                UPDATE strategy_presets
+                SET name = ?, config_json = ?, is_system = TRUE, updated_at = ?
+                WHERE id = ? AND is_system = TRUE
+                """,
+                [row["name"], row["config_json"], now, row["id"]],
+                write=True,
+            )
+        else:
             db.upsert("strategy_presets", [row], ["id"])
     if not db.scalar("SELECT COUNT(*) FROM strategy_presets WHERE is_default = TRUE"):
         db.execute(

@@ -65,12 +65,17 @@ export interface StrategyConfig {
   platform_breakout_max_clearance_mode: string;
   platform_breakout_first_mode: string;
   platform_min_bullish_ratio: number;
+  platform_bullish_ratio_score: number;
   platform_bull_volume_advantage: number;
+  platform_bull_volume_advantage_score: number;
   platform_breakout_volume_ratio: number;
   platform_breakout_pct_chg_min: number;
   platform_body_strength_min: number;
   platform_ma_trend_enabled: boolean;
+  platform_ma_bullish_mode: string;
   platform_ma_rising_required: boolean;
+  platform_ma_rising_mode: string;
+  platform_macd_filter_mode: string;
   platform_setup_lookback_days: number;
   platform_setup_max_range: number;
   platform_setup_max_distance_to_high: number;

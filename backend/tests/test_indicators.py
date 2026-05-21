@@ -141,9 +141,9 @@ def test_platform_breakout_metrics_marks_non_first_breakout_after_prior_cross():
     for index in range(22):
         close = 10.0 + (index % 3) * 0.02
         if index == 20:
-            close = 10.8
-        if index == 21:
             close = 11.0
+        if index == 21:
+            close = 11.4
         bars.append(
             {
                 "code": "000001.SZ",
@@ -219,7 +219,7 @@ def test_platform_breakout_filters_keep_matching_shape():
                 "platform_range": 0.07,
                 "platform_bullish_ratio": 0.6,
                 "platform_bull_volume_ratio": 1.2,
-                "platform_breakout_volume_ratio": 2.8,
+                "platform_breakout_volume_ratio": 3.1,
                 "platform_breakout_bullish": True,
                 "platform_breakout_pct_chg": 8.15,
                 "platform_breakout_clearance": 0.03,
@@ -308,7 +308,7 @@ def test_platform_breakout_filters_remove_overheated_clearance_when_required():
                 "platform_range": 0.07,
                 "platform_bullish_ratio": 0.6,
                 "platform_bull_volume_ratio": 1.2,
-                "platform_breakout_volume_ratio": 2.8,
+                "platform_breakout_volume_ratio": 3.1,
                 "platform_breakout_bullish": True,
                 "platform_breakout_pct_chg": 6.0,
                 "platform_breakout_clearance": 0.08,
@@ -396,7 +396,7 @@ def test_platform_breakout_score_mode_keeps_but_penalizes_overextended_breakouts
                 "platform_range": 0.07,
                 "platform_bullish_ratio": 0.6,
                 "platform_bull_volume_ratio": 1.2,
-                "platform_breakout_volume_ratio": 2.8,
+                "platform_breakout_volume_ratio": 3.1,
                 "platform_breakout_bullish": True,
                 "platform_breakout_pct_chg": 6.0,
                 "platform_breakout_clearance": 0.08,
@@ -461,6 +461,184 @@ def test_platform_breakout_score_mode_keeps_but_penalizes_overextended_breakouts
     assert {row["code"] for row in candidates} == {"000001.SZ", "600000.SH"}
     scores = {row["code"]: row["signal_score"] for row in candidates}
     assert scores["000001.SZ"] > scores["600000.SH"]
+    assert zero_reason is None
+
+
+def test_platform_breakout_defaults_target_first_day_signal_without_trend_hard_filters():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "首日突破",
+                "latest_price": 10.5,
+                "amount": 600_000_000,
+                "float_market_value": 40_000_000_000,
+                "ma_short": 10.1,
+                "ma_long": 9.9,
+                "rps20": 62.0,
+                "turnover_rate": 18.0,
+                "pct_chg": 6.0,
+                "amplitude": 0.16,
+                "volume_ratio": 0.8,
+                "ma_distance": 0.04,
+                "platform_ready": True,
+                "platform_range": 0.1,
+                "platform_bullish_ratio": 0.55,
+                "platform_bull_volume_ratio": 1.12,
+                "platform_breakout_volume_ratio": 3.1,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 6.0,
+                "platform_breakout_clearance": 0.05,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": True,
+                "platform_body_strength": 1.25,
+                "platform_ma_bullish": False,
+                "platform_ma_rising": False,
+                "macd_dif": -0.02,
+                "macd_dea": -0.04,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "600000.SH",
+                "name": "已涨多日",
+                "latest_price": 12.0,
+                "amount": 700_000_000,
+                "float_market_value": 45_000_000_000,
+                "ma_short": 11.5,
+                "ma_long": 10.7,
+                "rps20": 90.0,
+                "turnover_rate": 8.0,
+                "pct_chg": 6.5,
+                "amplitude": 0.12,
+                "volume_ratio": 1.8,
+                "ma_distance": 0.05,
+                "platform_ready": True,
+                "platform_range": 0.08,
+                "platform_bullish_ratio": 0.7,
+                "platform_bull_volume_ratio": 1.35,
+                "platform_breakout_volume_ratio": 3.6,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 6.5,
+                "platform_breakout_clearance": 0.06,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": False,
+                "platform_body_strength": 1.5,
+                "platform_ma_bullish": True,
+                "platform_ma_rising": True,
+                "macd_dif": 0.2,
+                "macd_dea": 0.12,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "signal_mode": "platform_breakout",
+        "trend_filter": "none",
+        "min_rps20": None,
+        "max_turnover": None,
+        "volume_ratio_min": None,
+        "max_amplitude": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+    }
+
+    candidates, funnel, zero_reason = apply_strategy_filters(rows, config)
+
+    assert [row["code"] for row in candidates] == ["000001.SZ"]
+    assert zero_reason is None
+    assert any(step["step_name"] == "首次突破" for step in funnel)
+    assert "MA5/10/20 多头" not in [step["step_name"] for step in funnel]
+    assert "MACD 位置" not in [step["step_name"] for step in funnel]
+
+
+def test_platform_breakout_score_thresholds_reward_cleaner_platform_quality():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "刚过必须线",
+                "latest_price": 10.5,
+                "amount": 600_000_000,
+                "float_market_value": 40_000_000_000,
+                "ma_short": 10.1,
+                "ma_long": 9.9,
+                "rps20": 80.0,
+                "turnover_rate": 5.0,
+                "pct_chg": 6.0,
+                "amplitude": 0.1,
+                "volume_ratio": 1.0,
+                "ma_distance": 0.04,
+                "platform_ready": True,
+                "platform_range": 0.1,
+                "platform_bullish_ratio": 0.52,
+                "platform_bull_volume_ratio": 1.12,
+                "platform_breakout_volume_ratio": 3.1,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 6.0,
+                "platform_breakout_clearance": 0.05,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": True,
+                "platform_body_strength": 1.25,
+                "platform_ma_bullish": False,
+                "platform_ma_rising": False,
+                "macd_dif": -0.02,
+                "macd_dea": -0.04,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "000002.SZ",
+                "name": "平台质量更好",
+                "latest_price": 10.4,
+                "amount": 600_000_000,
+                "float_market_value": 40_000_000_000,
+                "ma_short": 10.1,
+                "ma_long": 9.9,
+                "rps20": 80.0,
+                "turnover_rate": 5.0,
+                "pct_chg": 6.0,
+                "amplitude": 0.1,
+                "volume_ratio": 1.0,
+                "ma_distance": 0.04,
+                "platform_ready": True,
+                "platform_range": 0.1,
+                "platform_bullish_ratio": 0.62,
+                "platform_bull_volume_ratio": 1.25,
+                "platform_breakout_volume_ratio": 3.1,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 6.0,
+                "platform_breakout_clearance": 0.05,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": True,
+                "platform_body_strength": 1.25,
+                "platform_ma_bullish": False,
+                "platform_ma_rising": False,
+                "macd_dif": -0.02,
+                "macd_dea": -0.04,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "signal_mode": "platform_breakout",
+        "trend_filter": "none",
+        "min_rps20": None,
+        "max_turnover": None,
+        "volume_ratio_min": None,
+        "max_amplitude": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+    }
+
+    candidates, _, zero_reason = apply_strategy_filters(rows, config)
+
+    assert [row["code"] for row in candidates] == ["000002.SZ", "000001.SZ"]
+    assert candidates[0]["signal_score"] > candidates[1]["signal_score"]
     assert zero_reason is None
 
 

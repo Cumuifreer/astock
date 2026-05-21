@@ -21,21 +21,26 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "breakout_lookback": 20,
     "pullback_tolerance": 0.035,
     "platform_lookback_days": 20,
-    "platform_max_range": 0.08,
+    "platform_max_range": 0.12,
     "platform_range_basis": "high_low",
     "platform_breakout_require_close_above": True,
     "platform_breakout_clearance_mode": "must",
-    "platform_breakout_clearance": 0.0,
-    "platform_breakout_max_clearance": 0.15,
-    "platform_breakout_max_clearance_mode": "must",
-    "platform_breakout_first_mode": "score",
+    "platform_breakout_clearance": 0.03,
+    "platform_breakout_max_clearance": 0.08,
+    "platform_breakout_max_clearance_mode": "score",
+    "platform_breakout_first_mode": "must",
     "platform_min_bullish_ratio": 0.5,
+    "platform_bullish_ratio_score": 0.6,
     "platform_bull_volume_advantage": 1.1,
-    "platform_breakout_volume_ratio": 2.5,
+    "platform_bull_volume_advantage_score": 1.2,
+    "platform_breakout_volume_ratio": 3.0,
     "platform_breakout_pct_chg_min": 5.0,
     "platform_body_strength_min": 1.0,
     "platform_ma_trend_enabled": True,
+    "platform_ma_bullish_mode": "score",
     "platform_ma_rising_required": True,
+    "platform_ma_rising_mode": "score",
+    "platform_macd_filter_mode": "score",
     "platform_setup_lookback_days": 20,
     "platform_setup_max_range": 0.1,
     "platform_setup_max_distance_to_high": 0.035,
@@ -94,11 +99,14 @@ SYSTEM_PRESETS = [
         "config": {
             **DEFAULT_STRATEGY_CONFIG,
             "signal_mode": "platform_breakout",
+            "trend_filter": "none",
+            "min_rps20": None,
+            "max_turnover": None,
             "min_pct_chg": 5.0,
-            "max_pct_chg": 10.5,
-            "volume_ratio_min": 1.0,
+            "max_pct_chg": None,
+            "volume_ratio_min": None,
             "max_ma_distance": None,
-            "max_amplitude": 0.18,
+            "max_amplitude": None,
         },
     },
     {
@@ -131,9 +139,15 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
             "must" if merged.get("platform_breakout_require_close_above", True) else "off"
         )
     if merged.get("platform_breakout_max_clearance_mode") not in {"must", "score", "off"}:
-        merged["platform_breakout_max_clearance_mode"] = "must"
+        merged["platform_breakout_max_clearance_mode"] = "score"
     if merged.get("platform_breakout_first_mode") not in {"must", "score", "off"}:
-        merged["platform_breakout_first_mode"] = "score"
+        merged["platform_breakout_first_mode"] = "must"
+    if merged.get("platform_ma_bullish_mode") not in {"must", "score", "off"}:
+        merged["platform_ma_bullish_mode"] = "score"
+    if merged.get("platform_ma_rising_mode") not in {"must", "score", "off"}:
+        merged["platform_ma_rising_mode"] = "score"
+    if merged.get("platform_macd_filter_mode") not in {"must", "score", "off"}:
+        merged["platform_macd_filter_mode"] = "score"
     merged["candidate_limit"] = max(1, min(500, int(merged["candidate_limit"])))
     merged["sort_by"] = merged.get("sort_by") or "signal_score"
     merged["macd_position"] = merged.get("macd_position") or "dif_dea_above_zero"

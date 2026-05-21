@@ -622,35 +622,28 @@ function StrategyPanel(props: {
               <div className="form-section wide">
                 <span>平台区间</span>
               </div>
-              <NumberField label="平台观察天数" value={props.strategy.platform_lookback_days} onChange={(value) => update('platform_lookback_days', value)} />
-              <NumberField label="平台区间最大振幅" value={props.strategy.platform_max_range} onChange={(value) => update('platform_max_range', value)} />
-              <SelectField label="平台振幅口径" value={props.strategy.platform_range_basis} onChange={(value) => update('platform_range_basis', value)} options={[['high_low', '最高价 / 最低价'], ['close', '收盘价区间']]} />
-              <NumberField label="最小阳线占比" value={props.strategy.platform_min_bullish_ratio} onChange={(value) => update('platform_min_bullish_ratio', value)} />
-              <NumberField label="阳线均量优势" value={props.strategy.platform_bull_volume_advantage} onChange={(value) => update('platform_bull_volume_advantage', value)} />
+              <NumberField label="平台观察天数" value={props.strategy.platform_lookback_days} onChange={(value) => update('platform_lookback_days', value)} description="从最新 K 线前一日往前取样，不含最新 K 线。" />
+              <NumberField label="平台区间最大振幅" value={props.strategy.platform_max_range} onChange={(value) => update('platform_max_range', value)} description={`必须项：平台最高到最低不超过 ${formatPercentRatio(props.strategy.platform_max_range)}。`} />
+              <SelectField label="平台振幅口径" value={props.strategy.platform_range_basis} onChange={(value) => update('platform_range_basis', value)} options={[['high_low', '最高价 / 最低价'], ['close', '收盘价区间']]} description="最高价/最低价更严格；收盘价区间会忽略盘中长影线。" />
+              <NumberField label="最小阳线占比" value={props.strategy.platform_min_bullish_ratio} onChange={(value) => update('platform_min_bullish_ratio', value)} description={`必须项：平台内红柱占比至少 ${formatPercentRatio(props.strategy.platform_min_bullish_ratio)}。`} />
+              <NumberField label="阳线占比加分线" value={props.strategy.platform_bullish_ratio_score} onChange={(value) => update('platform_bullish_ratio_score', value)} description={`得分项：达到 ${formatPercentRatio(props.strategy.platform_bullish_ratio_score)} 会提高排序。`} />
+              <NumberField label="阳线均量优势" value={props.strategy.platform_bull_volume_advantage} onChange={(value) => update('platform_bull_volume_advantage', value)} description={`必须项：平台红柱均量 / 绿柱均量至少 ${formatPrice(props.strategy.platform_bull_volume_advantage)}x。`} />
+              <NumberField label="阳线量能加分线" value={props.strategy.platform_bull_volume_advantage_score} onChange={(value) => update('platform_bull_volume_advantage_score', value)} description={`得分项：达到 ${formatPrice(props.strategy.platform_bull_volume_advantage_score)}x 会提高排序。`} />
               <div className="form-section wide">
                 <span>突破确认</span>
               </div>
-              <SelectField label="收盘站上平台上沿" value={props.strategy.platform_breakout_clearance_mode} onChange={(value) => update('platform_breakout_clearance_mode', value)} options={conditionModes} />
-              <NumberField label="突破上沿最小幅度" value={props.strategy.platform_breakout_clearance} onChange={(value) => update('platform_breakout_clearance', value)} />
-              <SelectField label="突破上沿最大距离" value={props.strategy.platform_breakout_max_clearance_mode} onChange={(value) => update('platform_breakout_max_clearance_mode', value)} options={conditionModes} />
-              <NumberField label="最大距离数值" value={props.strategy.platform_breakout_max_clearance} onChange={(value) => update('platform_breakout_max_clearance', value)} />
-              <SelectField label="首次突破确认" value={props.strategy.platform_breakout_first_mode} onChange={(value) => update('platform_breakout_first_mode', value)} options={conditionModes} />
-              <NumberField label="突破量比" value={props.strategy.platform_breakout_volume_ratio} onChange={(value) => update('platform_breakout_volume_ratio', value)} />
-              <NumberField label="突破涨幅下限" value={props.strategy.platform_breakout_pct_chg_min} onChange={(value) => update('platform_breakout_pct_chg_min', value)} />
-              <NumberField label="突破实体强度" value={props.strategy.platform_body_strength_min} onChange={(value) => update('platform_body_strength_min', value)} />
-              <SelectField label="MACD 位置" value={props.strategy.macd_position} onChange={(value) => update('macd_position', value)} options={[['dif_above_zero', 'DIF 在 0 轴上方'], ['dif_dea_above_zero', 'DIF 与 DEA 均在 0 轴上方']]} />
-              <label className="toggle">
-                <input type="checkbox" checked={props.strategy.platform_ma_trend_enabled} onChange={(event) => update('platform_ma_trend_enabled', event.target.checked)} />
-                <span>启用 MA5/10/20 多头排列</span>
-              </label>
-              <label className="toggle">
-                <input type="checkbox" checked={props.strategy.platform_ma_rising_required} onChange={(event) => update('platform_ma_rising_required', event.target.checked)} />
-                <span>要求均线上升</span>
-              </label>
-              <label className="toggle">
-                <input type="checkbox" checked={props.strategy.macd_filter_enabled} onChange={(event) => update('macd_filter_enabled', event.target.checked)} />
-                <span>启用 MACD 过滤</span>
-              </label>
+              <SelectField label="收盘站上平台上沿" value={props.strategy.platform_breakout_clearance_mode} onChange={(value) => update('platform_breakout_clearance_mode', value)} options={conditionModes} description="判断最新收盘价是否有效突破平台上沿。" />
+              <NumberField label="突破上沿最小幅度" value={props.strategy.platform_breakout_clearance} onChange={(value) => update('platform_breakout_clearance', value)} description={`必须项建议：至少 ${formatPercentRatio(props.strategy.platform_breakout_clearance)}，避免只是假突破。`} />
+              <SelectField label="突破上沿最大距离" value={props.strategy.platform_breakout_max_clearance_mode} onChange={(value) => update('platform_breakout_max_clearance_mode', value)} options={conditionModes} description="用于拦截离平台太远、已经错过买点的形态。" />
+              <NumberField label="最大距离数值" value={props.strategy.platform_breakout_max_clearance} onChange={(value) => update('platform_breakout_max_clearance', value)} description={`得分项建议：${formatPercentRatio(props.strategy.platform_breakout_max_clearance)} 内更接近首日买点。`} />
+              <SelectField label="首次突破确认" value={props.strategy.platform_breakout_first_mode} onChange={(value) => update('platform_breakout_first_mode', value)} options={conditionModes} description="前一交易日还没有有效站上平台上沿。" />
+              <NumberField label="突破量比" value={props.strategy.platform_breakout_volume_ratio} onChange={(value) => update('platform_breakout_volume_ratio', value)} description={`必须项：最新成交量 / 平台均量至少 ${formatPrice(props.strategy.platform_breakout_volume_ratio)}x。`} />
+              <NumberField label="突破涨幅下限" value={props.strategy.platform_breakout_pct_chg_min} onChange={(value) => update('platform_breakout_pct_chg_min', value)} description={`必须项：最新 K 线涨幅至少 ${formatPercent(props.strategy.platform_breakout_pct_chg_min)}。`} />
+              <NumberField label="突破实体强度" value={props.strategy.platform_body_strength_min} onChange={(value) => update('platform_body_strength_min', value)} description="红柱实体 / 上下影线总和；越高说明突破越干净。" />
+              <SelectField label="MA5/10/20 多头排列" value={props.strategy.platform_ma_bullish_mode} onChange={(value) => update('platform_ma_bullish_mode', value)} options={conditionModes} description="默认只参与得分；设为必须时才会淘汰股票。" />
+              <SelectField label="均线上升" value={props.strategy.platform_ma_rising_mode} onChange={(value) => update('platform_ma_rising_mode', value)} options={conditionModes} description="MA5、MA10、MA20 同时上行，偏确认强度。" />
+              <SelectField label="MACD 条件" value={props.strategy.platform_macd_filter_mode} onChange={(value) => update('platform_macd_filter_mode', value)} options={conditionModes} description="默认只参与得分，避免错过刚启动的早期形态。" />
+              <SelectField label="MACD 位置" value={props.strategy.macd_position} onChange={(value) => update('macd_position', value)} options={[['dif_above_zero', 'DIF 在 0 轴上方'], ['dif_dea_above_zero', 'DIF 与 DEA 均在 0 轴上方']]} description="用于判断 MACD 条件是否满足。" />
             </>
           )}
 
@@ -1448,11 +1441,13 @@ function NumberField({
   value,
   onChange,
   allowBlank = false,
+  description,
 }: {
   label: string;
   value: number | null;
   onChange: (value: number | null) => void;
   allowBlank?: boolean;
+  description?: ReactNode;
 }) {
   const [draft, setDraft] = useState(value == null ? '' : String(value));
   const [editing, setEditing] = useState(false);
@@ -1489,7 +1484,9 @@ function NumberField({
         onFocus={() => setEditing(true)}
         placeholder={allowBlank ? '留空不启用' : undefined}
       />
-      {allowBlank && <small className="field-hint">{numberInputHint(value)}</small>}
+      {(allowBlank || description) && (
+        <small className="field-hint">{allowBlank ? numberInputHint(value) : description}</small>
+      )}
     </label>
   );
 }
@@ -1499,11 +1496,13 @@ function SelectField({
   value,
   options,
   onChange,
+  description,
 }: {
   label: string;
   value: string;
   options: Array<[string, string]>;
   onChange: (value: string) => void;
+  description?: ReactNode;
 }) {
   return (
     <label className="field">
@@ -1513,6 +1512,7 @@ function SelectField({
           <option key={optionValue} value={optionValue}>{labelText}</option>
         ))}
       </select>
+      {description && <small className="field-hint">{description}</small>}
     </label>
   );
 }
@@ -1555,7 +1555,8 @@ function strategySummary(strategy: StrategyConfig) {
     const maxClearance = strategy.platform_breakout_max_clearance_mode !== 'off'
       ? ` · 上沿≤${formatPercentRatio(strategy.platform_breakout_max_clearance)}`
       : '';
-    return `${mode} · ${strategy.platform_lookback_days}日 · 区间≤${formatPercentRatio(strategy.platform_max_range)}${clearance}${maxClearance} · 量比≥${formatPrice(strategy.platform_breakout_volume_ratio)}x · 涨幅≥${formatPercent(strategy.platform_breakout_pct_chg_min)}`;
+    const firstBreak = strategy.platform_breakout_first_mode === 'must' ? ' · 首次' : '';
+    return `${mode} · ${strategy.platform_lookback_days}日 · 区间≤${formatPercentRatio(strategy.platform_max_range)}${clearance}${maxClearance}${firstBreak} · 量比≥${formatPrice(strategy.platform_breakout_volume_ratio)}x · 涨幅≥${formatPercent(strategy.platform_breakout_pct_chg_min)}`;
   }
   const rpsKey = `RPS${strategy.rps_window}`;
   const amount = formatMoneyCompact(strategy.min_amount || 0);

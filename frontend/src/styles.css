@@ -527,6 +527,7 @@ h1 {
 .field-note {
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.45;
 }
 
 .field-hint.danger {

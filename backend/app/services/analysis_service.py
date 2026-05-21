@@ -589,11 +589,11 @@ def _apply_platform_breakout_filters(
         "实体强度",
         funnel,
     )
-    if strategy.get("platform_ma_trend_enabled"):
+    if _condition_mode(strategy, "platform_ma_bullish_mode", "score") == "must":
         working = _bool_filter(working, "platform_ma_bullish", "MA5/10/20 多头", funnel, "MA5 > MA10 > MA20")
-    if strategy.get("platform_ma_rising_required"):
+    if _condition_mode(strategy, "platform_ma_rising_mode", "score") == "must":
         working = _bool_filter(working, "platform_ma_rising", "均线上升", funnel, "MA5/10/20 均向上")
-    if strategy.get("macd_filter_enabled"):
+    if _condition_mode(strategy, "platform_macd_filter_mode", "score") == "must":
         before = len(working)
         dif = pd.to_numeric(working.get("macd_dif"), errors="coerce")
         dea = pd.to_numeric(working.get("macd_dea"), errors="coerce")
@@ -815,18 +815,29 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
         breakout_pct = safe_float(row.get("platform_breakout_pct_chg"))
         breakout_clearance = safe_float(row.get("platform_breakout_clearance"))
         body_strength = safe_float(row.get("platform_body_strength"))
+        ma_bullish_mode = _condition_mode(strategy, "platform_ma_bullish_mode", "score")
+        ma_rising_mode = _condition_mode(strategy, "platform_ma_rising_mode", "score")
+        macd_filter_mode = _condition_mode(strategy, "platform_macd_filter_mode", "score")
+        dif = safe_float(row.get("macd_dif"))
+        dea = safe_float(row.get("macd_dea"))
+        if strategy.get("macd_position") == "dif_dea_above_zero":
+            macd_ok = dif is not None and dea is not None and dif > 0 and dea > 0
+        else:
+            macd_ok = dif is not None and dif > 0
 
         breakout_volume = min((breakout_volume_ratio or 0) * 7, 24)
         bull_volume = min((bull_volume_ratio or 0) * 7, 14)
         pct_bonus = min(max(breakout_pct or 0, 0) * 1.2, 14)
-        trend_bonus = 10 if row.get("platform_ma_bullish") else 0
-        macd_bonus = 6 if (safe_float(row.get("macd_dif")) or 0) > 0 else 0
+        trend_bonus = 10 if ma_bullish_mode != "off" and row.get("platform_ma_bullish") else 0
+        macd_bonus = 6 if macd_filter_mode != "off" and macd_ok else 0
         range_penalty = min((platform_range or 0) * 80, 8)
         score = float(rps) * 0.45 + breakout_volume + bull_volume + pct_bonus + trend_bonus + macd_bonus - range_penalty
 
         max_range = safe_float(strategy.get("platform_max_range"))
         min_bullish_ratio = safe_float(strategy.get("platform_min_bullish_ratio"))
+        score_bullish_ratio = safe_float(strategy.get("platform_bullish_ratio_score"))
         min_bull_volume = safe_float(strategy.get("platform_bull_volume_advantage"))
+        score_bull_volume = safe_float(strategy.get("platform_bull_volume_advantage_score"))
         min_breakout_volume = safe_float(strategy.get("platform_breakout_volume_ratio"))
         min_breakout_pct = safe_float(strategy.get("platform_breakout_pct_chg_min"))
         min_body_strength = safe_float(strategy.get("platform_body_strength_min"))
@@ -859,13 +870,16 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
                 score += 3
         if (
             min_bullish_ratio is not None
-            and min_bull_volume is not None
             and bullish_ratio is not None
-            and bull_volume_ratio is not None
             and bullish_ratio >= min_bullish_ratio
-            and bull_volume_ratio >= min_bull_volume
         ):
-            score += 5
+            score += 2
+        if score_bullish_ratio is not None and bullish_ratio is not None:
+            score += 5 if bullish_ratio >= score_bullish_ratio else 0
+        if min_bull_volume is not None and bull_volume_ratio is not None and bull_volume_ratio >= min_bull_volume:
+            score += 2
+        if score_bull_volume is not None and bull_volume_ratio is not None:
+            score += 5 if bull_volume_ratio >= score_bull_volume else 0
         if (
             min_breakout_pct is not None
             and min_body_strength is not None
@@ -876,9 +890,11 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
             and row.get("platform_breakout_bullish")
         ):
             score += 5
-        if min_rps is not None and rps >= min_rps and row.get("platform_ma_bullish"):
+        if min_rps is not None and rps >= min_rps and ma_bullish_mode != "off" and row.get("platform_ma_bullish"):
             score += 6
-        if row.get("platform_ma_rising") and macd_bonus > 0:
+        if ma_rising_mode != "off":
+            score += 5 if row.get("platform_ma_rising") else -3
+        if ma_rising_mode != "off" and row.get("platform_ma_rising") and macd_bonus > 0:
             score += 4
         return round(max(score, 0), 2)
     volume_ratio = min((safe_float(row.get("volume_ratio")) or 0) * 8, 20)
