@@ -489,20 +489,34 @@ h1 {
   gap: 10px;
 }
 
-.mode-tabs button {
+.analysis-mode-tabs {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.mode-tabs button,
+.analysis-mode-tabs button {
   display: grid;
   justify-items: start;
   min-height: 56px;
   border-color: rgba(255, 255, 255, 0.12);
 }
 
-.mode-tabs button.active {
+.analysis-mode-tabs button {
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.mode-tabs button.active,
+.analysis-mode-tabs button.active {
   color: var(--text);
   border-color: rgba(59, 240, 193, 0.54);
   background: rgba(59, 240, 193, 0.1);
 }
 
 .mode-tabs small,
+.analysis-mode-tabs small,
 .field-hint,
 .field-note {
   color: var(--muted);
@@ -1042,7 +1056,8 @@ a {
     grid-template-columns: 1fr 1fr;
   }
 
-  .mode-tabs {
+  .mode-tabs,
+  .analysis-mode-tabs {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1073,12 +1088,14 @@ a {
   .field.wide,
   .form-section.wide,
   .mode-tabs,
+  .analysis-mode-tabs,
   .field-note,
   .wide-panel {
     grid-column: auto;
   }
 
-  .mode-tabs {
+  .mode-tabs,
+  .analysis-mode-tabs {
     grid-template-columns: 1fr;
   }
 

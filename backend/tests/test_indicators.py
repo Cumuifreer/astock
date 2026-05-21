@@ -218,3 +218,90 @@ def test_strategy_filters_keep_explainable_candidates():
     assert zero_reason is None
     assert funnel[-1]["after_count"] == 1
     assert any("成交额" in reason for reason in candidates[0]["reasons"])
+
+
+def test_score_analysis_mode_ranks_near_matches_without_signal_hard_filters():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "latest_price": 12.5,
+                "amount": 180_000_000,
+                "float_market_value": 80_000_000_000,
+                "ma_short": 12.0,
+                "ma_long": 10.0,
+                "rps20": 62.0,
+                "turnover_rate": 4.2,
+                "pct_chg": 4.2,
+                "amplitude": 0.11,
+                "volume_ratio": 1.5,
+                "ma_distance": 0.04,
+                "platform_ready": True,
+                "platform_range": 0.16,
+                "platform_bullish_ratio": 0.45,
+                "platform_bull_volume_ratio": 1.05,
+                "platform_breakout_volume_ratio": 1.8,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 4.2,
+                "platform_body_strength": 0.9,
+                "platform_ma_bullish": True,
+                "platform_ma_rising": False,
+                "macd_dif": 0.08,
+                "macd_dea": -0.01,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "600000.SH",
+                "name": "浦发银行",
+                "latest_price": 8.0,
+                "amount": 30_000_000,
+                "float_market_value": 80_000_000_000,
+                "ma_short": 8.2,
+                "ma_long": 8.1,
+                "rps20": 90.0,
+                "turnover_rate": 3.0,
+                "pct_chg": 6.0,
+                "amplitude": 0.09,
+                "volume_ratio": 2.6,
+                "ma_distance": 0.02,
+                "platform_ready": True,
+                "platform_range": 0.07,
+                "platform_bullish_ratio": 0.65,
+                "platform_bull_volume_ratio": 1.3,
+                "platform_breakout_volume_ratio": 3.0,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 6.0,
+                "platform_body_strength": 1.4,
+                "platform_ma_bullish": True,
+                "platform_ma_rising": True,
+                "macd_dif": 0.2,
+                "macd_dea": 0.1,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "analysis_mode": "score",
+        "signal_mode": "platform_breakout",
+        "min_price": 5,
+        "min_amount": 100_000_000,
+        "min_rps20": 70,
+        "platform_max_range": 0.08,
+        "platform_min_bullish_ratio": 0.55,
+        "platform_breakout_volume_ratio": 2.5,
+        "platform_breakout_pct_chg_min": 5,
+        "candidate_limit": 10,
+    }
+
+    candidates, funnel, zero_reason = apply_strategy_filters(rows, config)
+
+    assert [row["code"] for row in candidates] == ["000001.SZ"]
+    assert candidates[0]["signal_type"] == "平台突破观察"
+    assert any("综合评分" in reason for reason in candidates[0]["reasons"])
+    assert "平台振幅" not in [step["step_name"] for step in funnel]
+    assert any(step["step_name"] == "综合评分" for step in funnel)
+    assert zero_reason is None

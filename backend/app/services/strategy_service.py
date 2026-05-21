@@ -16,6 +16,7 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "ma_short_window": 20,
     "ma_long_window": 60,
     "trend_filter": "ma_short_above_long",
+    "analysis_mode": "strict",
     "signal_mode": "breakout_or_pullback",
     "breakout_lookback": 20,
     "pullback_tolerance": 0.035,
@@ -95,6 +96,8 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     merged["candidate_limit"] = max(1, min(500, int(merged["candidate_limit"])))
     merged["sort_by"] = merged.get("sort_by") or "signal_score"
     merged["macd_position"] = merged.get("macd_position") or "dif_dea_above_zero"
+    if merged.get("analysis_mode") not in {"strict", "score"}:
+        merged["analysis_mode"] = "strict"
     return merged
 
 

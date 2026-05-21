@@ -219,6 +219,14 @@ def apply_strategy_filters(
         working = working[mask]
         mark("流通市值", before, working, "缺失时按策略配置降级")
 
+    if strategy.get("analysis_mode") == "score":
+        return _rank_candidates(
+            working,
+            strategy,
+            funnel,
+            score_mode=True,
+        )
+
     if strategy.get("trend_filter") == "ma_short_above_long":
         before = len(working)
         working = working[
@@ -280,12 +288,39 @@ def apply_strategy_filters(
         zero_reason = _zero_reason(funnel)
         return [], funnel, zero_reason
 
+    return _rank_candidates(working, strategy, funnel)
+
+
+def _rank_candidates(
+    working: pd.DataFrame,
+    strategy: Dict[str, Any],
+    funnel: List[Dict[str, Any]],
+    score_mode: bool = False,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[str]]:
+    if working.empty:
+        zero_reason = _zero_reason(funnel)
+        return [], funnel, zero_reason
+
+    if score_mode:
+        funnel.append(
+            {
+                "step_name": "综合评分",
+                "before_count": int(len(working)),
+                "after_count": int(len(working)),
+                "removed_count": 0,
+                "note": "形态、量能、趋势和强弱共同排序",
+            }
+        )
+
     candidate_rows = []
     for _, row in working.iterrows():
         candidate = row.to_dict()
         candidate["signal_type"] = _signal_type(candidate, strategy)
         candidate["signal_score"] = _signal_score(candidate, strategy)
-        candidate["reasons"] = _candidate_reasons(candidate, strategy)
+        reasons = _candidate_reasons(candidate, strategy)
+        if score_mode:
+            reasons = ["综合评分：未达标项只影响分数"] + reasons
+        candidate["reasons"] = reasons
         candidate_rows.append(candidate)
 
     sort_by = strategy.get("sort_by") or "signal_score"
@@ -446,6 +481,8 @@ def _bool_filter(
 
 def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
     if strategy.get("signal_mode") == "platform_breakout":
+        if strategy.get("analysis_mode") == "score":
+            return "平台突破观察"
         return "平台突破"
     distance = safe_float(row.get("ma_distance"))
     volume_ratio = safe_float(row.get("volume_ratio")) or 0
@@ -461,13 +498,62 @@ def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
 def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
     rps = safe_float(row.get(f"rps{int(strategy.get('rps_window') or 20)}")) or safe_float(row.get("rps20")) or 0
     if strategy.get("signal_mode") == "platform_breakout":
-        breakout_volume = min((safe_float(row.get("platform_breakout_volume_ratio")) or 0) * 7, 24)
-        bull_volume = min((safe_float(row.get("platform_bull_volume_ratio")) or 0) * 7, 14)
-        pct_bonus = min(max(safe_float(row.get("platform_breakout_pct_chg")) or 0, 0) * 1.2, 14)
+        platform_range = safe_float(row.get("platform_range"))
+        bullish_ratio = safe_float(row.get("platform_bullish_ratio"))
+        bull_volume_ratio = safe_float(row.get("platform_bull_volume_ratio"))
+        breakout_volume_ratio = safe_float(row.get("platform_breakout_volume_ratio"))
+        breakout_pct = safe_float(row.get("platform_breakout_pct_chg"))
+        body_strength = safe_float(row.get("platform_body_strength"))
+
+        breakout_volume = min((breakout_volume_ratio or 0) * 7, 24)
+        bull_volume = min((bull_volume_ratio or 0) * 7, 14)
+        pct_bonus = min(max(breakout_pct or 0, 0) * 1.2, 14)
         trend_bonus = 10 if row.get("platform_ma_bullish") else 0
         macd_bonus = 6 if (safe_float(row.get("macd_dif")) or 0) > 0 else 0
-        range_penalty = min((safe_float(row.get("platform_range")) or 0) * 80, 8)
-        return round(float(rps) * 0.45 + breakout_volume + bull_volume + pct_bonus + trend_bonus + macd_bonus - range_penalty, 2)
+        range_penalty = min((platform_range or 0) * 80, 8)
+        score = float(rps) * 0.45 + breakout_volume + bull_volume + pct_bonus + trend_bonus + macd_bonus - range_penalty
+
+        max_range = safe_float(strategy.get("platform_max_range"))
+        min_bullish_ratio = safe_float(strategy.get("platform_min_bullish_ratio"))
+        min_bull_volume = safe_float(strategy.get("platform_bull_volume_advantage"))
+        min_breakout_volume = safe_float(strategy.get("platform_breakout_volume_ratio"))
+        min_breakout_pct = safe_float(strategy.get("platform_breakout_pct_chg_min"))
+        min_body_strength = safe_float(strategy.get("platform_body_strength_min"))
+        min_rps = safe_float(strategy.get(f"min_rps{int(strategy.get('rps_window') or 20)}")) or safe_float(
+            strategy.get("min_rps20")
+        )
+
+        if max_range is not None and platform_range is not None:
+            score += 7 if platform_range <= max_range else -min((platform_range - max_range) * 70, 8)
+        if min_breakout_volume is not None and breakout_volume_ratio is not None:
+            if breakout_volume_ratio >= min_breakout_volume:
+                score += 8
+            elif breakout_volume_ratio >= min_breakout_volume * 0.7:
+                score += 3
+        if (
+            min_bullish_ratio is not None
+            and min_bull_volume is not None
+            and bullish_ratio is not None
+            and bull_volume_ratio is not None
+            and bullish_ratio >= min_bullish_ratio
+            and bull_volume_ratio >= min_bull_volume
+        ):
+            score += 5
+        if (
+            min_breakout_pct is not None
+            and min_body_strength is not None
+            and breakout_pct is not None
+            and body_strength is not None
+            and breakout_pct >= min_breakout_pct
+            and body_strength >= min_body_strength
+            and row.get("platform_breakout_bullish")
+        ):
+            score += 5
+        if min_rps is not None and rps >= min_rps and row.get("platform_ma_bullish"):
+            score += 6
+        if row.get("platform_ma_rising") and macd_bonus > 0:
+            score += 4
+        return round(max(score, 0), 2)
     volume_ratio = min((safe_float(row.get("volume_ratio")) or 0) * 8, 20)
     trend_bonus = 12 if (safe_float(row.get("ma_short")) or 0) > (safe_float(row.get("ma_long")) or 0) else 0
     turnover = min((safe_float(row.get("turnover_rate")) or 0) * 1.5, 12)

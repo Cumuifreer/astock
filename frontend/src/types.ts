@@ -51,6 +51,7 @@ export interface StrategyConfig {
   ma_short_window: number;
   ma_long_window: number;
   trend_filter: string;
+  analysis_mode: string;
   signal_mode: string;
   breakout_lookback: number;
   pullback_tolerance: number;

@@ -54,6 +54,11 @@ const signalModes: Array<{ id: string; label: string; sub: string }> = [
   { id: 'platform_breakout', label: '平台突破', sub: '压缩放量' },
 ];
 
+const analysisModes: Array<{ id: string; label: string; sub: string }> = [
+  { id: 'strict', label: '严格筛选', sub: '逐层淘汰，条件必须同时满足' },
+  { id: 'score', label: '综合评分', sub: '基础合格后按信号强弱排序' },
+];
+
 function App() {
   const [tab, setTab] = useState<Tab>('overview');
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
@@ -452,7 +457,7 @@ function StrategyPanel(props: {
   const update = (key: keyof StrategyConfig, value: unknown) => {
     props.setStrategy({ ...props.strategy, [key]: value });
   };
-  const activeMode = signalModes.find((mode) => mode.id === props.strategy.signal_mode) || signalModes[0];
+  const activeAnalysisMode = analysisModes.find((mode) => mode.id === (props.strategy.analysis_mode || 'strict')) || analysisModes[0];
   return (
     <div className="strategy-layout">
       <section className="panel preset-panel">
@@ -518,7 +523,7 @@ function StrategyPanel(props: {
           </div>
         </div>
         <div className="strategy-readout">
-          <span>{activeMode.label}</span>
+          <span>{activeAnalysisMode.label}</span>
           <b>{strategySummary(props.strategy)}</b>
         </div>
         {selectedIsTemplate && (
@@ -538,6 +543,19 @@ function StrategyPanel(props: {
                 key={mode.id}
                 className={mode.id === props.strategy.signal_mode ? 'active' : ''}
                 onClick={() => update('signal_mode', mode.id)}
+                type="button"
+              >
+                <strong>{mode.label}</strong>
+                <small>{mode.sub}</small>
+              </button>
+            ))}
+          </div>
+          <div className="analysis-mode-tabs wide" aria-label="选股方式">
+            {analysisModes.map((mode) => (
+              <button
+                key={mode.id}
+                className={mode.id === (props.strategy.analysis_mode || 'strict') ? 'active' : ''}
+                onClick={() => update('analysis_mode', mode.id)}
                 type="button"
               >
                 <strong>{mode.label}</strong>
