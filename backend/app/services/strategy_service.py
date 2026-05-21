@@ -29,6 +29,15 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "platform_body_strength_min": 1.0,
     "platform_ma_trend_enabled": True,
     "platform_ma_rising_required": True,
+    "platform_setup_lookback_days": 20,
+    "platform_setup_max_range": 0.1,
+    "platform_setup_max_distance_to_high": 0.035,
+    "platform_setup_max_recent_gain_5d": 0.1,
+    "platform_setup_volume_contraction_max": 1.05,
+    "platform_setup_bull_volume_advantage": 1.05,
+    "platform_setup_ma_convergence_max": 0.05,
+    "platform_setup_require_ma_turning": True,
+    "platform_setup_macd_mode": "dif_above_dea",
     "macd_filter_enabled": True,
     "macd_position": "dif_dea_above_zero",
     "max_amplitude": 0.12,
@@ -85,6 +94,20 @@ SYSTEM_PRESETS = [
             "max_amplitude": 0.18,
         },
     },
+    {
+        "id": "system-platform-setup",
+        "name": "平台临界",
+        "is_default": False,
+        "config": {
+            **DEFAULT_STRATEGY_CONFIG,
+            "signal_mode": "platform_setup",
+            "min_rps20": 60.0,
+            "volume_ratio_min": None,
+            "max_ma_distance": 0.1,
+            "min_pct_chg": -3.0,
+            "max_pct_chg": 6.0,
+        },
+    },
 ]
 
 
@@ -93,9 +116,12 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     merged["ma_short_window"] = max(3, int(merged["ma_short_window"]))
     merged["ma_long_window"] = max(merged["ma_short_window"] + 1, int(merged["ma_long_window"]))
     merged["platform_lookback_days"] = max(10, int(merged["platform_lookback_days"]))
+    merged["platform_setup_lookback_days"] = max(10, int(merged["platform_setup_lookback_days"]))
     merged["candidate_limit"] = max(1, min(500, int(merged["candidate_limit"])))
     merged["sort_by"] = merged.get("sort_by") or "signal_score"
     merged["macd_position"] = merged.get("macd_position") or "dif_dea_above_zero"
+    if merged.get("platform_setup_macd_mode") not in {"none", "dif_above_dea", "dif_above_zero"}:
+        merged["platform_setup_macd_mode"] = "dif_above_dea"
     if merged.get("analysis_mode") not in {"strict", "score"}:
         merged["analysis_mode"] = "strict"
     return merged

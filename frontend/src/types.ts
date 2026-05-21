@@ -64,6 +64,15 @@ export interface StrategyConfig {
   platform_body_strength_min: number;
   platform_ma_trend_enabled: boolean;
   platform_ma_rising_required: boolean;
+  platform_setup_lookback_days: number;
+  platform_setup_max_range: number;
+  platform_setup_max_distance_to_high: number;
+  platform_setup_max_recent_gain_5d: number;
+  platform_setup_volume_contraction_max: number;
+  platform_setup_bull_volume_advantage: number;
+  platform_setup_ma_convergence_max: number;
+  platform_setup_require_ma_turning: boolean;
+  platform_setup_macd_mode: string;
   macd_filter_enabled: boolean;
   macd_position: string;
   max_amplitude: number;

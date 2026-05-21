@@ -140,6 +140,94 @@ def compute_platform_breakout_metrics(group: pd.DataFrame, strategy: Dict[str, A
     }
 
 
+def compute_platform_setup_metrics(group: pd.DataFrame, strategy: Dict[str, Any]) -> Dict[str, Any]:
+    platform_days = max(10, int(strategy.get("platform_setup_lookback_days") or 20))
+    if len(group) < platform_days:
+        return {"platform_setup_ready": False}
+
+    clean = group.copy().sort_values("date")
+    for column in ["open", "high", "low", "close", "volume"]:
+        clean[column] = pd.to_numeric(clean.get(column), errors="coerce")
+    window = clean.iloc[-platform_days:].dropna(subset=["open", "high", "low", "close", "volume"])
+    if len(window) < platform_days:
+        return {"platform_setup_ready": False}
+
+    latest = clean.iloc[-1]
+    close_value = safe_float(latest.get("close"))
+    platform_high = safe_float(window["high"].max())
+    platform_low = safe_float(window["low"].min())
+    platform_range = (
+        (platform_high - platform_low) / platform_low
+        if platform_high is not None and platform_low is not None and platform_low > 0
+        else None
+    )
+    distance_to_high = (
+        max(0.0, (platform_high - close_value) / platform_high)
+        if platform_high is not None and close_value is not None and platform_high > 0
+        else None
+    )
+
+    closes = pd.to_numeric(clean["close"], errors="coerce").dropna()
+    recent_gain_5d = None
+    if len(closes) >= 6:
+        base = safe_float(closes.iloc[-6])
+        latest_close = safe_float(closes.iloc[-1])
+        if base is not None and latest_close is not None and base > 0:
+            recent_gain_5d = (latest_close - base) / base
+
+    recent_volume = safe_float(window["volume"].tail(5).mean())
+    platform_avg_volume = safe_float(window["volume"].mean())
+    volume_contraction = (
+        recent_volume / platform_avg_volume
+        if recent_volume is not None and platform_avg_volume is not None and platform_avg_volume > 0
+        else None
+    )
+
+    bullish = window[window["close"] > window["open"]]
+    bearish = window[window["close"] < window["open"]]
+    bull_avg_volume = safe_float(bullish["volume"].mean()) if not bullish.empty else None
+    bear_avg_volume = safe_float(bearish["volume"].mean()) if not bearish.empty else None
+    if bull_avg_volume is not None and (bear_avg_volume is None or bear_avg_volume <= 0):
+        bull_volume_ratio = float("inf")
+    elif bull_avg_volume is not None and bear_avg_volume is not None:
+        bull_volume_ratio = bull_avg_volume / bear_avg_volume
+    else:
+        bull_volume_ratio = None
+
+    ma_fast, ma_mid, ma_slow = _platform_ma_values(clean["close"])
+    prev_fast, _, _ = _platform_ma_values(clean["close"].iloc[:-1])
+    ma_values = [value for value in [ma_fast, ma_mid, ma_slow] if value is not None]
+    ma_convergence = (
+        (max(ma_values) - min(ma_values)) / close_value
+        if close_value is not None and close_value > 0 and len(ma_values) == 3
+        else None
+    )
+    ma_turning_up = (
+        ma_fast is not None
+        and prev_fast is not None
+        and close_value is not None
+        and ma_fast > prev_fast
+        and close_value >= ma_fast
+    )
+    macd_dif, macd_dea = _macd_values(clean["close"])
+
+    return {
+        "platform_setup_ready": True,
+        "platform_setup_range": _round_optional(platform_range, 6),
+        "platform_setup_distance_to_high": _round_optional(distance_to_high, 6),
+        "platform_setup_recent_gain_5d": _round_optional(recent_gain_5d, 6),
+        "platform_setup_volume_contraction": _round_optional(volume_contraction, 6),
+        "platform_setup_bull_volume_ratio": _round_optional(bull_volume_ratio, 6),
+        "platform_setup_ma_convergence": _round_optional(ma_convergence, 6),
+        "platform_setup_ma_turning_up": bool(ma_turning_up),
+        "platform_setup_ma_fast": _round_optional(ma_fast, 6),
+        "platform_setup_ma_mid": _round_optional(ma_mid, 6),
+        "platform_setup_ma_slow": _round_optional(ma_slow, 6),
+        "macd_dif": _round_optional(macd_dif, 6),
+        "macd_dea": _round_optional(macd_dea, 6),
+    }
+
+
 def _platform_ma_values(closes: pd.Series) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     clean = pd.to_numeric(closes, errors="coerce").dropna()
     if len(clean) < 20:
@@ -265,14 +353,15 @@ def apply_strategy_filters(
         funnel,
     )
     working = _numeric_filter(working, "amplitude", None, strategy.get("max_amplitude"), "振幅", funnel)
-    working = _numeric_filter(
-        working,
-        "volume_ratio",
-        strategy.get("volume_ratio_min"),
-        None,
-        "成交量放大",
-        funnel,
-    )
+    if strategy.get("signal_mode") != "platform_setup":
+        working = _numeric_filter(
+            working,
+            "volume_ratio",
+            strategy.get("volume_ratio_min"),
+            None,
+            "成交量放大",
+            funnel,
+        )
     working = _numeric_filter(
         working,
         "ma_distance",
@@ -283,6 +372,8 @@ def apply_strategy_filters(
     )
     if strategy.get("signal_mode") == "platform_breakout":
         working = _apply_platform_breakout_filters(working, strategy, funnel)
+    if strategy.get("signal_mode") == "platform_setup":
+        working = _apply_platform_setup_filters(working, strategy, funnel)
 
     if working.empty:
         zero_reason = _zero_reason(funnel)
@@ -455,6 +546,86 @@ def _apply_platform_breakout_filters(
     return working
 
 
+def _apply_platform_setup_filters(
+    frame: pd.DataFrame,
+    strategy: Dict[str, Any],
+    funnel: List[Dict[str, Any]],
+) -> pd.DataFrame:
+    working = _bool_filter(frame, "platform_setup_ready", "平台数据", funnel, "需要足够历史 K 线")
+    working = _numeric_filter(
+        working,
+        "platform_setup_range",
+        None,
+        strategy.get("platform_setup_max_range"),
+        "平台压缩",
+        funnel,
+    )
+    working = _numeric_filter(
+        working,
+        "platform_setup_distance_to_high",
+        None,
+        strategy.get("platform_setup_max_distance_to_high"),
+        "接近平台上沿",
+        funnel,
+    )
+    working = _numeric_filter(
+        working,
+        "platform_setup_recent_gain_5d",
+        None,
+        strategy.get("platform_setup_max_recent_gain_5d"),
+        "短线不过热",
+        funnel,
+    )
+    working = _numeric_filter(
+        working,
+        "platform_setup_volume_contraction",
+        None,
+        strategy.get("platform_setup_volume_contraction_max"),
+        "缩量整理",
+        funnel,
+    )
+    working = _numeric_filter(
+        working,
+        "platform_setup_bull_volume_ratio",
+        strategy.get("platform_setup_bull_volume_advantage"),
+        None,
+        "阳线量能",
+        funnel,
+    )
+    working = _numeric_filter(
+        working,
+        "platform_setup_ma_convergence",
+        None,
+        strategy.get("platform_setup_ma_convergence_max"),
+        "均线粘合",
+        funnel,
+    )
+    if strategy.get("platform_setup_require_ma_turning"):
+        working = _bool_filter(working, "platform_setup_ma_turning_up", "均线拐头", funnel, "MA5 向上且价格在 MA5 上方")
+    macd_mode = strategy.get("platform_setup_macd_mode")
+    if macd_mode and macd_mode != "none":
+        before = len(working)
+        dif = pd.to_numeric(working.get("macd_dif"), errors="coerce")
+        dea = pd.to_numeric(working.get("macd_dea"), errors="coerce")
+        if macd_mode == "dif_above_zero":
+            mask = dif > 0
+            note = "DIF 在 0 轴上方"
+        else:
+            mask = dif > dea
+            note = "DIF 强于 DEA"
+        working = working[mask]
+        funnel.append(
+            {
+                "step_name": "MACD 转强",
+                "before_count": int(before),
+                "after_count": int(len(working)),
+                "removed_count": int(before - len(working)),
+                "note": note,
+            }
+        )
+    return working
+
+
 def _bool_filter(
     frame: pd.DataFrame,
     column: str,
@@ -480,6 +651,8 @@ def _bool_filter(
 
 
 def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
+    if strategy.get("signal_mode") == "platform_setup":
+        return "平台临界"
     if strategy.get("signal_mode") == "platform_breakout":
         if strategy.get("analysis_mode") == "score":
             return "平台突破观察"
@@ -497,6 +670,66 @@ def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
 
 def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
     rps = safe_float(row.get(f"rps{int(strategy.get('rps_window') or 20)}")) or safe_float(row.get("rps20")) or 0
+    if strategy.get("signal_mode") == "platform_setup":
+        setup_range = safe_float(row.get("platform_setup_range"))
+        distance_to_high = safe_float(row.get("platform_setup_distance_to_high"))
+        recent_gain = safe_float(row.get("platform_setup_recent_gain_5d"))
+        volume_contraction = safe_float(row.get("platform_setup_volume_contraction"))
+        bull_volume_ratio = safe_float(row.get("platform_setup_bull_volume_ratio"))
+        ma_convergence = safe_float(row.get("platform_setup_ma_convergence"))
+        max_range = safe_float(strategy.get("platform_setup_max_range")) or 0.1
+        max_distance = safe_float(strategy.get("platform_setup_max_distance_to_high")) or 0.035
+        max_recent_gain = safe_float(strategy.get("platform_setup_max_recent_gain_5d")) or 0.1
+        max_volume_contraction = safe_float(strategy.get("platform_setup_volume_contraction_max")) or 1.05
+        min_bull_volume = safe_float(strategy.get("platform_setup_bull_volume_advantage")) or 1.05
+        max_ma_convergence = safe_float(strategy.get("platform_setup_ma_convergence_max")) or 0.05
+        min_rps = safe_float(strategy.get(f"min_rps{int(strategy.get('rps_window') or 20)}")) or safe_float(
+            strategy.get("min_rps20")
+        )
+
+        score = float(rps) * 0.5
+        if setup_range is not None:
+            score += max(0.0, (max_range - setup_range) / max_range) * 14 if setup_range <= max_range else -8
+        if distance_to_high is not None:
+            score += (
+                max(0.0, (max_distance - distance_to_high) / max_distance) * 18
+                if distance_to_high <= max_distance
+                else -10
+            )
+        if recent_gain is not None:
+            score += 8 if recent_gain <= max_recent_gain else -min((recent_gain - max_recent_gain) * 100, 12)
+        if volume_contraction is not None:
+            score += (
+                max(0.0, (max_volume_contraction - volume_contraction) / max_volume_contraction) * 8
+                if volume_contraction <= max_volume_contraction
+                else -min((volume_contraction - max_volume_contraction) * 10, 8)
+            )
+        if bull_volume_ratio is not None:
+            score += min(bull_volume_ratio * 6, 12)
+        if ma_convergence is not None:
+            score += (
+                max(0.0, (max_ma_convergence - ma_convergence) / max_ma_convergence) * 8
+                if ma_convergence <= max_ma_convergence
+                else -6
+            )
+        if row.get("platform_setup_ma_turning_up"):
+            score += 8
+        if (safe_float(row.get("macd_dif")) or 0) > (safe_float(row.get("macd_dea")) or 0):
+            score += 5
+        if setup_range is not None and distance_to_high is not None and setup_range <= max_range and distance_to_high <= max_distance:
+            score += 8
+        if (
+            volume_contraction is not None
+            and bull_volume_ratio is not None
+            and volume_contraction <= max_volume_contraction
+            and bull_volume_ratio >= min_bull_volume
+        ):
+            score += 5
+        if min_rps is not None and recent_gain is not None and rps >= min_rps and recent_gain <= max_recent_gain:
+            score += 5
+        if ma_convergence is not None and ma_convergence <= max_ma_convergence and row.get("platform_setup_ma_turning_up"):
+            score += 5
+        return round(max(score, 0), 2)
     if strategy.get("signal_mode") == "platform_breakout":
         platform_range = safe_float(row.get("platform_range"))
         bullish_ratio = safe_float(row.get("platform_bullish_ratio"))
@@ -581,6 +814,27 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
         reasons.append(f"换手率 {turnover:.2f}%")
     if safe_float(row.get("float_market_value")) is None:
         reasons.append("流通市值缺失，按策略降级")
+    if strategy.get("signal_mode") == "platform_setup":
+        setup_range = safe_float(row.get("platform_setup_range"))
+        if setup_range is not None:
+            reasons.append(f"平台振幅 {setup_range * 100:.2f}%")
+        distance_to_high = safe_float(row.get("platform_setup_distance_to_high"))
+        if distance_to_high is not None:
+            reasons.append(f"距平台上沿 {distance_to_high * 100:.2f}%")
+        recent_gain = safe_float(row.get("platform_setup_recent_gain_5d"))
+        if recent_gain is not None:
+            reasons.append(f"近5日涨幅 {recent_gain * 100:.2f}%")
+        volume_contraction = safe_float(row.get("platform_setup_volume_contraction"))
+        if volume_contraction is not None:
+            reasons.append(f"缩量比 {volume_contraction:.2f}x")
+        bull_volume = safe_float(row.get("platform_setup_bull_volume_ratio"))
+        if bull_volume is not None:
+            reasons.append(f"阳线量能 {bull_volume:.2f}x")
+        ma_convergence = safe_float(row.get("platform_setup_ma_convergence"))
+        if ma_convergence is not None:
+            reasons.append(f"均线粘合 {ma_convergence * 100:.2f}%")
+        if row.get("platform_setup_ma_turning_up"):
+            reasons.append("MA5 拐头")
     if strategy.get("signal_mode") == "platform_breakout":
         platform_range = safe_float(row.get("platform_range"))
         if platform_range is not None:
@@ -731,6 +985,8 @@ class AnalysisService:
                 )
             )
             platform_metrics = compute_platform_breakout_metrics(group, strategy)
+            if strategy.get("signal_mode") == "platform_setup":
+                platform_metrics.update(compute_platform_setup_metrics(group, strategy))
             output.append(
                 {
                     "code": code,

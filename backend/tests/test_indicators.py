@@ -6,6 +6,7 @@ from backend.app.services.analysis_service import (
     apply_strategy_filters,
     compute_amplitude,
     compute_platform_breakout_metrics,
+    compute_platform_setup_metrics,
     compute_rps_scores,
 )
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG
@@ -82,6 +83,40 @@ def test_platform_breakout_metrics_detect_compression_and_volume_breakout():
     assert metrics["platform_ma_rising"] is True
     assert metrics["macd_dif"] > 0
     assert metrics["macd_dea"] > 0
+
+
+def test_platform_setup_metrics_detect_near_upper_compression_before_breakout():
+    bars = []
+    start = date(2026, 4, 1)
+    for index in range(30):
+        close = 10.0 + min(index, 20) * 0.025
+        bullish = index % 3 != 0
+        bars.append(
+            {
+                "code": "000001.SZ",
+                "date": (start + timedelta(days=index)).isoformat(),
+                "open": close - 0.025 if bullish else close + 0.025,
+                "high": close + 0.07,
+                "low": close - 0.07,
+                "close": close,
+                "prev_close": close - 0.02,
+                "volume": 900 if index >= 25 else 1300 if bullish else 950,
+                "pct_chg": 0.2,
+            }
+        )
+    bars[-1]["close"] = 10.54
+    bars[-1]["high"] = 10.62
+    bars[-1]["low"] = 10.43
+    bars[-1]["volume"] = 920
+
+    metrics = compute_platform_setup_metrics(pd.DataFrame(bars), DEFAULT_STRATEGY_CONFIG)
+
+    assert metrics["platform_setup_ready"] is True
+    assert metrics["platform_setup_range"] <= 0.12
+    assert metrics["platform_setup_distance_to_high"] <= 0.035
+    assert metrics["platform_setup_recent_gain_5d"] <= 0.1
+    assert metrics["platform_setup_volume_contraction"] <= 1.0
+    assert metrics["platform_setup_ma_turning_up"] is True
 
 
 def test_platform_breakout_filters_keep_matching_shape():
@@ -163,6 +198,118 @@ def test_platform_breakout_filters_keep_matching_shape():
     assert zero_reason is None
     assert any(step["step_name"] == "平台振幅" for step in funnel)
     assert any("平台振幅" in reason for reason in candidates[0]["reasons"])
+
+
+def test_platform_setup_filters_keep_near_upper_not_overheated_candidates():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "latest_price": 10.6,
+                "amount": 180_000_000,
+                "float_market_value": 40_000_000_000,
+                "ma_short": 10.45,
+                "ma_long": 10.1,
+                "rps20": 72.0,
+                "turnover_rate": 3.2,
+                "pct_chg": 1.5,
+                "amplitude": 0.04,
+                "volume_ratio": 0.75,
+                "ma_distance": 0.02,
+                "platform_setup_ready": True,
+                "platform_setup_range": 0.08,
+                "platform_setup_distance_to_high": 0.018,
+                "platform_setup_recent_gain_5d": 0.035,
+                "platform_setup_volume_contraction": 0.78,
+                "platform_setup_bull_volume_ratio": 1.15,
+                "platform_setup_ma_convergence": 0.028,
+                "platform_setup_ma_turning_up": True,
+                "macd_dif": 0.02,
+                "macd_dea": 0.01,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "600000.SH",
+                "name": "浦发银行",
+                "latest_price": 8.0,
+                "amount": 200_000_000,
+                "float_market_value": 50_000_000_000,
+                "ma_short": 8.2,
+                "ma_long": 8.0,
+                "rps20": 80.0,
+                "turnover_rate": 2.5,
+                "pct_chg": 0.8,
+                "amplitude": 0.03,
+                "volume_ratio": 0.7,
+                "ma_distance": 0.03,
+                "platform_setup_ready": True,
+                "platform_setup_range": 0.07,
+                "platform_setup_distance_to_high": 0.08,
+                "platform_setup_recent_gain_5d": 0.02,
+                "platform_setup_volume_contraction": 0.8,
+                "platform_setup_bull_volume_ratio": 1.3,
+                "platform_setup_ma_convergence": 0.02,
+                "platform_setup_ma_turning_up": True,
+                "macd_dif": 0.03,
+                "macd_dea": 0.01,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "300750.SZ",
+                "name": "宁德时代",
+                "latest_price": 210.0,
+                "amount": 600_000_000,
+                "float_market_value": 200_000_000_000,
+                "ma_short": 205.0,
+                "ma_long": 190.0,
+                "rps20": 92.0,
+                "turnover_rate": 4.0,
+                "pct_chg": 5.0,
+                "amplitude": 0.07,
+                "volume_ratio": 2.0,
+                "ma_distance": 0.06,
+                "platform_setup_ready": True,
+                "platform_setup_range": 0.09,
+                "platform_setup_distance_to_high": 0.01,
+                "platform_setup_recent_gain_5d": 0.16,
+                "platform_setup_volume_contraction": 1.5,
+                "platform_setup_bull_volume_ratio": 1.4,
+                "platform_setup_ma_convergence": 0.06,
+                "platform_setup_ma_turning_up": True,
+                "macd_dif": 0.5,
+                "macd_dea": 0.4,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "signal_mode": "platform_setup",
+        "min_price": 5,
+        "min_amount": 100_000_000,
+        "min_rps20": 60,
+        "platform_setup_max_range": 0.1,
+        "platform_setup_max_distance_to_high": 0.035,
+        "platform_setup_max_recent_gain_5d": 0.1,
+        "platform_setup_volume_contraction_max": 1.05,
+        "platform_setup_bull_volume_advantage": 1.05,
+        "platform_setup_ma_convergence_max": 0.05,
+        "volume_ratio_min": 1.1,
+        "candidate_limit": 10,
+    }
+
+    candidates, funnel, zero_reason = apply_strategy_filters(rows, config)
+
+    assert [row["code"] for row in candidates] == ["000001.SZ"]
+    assert candidates[0]["signal_type"] == "平台临界"
+    assert zero_reason is None
+    assert "成交量放大" not in [step["step_name"] for step in funnel]
+    assert any(step["step_name"] == "接近平台上沿" for step in funnel)
+    assert any("距平台上沿" in reason for reason in candidates[0]["reasons"])
 
 
 def test_strategy_filters_keep_explainable_candidates():

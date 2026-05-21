@@ -52,6 +52,7 @@ const signalModes: Array<{ id: string; label: string; sub: string }> = [
   { id: 'breakout', label: '右侧突破', sub: '放量上攻' },
   { id: 'pullback', label: '左侧回踩', sub: '趋势低吸' },
   { id: 'platform_breakout', label: '平台突破', sub: '压缩放量' },
+  { id: 'platform_setup', label: '平台临界', sub: '贴近上沿' },
 ];
 
 const analysisModes: Array<{ id: string; label: string; sub: string }> = [
@@ -607,6 +608,26 @@ function StrategyPanel(props: {
             </>
           )}
 
+          {props.strategy.signal_mode === 'platform_setup' && (
+            <>
+              <div className="form-section wide">
+                <span>平台临界观察</span>
+              </div>
+              <NumberField label="平台观察天数" value={props.strategy.platform_setup_lookback_days} onChange={(value) => update('platform_setup_lookback_days', value)} />
+              <NumberField label="平台最大振幅" value={props.strategy.platform_setup_max_range} onChange={(value) => update('platform_setup_max_range', value)} />
+              <NumberField label="接近上沿距离" value={props.strategy.platform_setup_max_distance_to_high} onChange={(value) => update('platform_setup_max_distance_to_high', value)} />
+              <NumberField label="近5日涨幅上限" value={props.strategy.platform_setup_max_recent_gain_5d} onChange={(value) => update('platform_setup_max_recent_gain_5d', value)} />
+              <NumberField label="缩量整理上限" value={props.strategy.platform_setup_volume_contraction_max} onChange={(value) => update('platform_setup_volume_contraction_max', value)} />
+              <NumberField label="阳线均量优势" value={props.strategy.platform_setup_bull_volume_advantage} onChange={(value) => update('platform_setup_bull_volume_advantage', value)} />
+              <NumberField label="均线粘合上限" value={props.strategy.platform_setup_ma_convergence_max} onChange={(value) => update('platform_setup_ma_convergence_max', value)} />
+              <SelectField label="MACD 状态" value={props.strategy.platform_setup_macd_mode} onChange={(value) => update('platform_setup_macd_mode', value)} options={[['none', '不启用'], ['dif_above_dea', 'DIF 强于 DEA'], ['dif_above_zero', 'DIF 在 0 轴上方']]} />
+              <label className="toggle">
+                <input type="checkbox" checked={props.strategy.platform_setup_require_ma_turning} onChange={(event) => update('platform_setup_require_ma_turning', event.target.checked)} />
+                <span>要求 MA5 拐头</span>
+              </label>
+            </>
+          )}
+
           <div className="form-section wide">
             <span>强弱与趋势</span>
           </div>
@@ -625,7 +646,9 @@ function StrategyPanel(props: {
           <NumberField label="最大换手率" value={props.strategy.max_turnover} onChange={(value) => update('max_turnover', value)} allowBlank />
           <NumberField label="最小涨跌幅" value={props.strategy.min_pct_chg} onChange={(value) => update('min_pct_chg', value)} allowBlank />
           <NumberField label="最大涨跌幅" value={props.strategy.max_pct_chg} onChange={(value) => update('max_pct_chg', value)} allowBlank />
-          <NumberField label="成交量放大" value={props.strategy.volume_ratio_min} onChange={(value) => update('volume_ratio_min', value)} allowBlank />
+          {props.strategy.signal_mode !== 'platform_setup' && (
+            <NumberField label="成交量放大" value={props.strategy.volume_ratio_min} onChange={(value) => update('volume_ratio_min', value)} allowBlank />
+          )}
           <NumberField label="最大均线偏离" value={props.strategy.max_ma_distance} onChange={(value) => update('max_ma_distance', value)} allowBlank />
           <NumberField label="候选上限" value={props.strategy.candidate_limit} onChange={(value) => update('candidate_limit', value)} />
           <SelectField label="排序" value={props.strategy.sort_by} onChange={(value) => update('sort_by', value)} options={[['signal_score', '信号分数'], ['rps20', 'RPS20'], ['amount', '成交额'], ['pct_chg', '涨跌幅']]} />
@@ -1150,6 +1173,9 @@ function InitialLoading() {
 
 function strategySummary(strategy: StrategyConfig) {
   const mode = signalModes.find((item) => item.id === strategy.signal_mode)?.label || '自定义';
+  if (strategy.signal_mode === 'platform_setup') {
+    return `${mode} · ${strategy.platform_setup_lookback_days}日 · 距上沿≤${formatPercentRatio(strategy.platform_setup_max_distance_to_high)} · 近5日≤${formatPercentRatio(strategy.platform_setup_max_recent_gain_5d)}`;
+  }
   if (strategy.signal_mode === 'platform_breakout') {
     return `${mode} · ${strategy.platform_lookback_days}日 · 振幅≤${formatPercentRatio(strategy.platform_max_range)} · 量比≥${formatPrice(strategy.platform_breakout_volume_ratio)}x · 涨幅≥${formatPercent(strategy.platform_breakout_pct_chg_min)}`;
   }
