@@ -63,7 +63,6 @@ function App() {
   const [strategyName, setStrategyName] = useState('我的策略');
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [strategy, setStrategy] = useState<StrategyConfig | null>(null);
-  const [updateLimit, setUpdateLimit] = useState(0);
 
   function applyPreset(preset: StrategyPreset) {
     setSelectedPresetId(preset.id);
@@ -119,7 +118,7 @@ function App() {
 
   async function startUpdate(force = false, mode: UpdateMode = 'full') {
     try {
-      await api.startUpdate({ force, mode, limit: updateLimit || undefined });
+      await api.startUpdate({ force, mode });
       setNotice(mode === 'daily_light' ? '轻量日更已开始' : '数据更新已开始');
       await load(true);
       setTab('status');
@@ -169,8 +168,6 @@ function App() {
       return (
         <Overview
           bootstrap={bootstrap}
-          updateLimit={updateLimit}
-          setUpdateLimit={setUpdateLimit}
           startUpdate={startUpdate}
           startAnalyze={() => startAnalyze(strategy)}
         />
@@ -230,7 +227,7 @@ function App() {
       return <DataMap capabilities={bootstrap.capabilities} afterProbe={() => load(true)} />;
     }
     return <StatusBoard update={bootstrap.update_status} analyze={bootstrap.analyze_status} latestAnalysis={bootstrap.latest_analysis} />;
-  }, [bootstrap, tab, strategy, strategyName, selectedPresetId, updateLimit]);
+  }, [bootstrap, tab, strategy, strategyName, selectedPresetId]);
 
   return (
     <main className="shell">
@@ -295,14 +292,10 @@ function App() {
 
 function Overview({
   bootstrap,
-  updateLimit,
-  setUpdateLimit,
   startUpdate,
   startAnalyze,
 }: {
   bootstrap: Bootstrap;
-  updateLimit: number;
-  setUpdateLimit: (value: number) => void;
   startUpdate: (force?: boolean, mode?: UpdateMode) => void;
   startAnalyze: () => void;
 }) {
@@ -323,10 +316,6 @@ function Overview({
           <TaskStrip task={bootstrap.update_status} fallback="数据更新尚未启动" />
           <TaskStrip task={bootstrap.analyze_status} fallback="分析尚未启动" />
           <div className="action-row">
-            <label className="field compact">
-              <span>本次上限</span>
-              <input value={updateLimit} onChange={(event) => setUpdateLimit(numberFromInput(event.target.value, 0) || 0)} />
-            </label>
             <button onClick={() => startUpdate(false, 'daily_light')} className="primary">
               <RefreshCw size={16} />
               轻量日更
@@ -1185,12 +1174,6 @@ function formatMoneyCompact(value: number) {
 
 function trimZeros(value: number) {
   return value.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
-}
-
-function numberFromInput(value: string, fallback: number | null): number | null {
-  if (value.trim() === '') return fallback;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function formatInt(value: unknown) {
