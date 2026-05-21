@@ -6,6 +6,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -17,6 +18,9 @@ from backend.app.sources.adata_source import ADataSource
 from backend.app.sources.akshare_source import AkShareSource
 from backend.app.sources.baostock_source import BaostockSource
 from backend.app.sources.base import SourceGuard
+
+CHINA_TZ = ZoneInfo("Asia/Shanghai")
+HISTORY_CLOSE_HOUR = 16
 
 
 class TaskBusy(RuntimeError):
@@ -197,8 +201,9 @@ class UpdateService:
         warnings: List[str] = []
         failed_sources = 0
         success_sources = 0
-        start = date.today() - timedelta(days=settings.default_history_days)
-        end = date.today()
+        target_history_date = self._target_history_date()
+        start = target_history_date - timedelta(days=settings.default_history_days)
+        end = target_history_date
         try:
             self._patch_task(task_id, stage="刷新股票池", source="Baostock")
             stock_count = self._update_basics(force, include_bj, exclude_star, warnings)
@@ -212,7 +217,11 @@ class UpdateService:
                 failed_sources += 1
 
             incremental_history = light and not force
-            stocks = self._history_stocks_for_update(limit=limit, light=incremental_history)
+            stocks = self._history_stocks_for_update(
+                limit=limit,
+                light=incremental_history,
+                target_history_date=target_history_date,
+            )
             total = len(stocks)
             self._patch_task(
                 task_id,
@@ -227,6 +236,7 @@ class UpdateService:
                 force,
                 task_id,
                 incremental=incremental_history,
+                target_history_date=target_history_date,
             )
             if history_success:
                 success_sources += 1
@@ -255,6 +265,7 @@ class UpdateService:
                     "history_success": history_success,
                     "history_failed": history_failed,
                     "history_skipped": history_skipped,
+                    "target_history_date": target_history_date.isoformat(),
                     "float_market_value_count": float_count,
                     "warnings": warnings,
                     "success_sources": success_sources,
@@ -386,7 +397,7 @@ class UpdateService:
         self,
         limit: int,
         light: bool,
-        today: Optional[date] = None,
+        target_history_date: Optional[date] = None,
     ) -> List[Dict[str, Any]]:
         if not light:
             return self.db.query(
@@ -394,7 +405,7 @@ class UpdateService:
                 [limit] if limit else [],
             )
 
-        cutoff = (today or date.today()) - timedelta(days=3)
+        target = target_history_date or self._target_history_date()
         sql = """
             SELECT code, latest_history_date
             FROM (
@@ -409,7 +420,7 @@ class UpdateService:
             WHERE latest_history_date IS NULL OR latest_history_date < ?
             ORDER BY code
         """
-        params: List[Any] = [cutoff]
+        params: List[Any] = [target]
         if limit:
             sql += " LIMIT ?"
             params.append(limit)
@@ -423,6 +434,7 @@ class UpdateService:
         force: bool,
         task_id: str,
         incremental: bool = False,
+        target_history_date: Optional[date] = None,
     ) -> tuple:
         baostock = BaostockSource()
         adata = ADataSource()
@@ -430,12 +442,13 @@ class UpdateService:
         failed = 0
         skipped = 0
         total = len(stocks)
+        target = target_history_date or self._target_history_date()
         for index, row in enumerate(stocks, start=1):
             code = row["code"]
             latest = row.get("latest_history_date")
             if latest is None:
                 latest = self.db.scalar("SELECT MAX(date) FROM historical_bars WHERE code = ?", [code])
-            if latest and not force and str(latest) >= (date.today() - timedelta(days=3)).isoformat():
+            if incremental and latest and not force and str(latest) >= target.isoformat():
                 skipped += 1
                 self._patch_task(
                     task_id,
@@ -447,6 +460,17 @@ class UpdateService:
                 )
                 continue
             fetch_start = self._history_fetch_start(start, latest, incremental=incremental)
+            if incremental and fetch_start > end:
+                skipped += 1
+                self._patch_task(
+                    task_id,
+                    current_stock=code,
+                    processed=index,
+                    skipped=skipped,
+                    success=success,
+                    failed=failed,
+                )
+                continue
             try:
                 self.baostock_guard.sleep()
                 frame = baostock.fetch_history(code, fetch_start, end)
@@ -492,6 +516,23 @@ class UpdateService:
                 payload={"success": success, "failed": failed, "skipped": skipped},
             )
         return success, failed, skipped
+
+    @staticmethod
+    def _target_history_date(now: Optional[datetime] = None) -> date:
+        current = now or datetime.now(CHINA_TZ)
+        if current.tzinfo is not None:
+            current = current.astimezone(CHINA_TZ).replace(tzinfo=None)
+        current_day = current.date()
+        if current.weekday() < 5 and current.hour >= HISTORY_CLOSE_HOUR:
+            return current_day
+        return UpdateService._previous_weekday(current_day)
+
+    @staticmethod
+    def _previous_weekday(day: date) -> date:
+        target = day - timedelta(days=1)
+        while target.weekday() >= 5:
+            target -= timedelta(days=1)
+        return target
 
     @staticmethod
     def _history_fetch_start(default_start: date, latest: Any, incremental: bool) -> date:

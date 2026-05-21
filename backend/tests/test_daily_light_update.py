@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 from backend.app.db import Database
 from backend.app.schema import migrate
@@ -56,7 +56,7 @@ def _snapshot(code: str) -> dict:
     }
 
 
-def test_light_daily_update_selects_only_stale_or_missing_history(tmp_path):
+def test_light_daily_update_selects_stocks_behind_target_history_date(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert(
@@ -82,10 +82,20 @@ def test_light_daily_update_selects_only_stale_or_missing_history(tmp_path):
     rows = UpdateService(db)._history_stocks_for_update(
         limit=0,
         light=True,
-        today=date(2026, 5, 20),
+        target_history_date=date(2026, 5, 20),
     )
 
-    assert [row["code"] for row in rows] == ["300750.SZ", "600000.SH"]
+    assert [row["code"] for row in rows] == ["000001.SZ", "300750.SZ", "600000.SH"]
+
+
+def test_target_history_date_uses_previous_trading_day_before_china_close(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+
+    assert service._target_history_date(datetime(2026, 5, 21, 8, 30)) == date(2026, 5, 20)
+    assert service._target_history_date(datetime(2026, 5, 21, 16, 30)) == date(2026, 5, 21)
+    assert service._target_history_date(datetime(2026, 5, 23, 10, 0)) == date(2026, 5, 22)
 
 
 def test_incremental_history_start_continues_after_latest_bar(tmp_path):
