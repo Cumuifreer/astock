@@ -57,6 +57,9 @@ export interface StrategyConfig {
   pullback_tolerance: number;
   platform_lookback_days: number;
   platform_max_range: number;
+  platform_range_basis: string;
+  platform_breakout_require_close_above: boolean;
+  platform_breakout_clearance: number;
   platform_min_bullish_ratio: number;
   platform_bull_volume_advantage: number;
   platform_breakout_volume_ratio: number;

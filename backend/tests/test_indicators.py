@@ -78,11 +78,60 @@ def test_platform_breakout_metrics_detect_compression_and_volume_breakout():
     assert metrics["platform_bull_volume_ratio"] > 1.1
     assert metrics["platform_breakout_volume_ratio"] > 2.5
     assert metrics["platform_breakout_bullish"] is True
+    assert metrics["platform_upper"] < metrics["platform_breakout_close"]
+    assert metrics["platform_breakout_clearance"] > 0
+    assert metrics["platform_breakout_above_upper"] is True
     assert metrics["platform_body_strength"] > 1
     assert metrics["platform_ma_bullish"] is True
     assert metrics["platform_ma_rising"] is True
     assert metrics["macd_dif"] > 0
     assert metrics["macd_dea"] > 0
+
+
+def test_platform_breakout_metrics_can_use_close_range_to_ignore_wicks():
+    bars = []
+    start = date(2026, 4, 1)
+    for index in range(20):
+        close = 10.0 + (index % 4) * 0.03
+        bars.append(
+            {
+                "code": "000001.SZ",
+                "date": (start + timedelta(days=index)).isoformat(),
+                "open": close - 0.02,
+                "high": 10.9 if index == 4 else close + 0.08,
+                "low": 9.7 if index == 9 else close - 0.08,
+                "close": close,
+                "prev_close": close - 0.02,
+                "volume": 1000,
+                "pct_chg": 0.2,
+            }
+        )
+    bars.append(
+        {
+            "code": "000001.SZ",
+            "date": "2026-05-20",
+            "open": 10.05,
+            "high": 10.86,
+            "low": 10.0,
+            "close": 10.76,
+            "prev_close": 10.05,
+            "volume": 3100,
+            "pct_chg": 7.06,
+        }
+    )
+
+    high_low = compute_platform_breakout_metrics(
+        pd.DataFrame(bars),
+        {**DEFAULT_STRATEGY_CONFIG, "platform_range_basis": "high_low"},
+    )
+    close_range = compute_platform_breakout_metrics(
+        pd.DataFrame(bars),
+        {**DEFAULT_STRATEGY_CONFIG, "platform_range_basis": "close"},
+    )
+
+    assert high_low["platform_range"] > 0.1
+    assert close_range["platform_range"] < 0.02
+    assert close_range["platform_breakout_above_upper"] is True
 
 
 def test_platform_setup_metrics_detect_near_upper_compression_before_breakout():
@@ -143,6 +192,8 @@ def test_platform_breakout_filters_keep_matching_shape():
                 "platform_breakout_volume_ratio": 2.8,
                 "platform_breakout_bullish": True,
                 "platform_breakout_pct_chg": 8.15,
+                "platform_breakout_clearance": 0.03,
+                "platform_breakout_above_upper": True,
                 "platform_body_strength": 1.3,
                 "platform_ma_bullish": True,
                 "platform_ma_rising": True,
@@ -172,6 +223,8 @@ def test_platform_breakout_filters_keep_matching_shape():
                 "platform_breakout_volume_ratio": 3.0,
                 "platform_breakout_bullish": True,
                 "platform_breakout_pct_chg": 6.0,
+                "platform_breakout_clearance": -0.01,
+                "platform_breakout_above_upper": False,
                 "platform_body_strength": 1.4,
                 "platform_ma_bullish": True,
                 "platform_ma_rising": True,
@@ -197,7 +250,9 @@ def test_platform_breakout_filters_keep_matching_shape():
     assert candidates[0]["signal_type"] == "平台突破"
     assert zero_reason is None
     assert any(step["step_name"] == "平台振幅" for step in funnel)
+    assert any(step["step_name"] == "突破上沿" for step in funnel)
     assert any("平台振幅" in reason for reason in candidates[0]["reasons"])
+    assert any("突破上沿" in reason for reason in candidates[0]["reasons"])
 
 
 def test_platform_setup_filters_keep_near_upper_not_overheated_candidates():

@@ -22,6 +22,9 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "pullback_tolerance": 0.035,
     "platform_lookback_days": 20,
     "platform_max_range": 0.08,
+    "platform_range_basis": "high_low",
+    "platform_breakout_require_close_above": True,
+    "platform_breakout_clearance": 0.0,
     "platform_min_bullish_ratio": 0.5,
     "platform_bull_volume_advantage": 1.1,
     "platform_breakout_volume_ratio": 2.5,
@@ -117,6 +120,8 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     merged["ma_long_window"] = max(merged["ma_short_window"] + 1, int(merged["ma_long_window"]))
     merged["platform_lookback_days"] = max(10, int(merged["platform_lookback_days"]))
     merged["platform_setup_lookback_days"] = max(10, int(merged["platform_setup_lookback_days"]))
+    if merged.get("platform_range_basis") not in {"high_low", "close"}:
+        merged["platform_range_basis"] = "high_low"
     merged["candidate_limit"] = max(1, min(500, int(merged["candidate_limit"])))
     merged["sort_by"] = merged.get("sort_by") or "signal_score"
     merged["macd_position"] = merged.get("macd_position") or "dif_dea_above_zero"
@@ -136,7 +141,7 @@ class StrategyService:
             "SELECT * FROM strategy_presets ORDER BY is_default DESC, is_system DESC, updated_at DESC"
         )
         for row in rows:
-            row["config"] = json.loads(row.pop("config_json") or "{}")
+            row["config"] = normalize_strategy_config(json.loads(row.pop("config_json") or "{}"))
         return rows
 
     def default_config(self) -> Dict[str, Any]:

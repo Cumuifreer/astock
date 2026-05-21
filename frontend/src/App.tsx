@@ -614,12 +614,21 @@ function StrategyPanel(props: {
           {props.strategy.signal_mode === 'platform_breakout' && (
             <>
               <div className="form-section wide">
-                <span>平台突破形态</span>
+                <span>平台区间</span>
               </div>
               <NumberField label="平台观察天数" value={props.strategy.platform_lookback_days} onChange={(value) => update('platform_lookback_days', value)} />
-              <NumberField label="平台最大振幅" value={props.strategy.platform_max_range} onChange={(value) => update('platform_max_range', value)} />
+              <NumberField label="平台区间最大振幅" value={props.strategy.platform_max_range} onChange={(value) => update('platform_max_range', value)} />
+              <SelectField label="平台振幅口径" value={props.strategy.platform_range_basis} onChange={(value) => update('platform_range_basis', value)} options={[['high_low', '最高价 / 最低价'], ['close', '收盘价区间']]} />
               <NumberField label="最小阳线占比" value={props.strategy.platform_min_bullish_ratio} onChange={(value) => update('platform_min_bullish_ratio', value)} />
               <NumberField label="阳线均量优势" value={props.strategy.platform_bull_volume_advantage} onChange={(value) => update('platform_bull_volume_advantage', value)} />
+              <div className="form-section wide">
+                <span>突破确认</span>
+              </div>
+              <label className="toggle">
+                <input type="checkbox" checked={props.strategy.platform_breakout_require_close_above} onChange={(event) => update('platform_breakout_require_close_above', event.target.checked)} />
+                <span>收盘站上平台上沿</span>
+              </label>
+              <NumberField label="突破上沿幅度" value={props.strategy.platform_breakout_clearance} onChange={(value) => update('platform_breakout_clearance', value)} />
               <NumberField label="突破量比" value={props.strategy.platform_breakout_volume_ratio} onChange={(value) => update('platform_breakout_volume_ratio', value)} />
               <NumberField label="突破涨幅下限" value={props.strategy.platform_breakout_pct_chg_min} onChange={(value) => update('platform_breakout_pct_chg_min', value)} />
               <NumberField label="突破实体强度" value={props.strategy.platform_body_strength_min} onChange={(value) => update('platform_body_strength_min', value)} />
@@ -1534,7 +1543,10 @@ function strategySummary(strategy: StrategyConfig) {
     return `${mode} · ${strategy.platform_setup_lookback_days}日 · 距上沿≤${formatPercentRatio(strategy.platform_setup_max_distance_to_high)} · 近5日≤${formatPercentRatio(strategy.platform_setup_max_recent_gain_5d)}`;
   }
   if (strategy.signal_mode === 'platform_breakout') {
-    return `${mode} · ${strategy.platform_lookback_days}日 · 振幅≤${formatPercentRatio(strategy.platform_max_range)} · 量比≥${formatPrice(strategy.platform_breakout_volume_ratio)}x · 涨幅≥${formatPercent(strategy.platform_breakout_pct_chg_min)}`;
+    const clearance = strategy.platform_breakout_require_close_above
+      ? ` · 上沿≥${formatPercentRatio(strategy.platform_breakout_clearance)}`
+      : '';
+    return `${mode} · ${strategy.platform_lookback_days}日 · 区间≤${formatPercentRatio(strategy.platform_max_range)}${clearance} · 量比≥${formatPrice(strategy.platform_breakout_volume_ratio)}x · 涨幅≥${formatPercent(strategy.platform_breakout_pct_chg_min)}`;
   }
   const rpsKey = `RPS${strategy.rps_window}`;
   const amount = formatMoneyCompact(strategy.min_amount || 0);
