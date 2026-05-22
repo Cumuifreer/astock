@@ -84,3 +84,45 @@ def test_migrate_refreshes_system_template_config_without_resetting_user_default
     assert breakout["platform_breakout_clearance"] == 0.03
     assert breakout["platform_breakout_first_mode"] == "must"
     assert by_id["custom-default"]["is_default"] is True
+
+
+def test_delete_preset_soft_deletes_and_hides_from_lists(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = StrategyService(db)
+    preset = service.save_preset("待删除策略", {"signal_mode": "platform_setup"}, set_default=True)
+
+    assert service.delete_preset(preset["id"]) is True
+
+    deleted = db.query("SELECT id, deleted_at, is_default FROM strategy_presets WHERE id = ?", [preset["id"]])
+    assert deleted
+    assert deleted[0]["deleted_at"] is not None
+    assert deleted[0]["is_default"] is False
+    assert preset["id"] not in [row["id"] for row in service.list_presets()]
+    assert service.get_preset(preset["id"]) is None
+    assert service.default_config()["signal_mode"] == "breakout_or_pullback"
+
+
+def test_list_presets_ignores_rows_deleted_before_migration(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "strategy_presets",
+        [
+            {
+                "id": "custom-deleted",
+                "name": "旧删除策略",
+                "config_json": json.dumps({"signal_mode": "platform_breakout"}, ensure_ascii=False),
+                "is_system": False,
+                "is_default": False,
+                "created_at": "2026-01-01T00:00:00",
+                "updated_at": "2026-01-01T00:00:00",
+                "deleted_at": "2026-01-02T00:00:00",
+            }
+        ],
+        ["id"],
+    )
+
+    presets = StrategyService(db).list_presets()
+
+    assert "custom-deleted" not in [preset["id"] for preset in presets]

@@ -7,7 +7,7 @@ from backend.app.db import Database
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG, SYSTEM_PRESETS
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 MIGRATIONS = [
@@ -115,8 +115,12 @@ MIGRATIONS = [
         is_system BOOLEAN,
         is_default BOOLEAN,
         created_at TIMESTAMP,
-        updated_at TIMESTAMP
+        updated_at TIMESTAMP,
+        deleted_at TIMESTAMP
     )
+    """,
+    """
+    ALTER TABLE strategy_presets ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP
     """,
     """
     CREATE TABLE IF NOT EXISTS task_runs (
@@ -372,7 +376,7 @@ def migrate(db: Database) -> None:
 
 def seed_strategy_presets(db: Database) -> None:
     now = datetime.utcnow()
-    existing = db.query("SELECT id FROM strategy_presets")
+    existing = db.query("SELECT id FROM strategy_presets WHERE deleted_at IS NULL")
     existing_ids = {row["id"] for row in existing}
     rows = []
     for preset in SYSTEM_PRESETS:
@@ -385,6 +389,7 @@ def seed_strategy_presets(db: Database) -> None:
                 "is_default": preset.get("is_default", False),
                 "created_at": now,
                 "updated_at": now,
+                "deleted_at": None,
             }
         )
     if not existing_ids:
@@ -395,7 +400,7 @@ def seed_strategy_presets(db: Database) -> None:
             db.execute(
                 """
                 UPDATE strategy_presets
-                SET name = ?, config_json = ?, is_system = TRUE, updated_at = ?
+                SET name = ?, config_json = ?, is_system = TRUE, deleted_at = NULL, updated_at = ?
                 WHERE id = ? AND is_system = TRUE
                 """,
                 [row["name"], row["config_json"], now, row["id"]],
@@ -403,9 +408,9 @@ def seed_strategy_presets(db: Database) -> None:
             )
         else:
             db.upsert("strategy_presets", [row], ["id"])
-    if not db.scalar("SELECT COUNT(*) FROM strategy_presets WHERE is_default = TRUE"):
+    if not db.scalar("SELECT COUNT(*) FROM strategy_presets WHERE is_default = TRUE AND deleted_at IS NULL"):
         db.execute(
-            "UPDATE strategy_presets SET is_default = TRUE WHERE id = ?",
+            "UPDATE strategy_presets SET is_default = TRUE, deleted_at = NULL WHERE id = ?",
             [SYSTEM_PRESETS[0]["id"]],
             write=True,
         )

@@ -185,7 +185,12 @@ class StrategyService:
 
     def list_presets(self) -> List[Dict[str, Any]]:
         rows = self.db.query(
-            "SELECT * FROM strategy_presets ORDER BY is_default DESC, is_system DESC, updated_at DESC"
+            """
+            SELECT *
+            FROM strategy_presets
+            WHERE deleted_at IS NULL
+            ORDER BY is_default DESC, is_system DESC, updated_at DESC
+            """
         )
         for row in rows:
             row["config"] = normalize_strategy_config(json.loads(row.pop("config_json") or "{}"))
@@ -193,14 +198,24 @@ class StrategyService:
 
     def default_config(self) -> Dict[str, Any]:
         row = self.db.query(
-            "SELECT config_json FROM strategy_presets WHERE is_default = TRUE ORDER BY updated_at DESC LIMIT 1"
+            """
+            SELECT config_json
+            FROM strategy_presets
+            WHERE is_default = TRUE
+              AND deleted_at IS NULL
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """
         )
         if not row:
             return normalize_strategy_config(DEFAULT_STRATEGY_CONFIG)
         return normalize_strategy_config(json.loads(row[0]["config_json"] or "{}"))
 
     def get_preset(self, preset_id: str) -> Optional[Dict[str, Any]]:
-        rows = self.db.query("SELECT * FROM strategy_presets WHERE id = ?", [preset_id])
+        rows = self.db.query(
+            "SELECT * FROM strategy_presets WHERE id = ? AND deleted_at IS NULL",
+            [preset_id],
+        )
         if not rows:
             return None
         row = rows[0]
@@ -229,6 +244,7 @@ class StrategyService:
             "is_default": set_default,
             "created_at": existing.get("created_at") if existing else now,
             "updated_at": now,
+            "deleted_at": None,
         }
         self.db.upsert("strategy_presets", [row], ["id"])
         return self.get_preset(target_id) or row
@@ -237,10 +253,23 @@ class StrategyService:
         preset = self.get_preset(preset_id)
         if not preset or preset.get("is_system"):
             return False
-        self.db.execute("DELETE FROM strategy_presets WHERE id = ?", [preset_id], write=True)
+        self.db.execute(
+            """
+            UPDATE strategy_presets
+            SET deleted_at = ?, is_default = FALSE, updated_at = ?
+            WHERE id = ?
+            """,
+            [datetime.utcnow(), datetime.utcnow(), preset_id],
+            write=True,
+        )
         if preset.get("is_default"):
             self.db.execute(
-                "UPDATE strategy_presets SET is_default = TRUE WHERE id = 'system-momentum'",
+                """
+                UPDATE strategy_presets
+                SET is_default = TRUE, deleted_at = NULL, updated_at = ?
+                WHERE id = 'system-momentum'
+                """,
+                [datetime.utcnow()],
                 write=True,
             )
         return True
@@ -271,6 +300,7 @@ class StrategyService:
                         "is_default": preset.get("is_default", False),
                         "created_at": now,
                         "updated_at": now,
+                        "deleted_at": None,
                     }
                 ],
                 ["id"],
