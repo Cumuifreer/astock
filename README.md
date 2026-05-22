@@ -48,6 +48,31 @@ curl -sS http://127.0.0.1:8000/api/intraday
 
 适合的采样时间可以从 09:35、10:00、10:30、11:00、11:25、13:00、13:30、14:00、14:30、14:55 开始。轻量服务器上不建议全市场 5 分钟一次。
 
+如果用 systemd 定时触发，可以让 timer 在这些时间运行：
+
+```ini
+[Unit]
+Description=A-Share Signal Intraday Snapshot
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ashare-signal
+Environment=ASHARE_BASE_URL=http://127.0.0.1:8000
+ExecStart=/opt/ashare-signal/.venv/bin/python scripts/run_intraday_snapshot.py
+```
+
+```ini
+[Unit]
+Description=A-Share Signal Intraday Snapshot Timer
+
+[Timer]
+OnCalendar=Mon..Fri 09:35,10:00,10:30,11:00,11:25,13:00,13:30,14:00,14:30,14:55
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+```
+
 ## 本地启动
 
 ```bash
