@@ -11,6 +11,9 @@ from backend.app.db import Database
 from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
 
 
+REVIEW_STATUSES = {"观察中", "已验证", "已放弃", "已错过"}
+
+
 class WatchlistService:
     def __init__(self, db: Database):
         self.db = db
@@ -21,7 +24,12 @@ class WatchlistService:
         source_type = str(payload.get("source_type") or "manual")
         source_label = str(payload.get("source_label") or "观察池")
         source_ref = str(payload.get("source_ref") or "")
+        source_summary = str(payload.get("source_summary") or "")
         batch_id = _batch_id(batch_date, source_type, source_label, source_ref)
+        if not source_summary:
+            source_summary = str(
+                self.db.scalar("SELECT source_summary FROM watchlist_batches WHERE id = ?", [batch_id]) or ""
+            )
         now = datetime.utcnow()
 
         self.db.upsert(
@@ -33,6 +41,7 @@ class WatchlistService:
                     "source_type": source_type,
                     "source_label": source_label,
                     "source_ref": source_ref,
+                    "source_summary": source_summary,
                     "name": payload.get("name") or f"{source_label} · {_format_date(batch_date)}",
                     "status": "active",
                     "created_at": now,
@@ -64,6 +73,8 @@ class WatchlistService:
                     "signal_type": item.get("signal_type") or item.get("status") or source_label,
                     "chart_url": item.get("chart_url")
                     or f"https://finance.sina.com.cn/realstock/company/{to_sina_chart_symbol(code)}/nc.shtml",
+                    "note": item.get("note") or "",
+                    "review_status": _review_status(item.get("review_status")),
                     "reasons_json": json.dumps(item.get("reasons") or [], ensure_ascii=False),
                     "metrics_json": json.dumps(item.get("metrics") or {}, ensure_ascii=False),
                     "created_at": now,
@@ -127,6 +138,42 @@ class WatchlistService:
             write=True,
         )
 
+    def update_item(self, batch_id: str, code: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        existing = self.db.query(
+            """
+            SELECT *
+            FROM watchlist_items
+            WHERE batch_id = ? AND code = ?
+            LIMIT 1
+            """,
+            [batch_id, code],
+        )
+        if not existing:
+            return {"ok": False, "item": None}
+        note = str(payload.get("note") if payload.get("note") is not None else existing[0].get("note") or "")
+        review_status = _review_status(payload.get("review_status") or existing[0].get("review_status"))
+        now = datetime.utcnow()
+        self.db.execute(
+            """
+            UPDATE watchlist_items
+            SET note = ?, review_status = ?, updated_at = ?
+            WHERE batch_id = ? AND code = ?
+            """,
+            [note, review_status, now, batch_id, code],
+            write=True,
+        )
+        updated = self.db.query(
+            """
+            SELECT *
+            FROM watchlist_items
+            WHERE batch_id = ? AND code = ?
+            LIMIT 1
+            """,
+            [batch_id, code],
+        )
+        item = self._with_performance(self._decode_item(updated[0])) if updated else None
+        return {"ok": item is not None, "item": item}
+
     def _stock_names(self, codes: List[str]) -> Dict[str, str]:
         if not codes:
             return {}
@@ -139,6 +186,8 @@ class WatchlistService:
 
     def _decode_item(self, row: Dict[str, Any]) -> Dict[str, Any]:
         decoded = dict(row)
+        decoded["note"] = decoded.get("note") or ""
+        decoded["review_status"] = _review_status(decoded.get("review_status"))
         decoded["reasons"] = json.loads(decoded.pop("reasons_json") or "[]")
         decoded["metrics"] = json.loads(decoded.pop("metrics_json") or "{}")
         return decoded
@@ -213,22 +262,11 @@ class WatchlistService:
     @staticmethod
     def _summary(batches: List[Dict[str, Any]]) -> Dict[str, Any]:
         items = [item for batch in batches for item in batch.get("items", [])]
-        latest_returns = [
-            safe_float(item.get("return_latest"))
-            for item in items
-            if safe_float(item.get("return_latest")) is not None
-        ]
+        metrics = _batch_metrics(items)
         return {
             "batch_count": len(batches),
             "item_count": len(items),
-            "avg_return_latest": sum(latest_returns) / len(latest_returns) if latest_returns else None,
-            "positive_count": sum(1 for value in latest_returns if value > 0),
-            "hit_5pct_count": sum(
-                1 for item in items if safe_float(item.get("max_return")) is not None and safe_float(item.get("max_return")) >= 0.05
-            ),
-            "hit_8pct_count": sum(
-                1 for item in items if safe_float(item.get("max_return")) is not None and safe_float(item.get("max_return")) >= 0.08
-            ),
+            **metrics,
         }
 
 
@@ -249,21 +287,44 @@ def _empty_performance(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _batch_metrics(items: List[Dict[str, Any]]) -> Dict[str, Any]:
-    values = [
-        safe_float(item.get("return_latest"))
-        for item in items
-        if safe_float(item.get("return_latest")) is not None
-    ]
+    values = _numeric_values(items, "return_latest")
     return {
         "avg_return_latest": sum(values) / len(values) if values else None,
+        "avg_return_1d": _avg(items, "return_1d"),
+        "avg_return_3d": _avg(items, "return_3d"),
+        "avg_return_5d": _avg(items, "return_5d"),
+        "avg_return_10d": _avg(items, "return_10d"),
         "positive_count": sum(1 for value in values if value > 0),
+        "positive_rate": sum(1 for value in values if value > 0) / len(values) if values else None,
         "hit_5pct_count": sum(
             1 for item in items if safe_float(item.get("max_return")) is not None and safe_float(item.get("max_return")) >= 0.05
         ),
         "hit_8pct_count": sum(
             1 for item in items if safe_float(item.get("max_return")) is not None and safe_float(item.get("max_return")) >= 0.08
         ),
+        "hit_5pct_rate": _rate(items, "max_return", 0.05),
+        "hit_8pct_rate": _rate(items, "max_return", 0.08),
+        "worst_drawdown": min(_numeric_values(items, "max_drawdown")) if _numeric_values(items, "max_drawdown") else None,
     }
+
+
+def _numeric_values(items: List[Dict[str, Any]], key: str) -> List[float]:
+    values: List[float] = []
+    for item in items:
+        value = safe_float(item.get(key))
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def _avg(items: List[Dict[str, Any]], key: str) -> Optional[float]:
+    values = _numeric_values(items, key)
+    return sum(values) / len(values) if values else None
+
+
+def _rate(items: List[Dict[str, Any]], key: str, threshold: float) -> Optional[float]:
+    values = _numeric_values(items, key)
+    return sum(1 for value in values if value >= threshold) / len(values) if values else None
 
 
 def _batch_id(batch_date: date, source_type: str, source_label: str, source_ref: str) -> str:
@@ -292,6 +353,11 @@ def _first_number(row: Dict[str, Any], keys: List[str]) -> Optional[float]:
         if value is not None:
             return value
     return None
+
+
+def _review_status(value: Any) -> str:
+    status = str(value or "观察中")
+    return status if status in REVIEW_STATUSES else "观察中"
 
 
 def _return_at(rows: List[Dict[str, Any]], entry_price: float, day: int) -> Optional[float]:

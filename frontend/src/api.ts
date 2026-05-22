@@ -41,6 +41,11 @@ export const api = {
     request(`/api/watchlist/batches/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   deleteWatchlistItem: (batchId: string, code: string) =>
     request(`/api/watchlist/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(code)}`, { method: 'DELETE' }),
+  updateWatchlistItem: (batchId: string, code: string, payload: Record<string, unknown>) =>
+    request(`/api/watchlist/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(code)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
   saveIntradayConfig: (config: IntradayRadarConfig) =>
     request<{ config: IntradayRadarConfig }>('/api/intraday/config', { method: 'PUT', body: JSON.stringify({ config }) }),
   analysisReports: () => request<AnalysisReportsResponse>('/api/analysis/reports'),

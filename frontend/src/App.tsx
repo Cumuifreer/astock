@@ -82,6 +82,8 @@ const conditionModes: Array<[string, string]> = [
   ['off', '不启用'],
 ];
 
+const reviewStatuses = ['观察中', '已验证', '已放弃', '已错过'];
+
 function App() {
   const [tab, setTab] = useState<Tab>('overview');
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
@@ -441,6 +443,7 @@ function Overview({
         <MetricCard label="快照" value={formatInt(overview.snapshot_rows)} sub={overview.latest_snapshot_date || '等待更新'} icon={<Activity size={18} />} />
         <MetricCard label="候选" value={formatInt(candidateCount)} sub={overview.latest_analysis?.finished_at || '尚未分析'} icon={<Star size={18} />} />
       </section>
+      <HealthHints bootstrap={bootstrap} />
 
       <section className="split">
         <div className="panel">
@@ -485,6 +488,18 @@ function Overview({
 
       <Results candidates={bootstrap.candidates.rows.slice(0, 8)} funnel={bootstrap.candidates.funnel} zeroReason={bootstrap.candidates.zero_reason} compact />
     </div>
+  );
+}
+
+function HealthHints({ bootstrap }: { bootstrap: Bootstrap }) {
+  const hints = dataHealthHints(bootstrap);
+  if (!hints.length) return null;
+  return (
+    <section className="health-strip" aria-label="数据状态提示">
+      {hints.map((hint) => (
+        <span key={hint} className="health-hint">{hint}</span>
+      ))}
+    </section>
   );
 }
 
@@ -585,6 +600,8 @@ function StrategyPanel(props: {
     props.setStrategy({ ...props.strategy, [key]: value });
   };
   const activeAnalysisMode = analysisModes.find((mode) => mode.id === (props.strategy.analysis_mode || 'strict')) || analysisModes[0];
+  const suggestedName = suggestStrategyName(props.strategy);
+  const nameLooksGeneric = !props.strategyName.trim() || /^未命名策略/.test(props.strategyName.trim());
   return (
     <div className="strategy-layout">
       <section className="panel preset-panel">
@@ -607,7 +624,11 @@ function StrategyPanel(props: {
               className={preset.id === props.selectedPresetId ? 'preset active' : 'preset'}
               onClick={() => props.selectPreset(preset)}
             >
-              <span>{preset.name}</span>
+              <span className="preset-main">
+                <strong>{preset.name}</strong>
+                <em>{strategySummary(preset.config)}</em>
+                <i>{formatShortDateTime(preset.updated_at)}</i>
+              </span>
               <small>{preset.is_default ? '默认' : '自定义'}</small>
             </button>
           ))}
@@ -660,10 +681,18 @@ function StrategyPanel(props: {
         )}
 
         <div className="form-grid">
-          <label className="field wide">
+          <div className="field wide strategy-name-field">
             <span>策略名称</span>
             <input value={props.strategyName} onChange={(event) => props.setStrategyName(event.target.value)} />
-          </label>
+            <small className="field-hint">
+              {nameLooksGeneric ? '可以保留未命名，也可以采用下方建议。' : `建议名：${suggestedName}`}
+            </small>
+            {nameLooksGeneric && (
+              <button className="suggest-name" type="button" onClick={() => props.setStrategyName(suggestedName)}>
+                采用建议：{suggestedName}
+              </button>
+            )}
+          </div>
           <div className="mode-tabs wide">
             {signalModes.map((mode) => (
               <button
@@ -888,6 +917,7 @@ function ReportResults({
     ? (rows: Candidate[]) => addToWatchlist({
       source_type: 'analysis',
       source_label: sourceLabel,
+      source_summary: selectedReport ? strategySummary(selectedReport.config) : '',
       source_ref: bundle.run_id || selectedRunId || '',
       batch_date: reportDate(selectedReport),
       items: rows.map(candidateWatchlistPayload),
@@ -1085,9 +1115,17 @@ function WatchlistPage({
     batch_count: 0,
     item_count: 0,
     avg_return_latest: null,
+    avg_return_1d: null,
+    avg_return_3d: null,
+    avg_return_5d: null,
+    avg_return_10d: null,
     positive_count: 0,
+    positive_rate: null,
     hit_5pct_count: 0,
     hit_8pct_count: 0,
+    hit_5pct_rate: null,
+    hit_8pct_rate: null,
+    worst_drawdown: null,
   };
 
   async function removeBatch(batch: WatchlistBatch) {
@@ -1111,13 +1149,24 @@ function WatchlistPage({
     }
   }
 
+  async function saveItemMeta(item: WatchlistItem, payload: Record<string, unknown>) {
+    const key = `${item.batch_id}-${item.code}-meta`;
+    setBusyKey(key);
+    try {
+      await api.updateWatchlistItem(item.batch_id, item.code, payload);
+      await reload();
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   return (
     <div className="page-stack watchlist-page">
       <section className="metric-grid">
         <MetricCard label="批次" value={formatInt(summary.batch_count)} sub={`${formatInt(summary.item_count)} 只观察`} icon={<Star size={18} />} />
         <MetricCard label="平均累计" value={formatPercentRatio(summary.avg_return_latest)} sub={`${formatInt(summary.positive_count)} 只为正`} icon={<LineChart size={18} />} />
-        <MetricCard label="+5% 触达" value={formatInt(summary.hit_5pct_count)} sub={`+8% ${formatInt(summary.hit_8pct_count)} 只`} icon={<Gauge size={18} />} />
-        <MetricCard label="最新收盘" value={latestWatchlistDate(result.batches)} sub="来自本地历史 K 线" icon={<Database size={18} />} />
+        <MetricCard label="T+5 均值" value={formatPercentRatio(summary.avg_return_5d)} sub={`T+10 ${formatPercentRatio(summary.avg_return_10d)}`} icon={<Gauge size={18} />} />
+        <MetricCard label="+5% 触达" value={formatPercentRatio(summary.hit_5pct_rate)} sub={`最新收盘 ${latestWatchlistDate(result.batches)}`} icon={<Database size={18} />} />
       </section>
 
       {result.batches.length === 0 ? (
@@ -1133,11 +1182,14 @@ function WatchlistPage({
                 <span className="eyebrow">{formatDate(batch.batch_date)} · {sourceTypeLabel(batch.source_type)}</span>
                 <h3>{batch.name || batch.source_label}</h3>
                 <p>{batch.source_label} · {formatInt(batch.item_count)} 只 · 平均累计 {formatPercentRatio(batch.avg_return_latest)}</p>
+                {batch.source_summary && <p className="source-summary">{batch.source_summary}</p>}
               </div>
               <div className="batch-kpis">
-                <span>为正 <strong>{formatInt(batch.positive_count)}</strong></span>
-                <span>+5% <strong>{formatInt(batch.hit_5pct_count)}</strong></span>
-                <span>+8% <strong>{formatInt(batch.hit_8pct_count)}</strong></span>
+                <span>为正率 <strong>{formatPercentRatio(batch.positive_rate)}</strong></span>
+                <span>T+3 <strong>{formatPercentRatio(batch.avg_return_3d)}</strong></span>
+                <span>T+5 <strong>{formatPercentRatio(batch.avg_return_5d)}</strong></span>
+                <span>+5% <strong>{formatPercentRatio(batch.hit_5pct_rate)}</strong></span>
+                <span>最大回撤 <strong>{formatPercentRatio(batch.worst_drawdown)}</strong></span>
                 <button className="ghost danger-action" disabled={busyKey === batch.id} onClick={() => void removeBatch(batch)}>
                   <Trash2 size={15} />
                   删除批次
@@ -1160,6 +1212,8 @@ function WatchlistPage({
                     <th>最高</th>
                     <th>回撤</th>
                     <th>天数</th>
+                    <th>状态</th>
+                    <th>备注</th>
                     <th>看盘</th>
                     <th>删除</th>
                   </tr>
@@ -1189,6 +1243,36 @@ function WatchlistPage({
                       <td className={toneClass(Number(item.max_return || 0))}>{formatPercentRatio(item.max_return)}</td>
                       <td className={toneClass(Number(item.max_drawdown || 0))}>{formatPercentRatio(item.max_drawdown)}</td>
                       <td>{formatInt(item.days)}</td>
+                      <td>
+                        <select
+                          className="watchlist-status"
+                          value={item.review_status || '观察中'}
+                          disabled={busyKey === `${item.batch_id}-${item.code}-meta`}
+                          onChange={(event) => void saveItemMeta(item, { review_status: event.target.value, note: item.note || '' })}
+                        >
+                          {reviewStatuses.map((status) => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          className="watchlist-note"
+                          defaultValue={item.note || ''}
+                          placeholder="记录走势"
+                          disabled={busyKey === `${item.batch_id}-${item.code}-meta`}
+                          onBlur={(event) => {
+                            if (event.target.value !== (item.note || '')) {
+                              void saveItemMeta(item, { note: event.target.value, review_status: item.review_status || '观察中' });
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.currentTarget.blur();
+                            }
+                          }}
+                        />
+                      </td>
                       <td><a href={item.chart_url} target="_blank" rel="noreferrer">打开</a></td>
                       <td>
                         <button
@@ -1300,10 +1384,10 @@ function BacktestPage({
             <select value={selectedBacktestStrategyId} onChange={(event) => setSelectedBacktestStrategyId(event.target.value)}>
               <option value="current">当前编辑策略</option>
               {backtestPresets.map((preset) => (
-                <option key={preset.id} value={preset.id}>{preset.name}</option>
+                <option key={preset.id} value={preset.id}>{preset.name} · {strategySummary(preset.config)}</option>
               ))}
             </select>
-            <small className="field-hint">{runStrategyName} · 只列出我的策略</small>
+            <small className="field-hint">{runStrategyName} · {strategySummary(runStrategy)}</small>
           </label>
           <label className="field">
             <span>开始日期</span>
@@ -1562,6 +1646,7 @@ function IntradayRadarPage({
           ? (rows) => addToWatchlist({
             source_type: 'intraday',
             source_label: `盘中雷达 · ${radarMode === 'score' ? '综合打分' : '严格筛选'}`,
+            source_summary: `盘中雷达 · ${radarMode === 'score' ? '综合打分' : '严格筛选'} · ${formatChinaLocalDateTime(result.sample_at)}`,
             source_ref: result.sample_at || '',
             batch_date: formatDate(result.sample_at || new Date().toISOString()),
             items: rows.map(intradayWatchlistPayload),
@@ -2176,6 +2261,48 @@ function strategySummary(strategy: StrategyConfig) {
   const rpsKey = `RPS${strategy.rps_window}`;
   const amount = formatMoneyCompact(strategy.min_amount || 0);
   return `${mode} · 成交额≥${amount} · ${rpsKey} · MA${strategy.ma_short_window}/${strategy.ma_long_window}`;
+}
+
+function suggestStrategyName(strategy: StrategyConfig) {
+  const mode = signalModes.find((item) => item.id === strategy.signal_mode)?.label || '自定义';
+  const analysis = strategy.analysis_mode === 'score' ? '评分' : '严格';
+  if (strategy.signal_mode === 'platform_setup') {
+    return `${mode}-${analysis}-${strategy.platform_setup_lookback_days}日-距上沿${formatPercentRatio(strategy.platform_setup_max_distance_to_high)}`;
+  }
+  if (strategy.signal_mode === 'platform_breakout') {
+    return `${mode}-${analysis}-${strategy.platform_lookback_days}日-量比${formatPrice(strategy.platform_breakout_volume_ratio)}x`;
+  }
+  if (strategy.signal_mode === 'pullback') {
+    return `${mode}-${analysis}-RPS${strategy.rps_window}-MA${strategy.ma_short_window}/${strategy.ma_long_window}`;
+  }
+  if (strategy.signal_mode === 'breakout') {
+    return `${mode}-${analysis}-放量${formatRatioX(strategy.volume_ratio_min)}-RPS${strategy.rps_window}`;
+  }
+  return `${mode}-${analysis}-MA${strategy.ma_short_window}/${strategy.ma_long_window}`;
+}
+
+function dataHealthHints(bootstrap: Bootstrap) {
+  const hints: string[] = [];
+  const overview = bootstrap.overview;
+  const historyDate = overview.latest_history_date || '';
+  const snapshotDate = overview.latest_snapshot_date || '';
+  if (isTaskActive(bootstrap.update_status)) {
+    hints.push('数据更新正在运行，完成后覆盖情况会自动刷新。');
+  }
+  if (snapshotDate && historyDate && snapshotDate > historyDate) {
+    hints.push(`快照已到 ${snapshotDate}，历史 K 线仍是 ${historyDate}，观察池收益会等收盘 K 线补齐后推进。`);
+  } else if (snapshotDate && historyDate && snapshotDate === historyDate) {
+    hints.push(`快照与历史 K 线同为 ${historyDate}，当前分析可读取最新收盘数据。`);
+  } else if (historyDate) {
+    hints.push(`历史 K 线最新到 ${historyDate}，可先分析本地已有数据。`);
+  }
+  if (bootstrap.intraday?.sample_at) {
+    hints.push(`盘中雷达最近采样 ${formatChinaLocalDateTime(bootstrap.intraday.sample_at)}。`);
+  }
+  if (Number(overview.turnover_coverage?.percent || 0) < 95) {
+    hints.push(`换手率覆盖 ${overview.turnover_coverage.percent}%，缺失股票会按当前策略设置处理。`);
+  }
+  return hints.slice(0, 3);
 }
 
 function parseMoneyInput(raw: string): number | null {

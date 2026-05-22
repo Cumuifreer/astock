@@ -93,6 +93,14 @@ def test_watchlist_groups_items_and_computes_forward_returns(tmp_path):
     assert item["max_drawdown"] == pytest.approx(-0.02)
     assert item["reasons"] == ["平台突破"]
     assert item["metrics"] == {"rps20": 80}
+    assert batch["avg_return_1d"] == pytest.approx(0.05)
+    assert batch["avg_return_3d"] == pytest.approx(0.10)
+    assert batch["avg_return_5d"] == pytest.approx(0.08)
+    assert batch["avg_return_10d"] == pytest.approx(0.28)
+    assert batch["positive_rate"] == pytest.approx(1.0)
+    assert batch["hit_5pct_rate"] == pytest.approx(1.0)
+    assert batch["hit_8pct_rate"] == pytest.approx(1.0)
+    assert batch["worst_drawdown"] == pytest.approx(-0.02)
 
 
 def test_watchlist_reuses_batch_and_deletes_items(tmp_path):
@@ -127,3 +135,32 @@ def test_watchlist_reuses_batch_and_deletes_items(tmp_path):
 
     assert result["batches"][0]["item_count"] == 1
     assert result["batches"][0]["items"][0]["code"] == "000002.SZ"
+
+
+def test_watchlist_updates_item_note_and_status(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    _seed_stock_with_bars(db)
+    service = WatchlistService(db)
+
+    created = service.add_items(
+        {
+            "source_type": "analysis",
+            "source_label": "平台临界",
+            "source_summary": "平台临界 · 20日 · 距上沿≤3.50%",
+            "batch_date": "2026-05-20",
+            "items": [{"code": "000001.SZ", "entry_price": 10.0}],
+        }
+    )
+    service.update_item(
+        created["batch_id"],
+        "000001.SZ",
+        {"note": "次日缩量，继续看 10 日线。", "review_status": "观察中"},
+    )
+
+    batch = service.result()["batches"][0]
+    item = batch["items"][0]
+
+    assert batch["source_summary"] == "平台临界 · 20日 · 距上沿≤3.50%"
+    assert item["note"] == "次日缩量，继续看 10 日线。"
+    assert item["review_status"] == "观察中"

@@ -309,6 +309,23 @@ h1 {
   color: var(--soft);
 }
 
+.health-strip {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.health-hint {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(59, 240, 193, 0.2);
+  background: rgba(59, 240, 193, 0.045);
+  color: var(--soft);
+  font-size: 12px;
+}
+
 .split,
 .status-grid,
 .strategy-layout {
@@ -528,6 +545,22 @@ h1 {
 
 .strategy-readout b {
   font-weight: 650;
+}
+
+.suggest-name {
+  justify-self: start;
+  max-width: 48%;
+  min-height: 27px;
+  border: 1px solid rgba(182, 255, 95, 0.3);
+  background: rgba(182, 255, 95, 0.06);
+  color: var(--lime);
+  padding: 0 9px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mode-tabs {
@@ -763,6 +796,10 @@ h1 {
   font-size: 13px;
 }
 
+.watchlist-batch-head .source-summary {
+  color: var(--soft);
+}
+
 .batch-kpis {
   display: flex;
   align-items: center;
@@ -787,7 +824,26 @@ h1 {
 }
 
 .watchlist-table {
-  min-width: 1320px;
+  min-width: 1580px;
+}
+
+.watchlist-status,
+.watchlist-note {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  background: rgba(4, 12, 13, 0.74);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 0 9px;
+}
+
+.watchlist-status {
+  min-width: 92px;
+}
+
+.watchlist-note {
+  min-width: 190px;
 }
 
 .name-cell.compact {
@@ -895,15 +951,41 @@ h1 {
 
 .preset {
   justify-content: space-between;
-  min-height: 48px;
+  min-height: 78px;
   width: 100%;
   text-align: left;
+  align-items: stretch;
 }
 
-.preset span {
+.preset-main {
+  display: grid;
+  gap: 4px;
   min-width: 0;
+  align-content: center;
+}
+
+.preset-main strong,
+.preset-main em,
+.preset-main i {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-style: normal;
+}
+
+.preset-main strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.preset-main em {
+  color: var(--soft);
+  font-size: 11px;
+}
+
+.preset-main i {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .preset.active {

@@ -141,6 +141,14 @@ def delete_watchlist_item(batch_id: str, code: str) -> Dict[str, Any]:
     return {"ok": True}
 
 
+@router.patch("/watchlist/batches/{batch_id}/items/{code}")
+def update_watchlist_item(batch_id: str, code: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    result = watchlist_service.update_item(batch_id, code, payload)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail="观察记录不存在。")
+    return result
+
+
 @router.get("/intraday/config")
 def intraday_config() -> Dict[str, Any]:
     return {"config": intraday_service.get_config()}
