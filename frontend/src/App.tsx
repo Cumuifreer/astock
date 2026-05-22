@@ -1267,8 +1267,12 @@ function IntradayRadarPage({
   saveConfig: (config: IntradayRadarConfig) => Promise<void>;
 }) {
   const [config, setConfig] = useState<IntradayRadarConfig>(result.config);
+  const [radarMode, setRadarMode] = useState<'strict' | 'score'>('strict');
   const running = isTaskActive(task);
-  const candidateCount = Number(result.summary?.candidate_count || result.rows.length || 0);
+  const strictRows = result.strict_rows || result.rows || [];
+  const scoreRows = result.score_rows || [];
+  const activeRows = radarMode === 'score' ? scoreRows : strictRows;
+  const candidateCount = activeRows.length;
 
   useEffect(() => {
     setConfig(result.config);
@@ -1305,7 +1309,7 @@ function IntradayRadarPage({
       <section className="metric-grid">
         <MetricCard label="最近采样" value={formatChinaLocalDateTime(result.sample_at)} sub="盘中快照时间" icon={<Activity size={18} />} />
         <MetricCard label="样本股票" value={formatInt(result.sample_count)} sub="本次快照覆盖" icon={<Database size={18} />} />
-        <MetricCard label="观察" value={formatInt(candidateCount)} sub="雷达候选" icon={<Gauge size={18} />} />
+        <MetricCard label="观察" value={formatInt(candidateCount)} sub={radarMode === 'score' ? '综合打分' : '严格筛选'} icon={<Gauge size={18} />} />
         <MetricCard label="状态" value={task?.status === 'queued' ? '排队中' : task?.status === 'running' ? '运行中' : '待命'} sub={task?.stage || '等待采样'} icon={<ShieldAlert size={18} />} />
       </section>
 
@@ -1320,6 +1324,9 @@ function IntradayRadarPage({
           <NumberField label="最大当日涨幅" value={config.max_pct_chg} onChange={(value) => update('max_pct_chg', value || 0)} description={`快照涨幅高于 ${formatPercent(config.max_pct_chg)} 会跳过。`} />
           <MoneyField label="最小成交额" value={config.min_amount} onChange={(value) => update('min_amount', value || 0)} />
           <NumberField label="盘中额 / 平台均额" value={config.min_intraday_amount_ratio} onChange={(value) => update('min_intraday_amount_ratio', value || 0)} description={`当前成交额至少达到平台日均成交额的 ${formatPercentRatio(config.min_intraday_amount_ratio)}。`} />
+          <NumberField label="平台阳线占比" value={config.platform_min_bullish_ratio} onChange={(value) => update('platform_min_bullish_ratio', value || 0)} description={`平台内阳线占比目标 ${formatPercentRatio(config.platform_min_bullish_ratio)}。`} />
+          <NumberField label="阳线均额优势" value={config.platform_bull_amount_advantage} onChange={(value) => update('platform_bull_amount_advantage', value || 0)} description={config.platform_bull_amount_advantage ? `阳线日均成交额至少为阴线的 ${formatRatioX(config.platform_bull_amount_advantage)}。` : '0 表示不作为严格门槛。'} />
+          <NumberField label="近5日涨幅上限" value={config.max_recent_gain_5d} onChange={(value) => update('max_recent_gain_5d', value || 0)} description={`最近 5 个历史交易日涨幅高于 ${formatPercentRatio(config.max_recent_gain_5d)} 会视为偏后。`} />
           <NumberField label="观察上限" value={config.candidate_limit} onChange={(value) => update('candidate_limit', value || 80)} />
           <label className="toggle">
             <input type="checkbox" checked={config.require_ma_bullish} onChange={(event) => update('require_ma_bullish', event.target.checked)} />
@@ -1336,20 +1343,51 @@ function IntradayRadarPage({
         </div>
       </section>
 
-      <IntradayRadarTable rows={result.rows} sampleAt={result.sample_at} />
+      <IntradayRadarTable
+        rows={activeRows}
+        mode={radarMode}
+        sampleAt={result.sample_at}
+        strictCount={strictRows.length}
+        scoreCount={scoreRows.length}
+        onModeChange={setRadarMode}
+      />
     </div>
   );
 }
 
-function IntradayRadarTable({ rows, sampleAt }: { rows: IntradayRadarCandidate[]; sampleAt: string | null }) {
+function IntradayRadarTable({
+  rows,
+  mode,
+  sampleAt,
+  strictCount,
+  scoreCount,
+  onModeChange,
+}: {
+  rows: IntradayRadarCandidate[];
+  mode: 'strict' | 'score';
+  sampleAt: string | null;
+  strictCount: number;
+  scoreCount: number;
+  onModeChange: (mode: 'strict' | 'score') => void;
+}) {
   return (
     <section className="panel radar-table-panel">
       <div className="table-toolbar">
         <PanelTitle icon={<BarChart3 size={18} />} title="观察榜" />
+        <div className="radar-view-switch" aria-label="观察榜模式">
+          <button className={mode === 'strict' ? 'active' : ''} onClick={() => onModeChange('strict')}>
+            严格筛选
+            <small>{formatInt(strictCount)} 只</small>
+          </button>
+          <button className={mode === 'score' ? 'active' : ''} onClick={() => onModeChange('score')}>
+            综合打分
+            <small>{formatInt(scoreCount)} 只</small>
+          </button>
+        </div>
         <span className="pill">{formatChinaLocalDateTime(sampleAt)} · {formatInt(rows.length)} 只</span>
       </div>
       {rows.length === 0 ? (
-        <EmptyState text="暂无盘中观察信号。" />
+        <EmptyState text={mode === 'strict' ? '严格筛选暂无盘中观察信号。' : '综合打分暂无盘中观察信号。'} />
       ) : (
         <div className="table-wrap">
           <table className="radar-table">
@@ -1371,7 +1409,7 @@ function IntradayRadarTable({ rows, sampleAt }: { rows: IntradayRadarCandidate[]
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={`${row.sample_at}-${row.code}`}>
+                <tr key={`${row.sample_at}-${row.radar_mode}-${row.code}`}>
                   <td>{row.rank}</td>
                   <td className="mono">{row.code}</td>
                   <td>

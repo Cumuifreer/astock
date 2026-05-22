@@ -494,6 +494,7 @@ class UpdateService:
                 success=1 if snapshot_count else 0,
             )
             candidate_count = self.intraday_service.run_radar(sample_at=sample_at)
+            radar_result = self.intraday_service.latest(limit=1)
             self._patch_task(
                 task_id,
                 status="completed_full" if not warnings else "completed_partial",
@@ -506,6 +507,8 @@ class UpdateService:
                 summary={
                     "snapshot_count": snapshot_count,
                     "candidate_count": candidate_count,
+                    "strict_count": radar_result.get("summary", {}).get("strict_count", candidate_count),
+                    "score_count": radar_result.get("summary", {}).get("score_count", 0),
                     "sample_at": sample_at.isoformat(timespec="seconds"),
                     "warnings": warnings,
                 },

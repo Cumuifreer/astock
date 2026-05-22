@@ -7,7 +7,7 @@ from backend.app.db import Database
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG, SYSTEM_PRESETS
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 MIGRATIONS = [
@@ -294,6 +294,33 @@ MIGRATIONS = [
         metrics_json TEXT,
         created_at TIMESTAMP,
         PRIMARY KEY (sample_at, code)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS intraday_radar_rankings (
+        sample_at TIMESTAMP,
+        radar_mode TEXT,
+        trade_date DATE,
+        rank INTEGER,
+        code TEXT,
+        name TEXT,
+        status TEXT,
+        radar_score DOUBLE,
+        latest_price DOUBLE,
+        pct_chg DOUBLE,
+        amount DOUBLE,
+        volume DOUBLE,
+        distance_to_upper DOUBLE,
+        breakout_clearance DOUBLE,
+        amount_delta DOUBLE,
+        volume_delta DOUBLE,
+        amount_ratio DOUBLE,
+        price_change DOUBLE,
+        source TEXT,
+        reasons_json TEXT,
+        metrics_json TEXT,
+        created_at TIMESTAMP,
+        PRIMARY KEY (sample_at, radar_mode, code)
     )
     """,
 ]

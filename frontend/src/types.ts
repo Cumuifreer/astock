@@ -219,6 +219,9 @@ export interface IntradayRadarConfig {
   max_pct_chg: number;
   min_amount: number;
   min_intraday_amount_ratio: number;
+  platform_min_bullish_ratio: number;
+  platform_bull_amount_advantage: number;
+  max_recent_gain_5d: number;
   candidate_limit: number;
   require_ma_bullish: boolean;
   require_macd_strong: boolean;
@@ -230,6 +233,7 @@ export interface IntradayRadarCandidate {
   sample_at: string;
   trade_date: string;
   rank: number;
+  radar_mode: 'strict' | 'score';
   code: string;
   name: string;
   status: string;
@@ -255,6 +259,8 @@ export interface IntradayRadarResult {
   sample_count: number;
   summary: Record<string, unknown>;
   rows: IntradayRadarCandidate[];
+  strict_rows: IntradayRadarCandidate[];
+  score_rows: IntradayRadarCandidate[];
 }
 
 export interface Candidate {

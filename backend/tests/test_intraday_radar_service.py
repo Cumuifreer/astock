@@ -43,6 +43,13 @@ def _bar(code: str, day: int, close: float = 10.0) -> dict:
     }
 
 
+def _bearish_bar(code: str, day: int, close: float = 10.0) -> dict:
+    row = _bar(code, day, close)
+    row["open"] = row["close"] + 0.08
+    row["amount"] = 8_000_000.0 + day * 10_000
+    return row
+
+
 def test_intraday_radar_scores_latest_snapshot_against_platform(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -94,6 +101,107 @@ def test_intraday_radar_scores_latest_snapshot_against_platform(tmp_path):
     assert row["metrics"]["platform_upper"] == 10.35
     assert row["breakout_clearance"] > 0
     assert "突破上沿" in " / ".join(row["reasons"])
+
+
+def test_intraday_radar_keeps_strict_and_score_views_for_same_snapshot(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+
+    service = IntradayRadarService(db)
+    sample_at = datetime(2026, 5, 21, 10, 30)
+    service.record_snapshots(
+        pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "平安银行",
+                    "latest_price": 10.55,
+                    "pct_chg": 9.2,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "AkShare 新浪",
+                }
+            ]
+        ),
+        sample_at=sample_at,
+        trade_date="2026-05-21",
+    )
+
+    strict_count = service.run_radar(
+        sample_at=sample_at,
+        config={
+            "platform_lookback_days": 20,
+            "platform_max_range": 0.08,
+            "near_upper_distance": 0.03,
+            "breakout_min_clearance": 0.0,
+            "breakout_max_clearance": 0.08,
+            "max_pct_chg": 8.0,
+            "min_amount": 20_000_000,
+            "candidate_limit": 10,
+        },
+    )
+    result = service.latest(limit=10)
+
+    assert strict_count == 0
+    assert result["summary"]["strict_count"] == 0
+    assert result["summary"]["score_count"] == 1
+    assert result["rows"] == []
+    assert result["score_rows"][0]["code"] == "000001.SZ"
+    assert result["score_rows"][0]["radar_mode"] == "score"
+
+
+def test_intraday_radar_strict_requires_platform_bullish_quality(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "弱平台")], ["code"])
+    db.upsert("historical_bars", [_bearish_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+
+    service = IntradayRadarService(db)
+    sample_at = datetime(2026, 5, 21, 11, 0)
+    service.record_snapshots(
+        pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "弱平台",
+                    "latest_price": 10.55,
+                    "pct_chg": 4.2,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "AkShare 新浪",
+                }
+            ]
+        ),
+        sample_at=sample_at,
+        trade_date="2026-05-21",
+    )
+
+    service.run_radar(
+        sample_at=sample_at,
+        config={
+            "platform_lookback_days": 20,
+            "platform_max_range": 0.08,
+            "near_upper_distance": 0.03,
+            "breakout_min_clearance": 0.0,
+            "breakout_max_clearance": 0.08,
+            "max_pct_chg": 8.0,
+            "min_amount": 20_000_000,
+            "platform_min_bullish_ratio": 0.5,
+            "platform_bull_amount_advantage": 1.05,
+            "candidate_limit": 10,
+        },
+    )
+    result = service.latest(limit=10)
+
+    assert result["summary"]["strict_count"] == 0
+    assert result["summary"]["score_count"] == 1
+    assert result["score_rows"][0]["metrics"]["platform_bullish_ratio"] == 0.0
 
 
 def test_intraday_radar_uses_previous_snapshot_deltas(tmp_path):

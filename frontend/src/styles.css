@@ -678,6 +678,37 @@ h1 {
   min-width: 1260px;
 }
 
+.radar-view-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(106px, 1fr));
+  gap: 4px;
+  border: 1px solid rgba(59, 240, 193, 0.18);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 4px;
+}
+
+.radar-view-switch button {
+  min-height: 40px;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 10px;
+}
+
+.radar-view-switch button.active {
+  border-color: rgba(59, 240, 193, 0.48);
+  background: rgba(59, 240, 193, 0.1);
+  color: var(--text);
+}
+
+.radar-view-switch small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .radar-signal {
   color: var(--lime);
   border-color: rgba(182, 255, 95, 0.34);
