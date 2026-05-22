@@ -6,6 +6,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import duckdb
+
 from backend.app.db import Database
 
 
@@ -233,15 +235,18 @@ class StrategyService:
         return row
 
     def list_versions(self, preset_id: str) -> List[Dict[str, Any]]:
-        rows = self.db.query(
-            """
-            SELECT *
-            FROM strategy_versions
-            WHERE preset_id = ?
-            ORDER BY version_number DESC
-            """,
-            [preset_id],
-        )
+        try:
+            rows = self.db.query(
+                """
+                SELECT *
+                FROM strategy_versions
+                WHERE preset_id = ?
+                ORDER BY version_number DESC
+                """,
+                [preset_id],
+            )
+        except duckdb.Error:
+            return []
         for row in rows:
             row["config"] = normalize_strategy_config(json.loads(row.pop("config_json") or "{}"))
         return rows
@@ -340,15 +345,22 @@ class StrategyService:
             placeholders = ", ".join(["?"] * len(preset_ids))
             where = f"WHERE preset_id IN ({placeholders})"
             params.extend(preset_ids)
-        rows = self.db.query(
-            f"""
-            SELECT *
-            FROM strategy_versions
-            {where}
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY preset_id ORDER BY version_number DESC) = 1
-            """,
-            params,
-        )
+        try:
+            rows = self.db.query(
+                f"""
+                SELECT *
+                FROM (
+                    SELECT *,
+                           ROW_NUMBER() OVER (PARTITION BY preset_id ORDER BY version_number DESC) AS version_rank
+                    FROM strategy_versions
+                    {where}
+                )
+                WHERE version_rank = 1
+                """,
+                params,
+            )
+        except duckdb.Error:
+            return {}
         return {row["preset_id"]: row for row in rows}
 
     def _record_version_if_changed(
@@ -363,22 +375,25 @@ class StrategyService:
         if latest and latest.get("config_hash") == config_hash:
             return
         version_number = int(latest.get("version_number") or 0) + 1 if latest else 1
-        self.db.upsert(
-            "strategy_versions",
-            [
-                {
-                    "id": f"version-{uuid.uuid4().hex[:12]}",
-                    "preset_id": preset_id,
-                    "strategy_name": strategy_name,
-                    "version_number": version_number,
-                    "config_hash": config_hash,
-                    "config_json": json.dumps(config, ensure_ascii=False),
-                    "summary": _strategy_summary(config),
-                    "created_at": now,
-                }
-            ],
-            ["id"],
-        )
+        try:
+            self.db.upsert(
+                "strategy_versions",
+                [
+                    {
+                        "id": f"version-{uuid.uuid4().hex[:12]}",
+                        "preset_id": preset_id,
+                        "strategy_name": strategy_name,
+                        "version_number": version_number,
+                        "config_hash": config_hash,
+                        "config_json": json.dumps(config, ensure_ascii=False),
+                        "summary": _strategy_summary(config),
+                        "created_at": now,
+                    }
+                ],
+                ["id"],
+            )
+        except duckdb.Error:
+            return
 
 
 def _config_hash(config: Dict[str, Any]) -> str:

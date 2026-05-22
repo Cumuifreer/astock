@@ -151,3 +151,17 @@ def test_save_preset_records_versions_only_when_config_changes(tmp_path):
     assert "距上沿" in versions[0]["summary"]
     assert preset["latest_version_number"] == 2
     assert preset["latest_version_id"] == versions[0]["id"]
+
+
+def test_save_preset_still_succeeds_when_version_table_is_missing(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.execute("DROP TABLE strategy_versions", write=True)
+    service = StrategyService(db)
+
+    preset = service.save_preset("临时策略", {"signal_mode": "platform_setup"})
+
+    assert preset["id"].startswith("custom-")
+    assert preset["name"] == "临时策略"
+    assert preset["latest_version_number"] is None
+    assert service.list_versions(preset["id"]) == []
