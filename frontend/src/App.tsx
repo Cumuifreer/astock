@@ -984,24 +984,25 @@ function BacktestPage({
   const [endDate, setEndDate] = useState('');
   const [step, setStep] = useState('5');
   const [candidateLimit, setCandidateLimit] = useState(String(strategy.candidate_limit || 50));
-  const [strategySource, setStrategySource] = useState<'current' | 'preset'>('current');
-  const [selectedPresetId, setSelectedPresetId] = useState(presets.find((preset) => preset.is_default)?.id || presets[0]?.id || '');
+  const [selectedBacktestStrategyId, setSelectedBacktestStrategyId] = useState('current');
   const [floatPolicy, setFloatPolicy] = useState('allow_missing');
   const [runs, setRuns] = useState<BacktestRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [report, setReport] = useState<BacktestResult>(result);
   const running = task?.status === 'running';
-  const selectedPreset = presets.find((preset) => preset.id === selectedPresetId);
-  const runStrategy = strategySource === 'preset' && selectedPreset ? selectedPreset.config : strategy;
-  const runStrategyName = strategySource === 'preset' && selectedPreset ? selectedPreset.name : '当前编辑策略';
+  const selectedPreset = presets.find((preset) => preset.id === selectedBacktestStrategyId);
+  const runStrategy = selectedBacktestStrategyId === 'current' || !selectedPreset ? strategy : selectedPreset.config;
+  const runStrategyName = selectedBacktestStrategyId === 'current' || !selectedPreset ? '当前编辑策略' : selectedPreset.name;
 
   useEffect(() => {
     setCandidateLimit(String(runStrategy.candidate_limit || 50));
   }, [runStrategy.candidate_limit]);
 
   useEffect(() => {
-    if (!selectedPresetId && presets[0]) setSelectedPresetId(presets[0].id);
-  }, [presets, selectedPresetId]);
+    if (selectedBacktestStrategyId !== 'current' && !selectedPreset) {
+      setSelectedBacktestStrategyId('current');
+    }
+  }, [selectedBacktestStrategyId, selectedPreset]);
 
   useEffect(() => {
     async function loadRuns() {
@@ -1049,21 +1050,14 @@ function BacktestPage({
         </div>
         <div className="backtest-form">
           <label className="field">
-            <span>策略来源</span>
-            <select value={strategySource} onChange={(event) => setStrategySource(event.target.value as 'current' | 'preset')}>
-              <option value="current">当前编辑策略</option>
-              <option value="preset">选择已保存策略</option>
-            </select>
-            <small className="field-hint">启动回测时会保存当时的策略快照</small>
-          </label>
-          <label className="field">
             <span>回测策略</span>
-            <select value={selectedPresetId} disabled={strategySource === 'current'} onChange={(event) => setSelectedPresetId(event.target.value)}>
+            <select value={selectedBacktestStrategyId} onChange={(event) => setSelectedBacktestStrategyId(event.target.value)}>
+              <option value="current">当前编辑策略</option>
               {presets.map((preset) => (
                 <option key={preset.id} value={preset.id}>{preset.name}</option>
               ))}
             </select>
-            <small className="field-hint">{runStrategyName}</small>
+            <small className="field-hint">{runStrategyName} · 启动时保存策略快照</small>
           </label>
           <label className="field">
             <span>开始日期</span>
