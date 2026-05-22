@@ -7,7 +7,7 @@ from backend.app.schema import migrate
 from backend.app.services.watchlist_service import WatchlistService
 
 
-def _seed_stock_with_bars(db: Database, code: str = "000001.SZ") -> None:
+def _seed_stock_with_bars(db: Database, code: str = "000001.SZ", closes=None) -> None:
     db.upsert(
         "stock_basic",
         [
@@ -26,7 +26,7 @@ def _seed_stock_with_bars(db: Database, code: str = "000001.SZ") -> None:
     )
     rows = []
     start = date(2026, 5, 20)
-    closes = [10.0, 10.5, 10.2, 11.0, 11.5, 10.8, 12.0, 12.5, 11.7, 13.0, 12.8]
+    closes = closes or [10.0, 10.5, 10.2, 11.0, 11.5, 10.8, 12.0, 12.5, 11.7, 13.0, 12.8]
     for offset, close in enumerate(closes):
         rows.append(
             {
@@ -164,3 +164,39 @@ def test_watchlist_updates_item_note_and_status(tmp_path):
     assert batch["source_summary"] == "平台临界 · 20日 · 距上沿≤3.50%"
     assert item["note"] == "次日缩量，继续看 10 日线。"
     assert item["review_status"] == "观察中"
+
+
+def test_watchlist_updates_batch_review_and_highlights_best_worst(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    _seed_stock_with_bars(db, "000001.SZ")
+    _seed_stock_with_bars(
+        db,
+        "000002.SZ",
+        closes=[10.0, 9.8, 9.6, 9.4, 9.2, 9.0, 8.8, 8.7, 8.6, 8.5, 8.4],
+    )
+    service = WatchlistService(db)
+    created = service.add_items(
+        {
+            "source_type": "analysis",
+            "source_label": "平台临界",
+            "batch_date": "2026-05-20",
+            "items": [
+                {"code": "000001.SZ", "entry_price": 10.0},
+                {"code": "000002.SZ", "entry_price": 10.0},
+            ],
+        }
+    )
+
+    updated = service.update_batch(
+        created["batch_id"],
+        {"note": "弱市样本，继续观察 T+5。", "review_status": "有效"},
+    )
+    batch = service.result()["batches"][0]
+
+    assert updated["ok"] is True
+    assert batch["note"] == "弱市样本，继续观察 T+5。"
+    assert batch["review_status"] == "有效"
+    assert batch["best_item"]["code"] == "000001.SZ"
+    assert batch["worst_item"]["code"] == "000002.SZ"
+    assert batch["avg_return_5d"] == pytest.approx(-0.01)

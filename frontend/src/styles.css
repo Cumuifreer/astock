@@ -345,6 +345,95 @@ h1 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.runtime-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.runtime-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.runtime-head .panel-title {
+  margin-bottom: 0;
+}
+
+.runtime-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.runtime-grid > div {
+  min-height: 84px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+  padding: 12px;
+  display: grid;
+  align-content: space-between;
+  gap: 6px;
+}
+
+.runtime-grid span,
+.runtime-grid small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.runtime-grid strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(74px, 1fr));
+  gap: 6px;
+}
+
+.slot-card {
+  min-height: 70px;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(255, 255, 255, 0.018);
+  padding: 8px;
+  display: grid;
+  gap: 3px;
+}
+
+.slot-card b {
+  font-family: "SFMono-Regular", "Roboto Mono", monospace;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.slot-card em,
+.slot-card small {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.slot-card.running,
+.slot-card.due {
+  border-color: rgba(59, 240, 193, 0.42);
+  background: rgba(59, 240, 193, 0.08);
+}
+
+.slot-card.completed_full,
+.slot-card.completed_partial {
+  border-color: rgba(182, 255, 95, 0.34);
+  background: rgba(182, 255, 95, 0.055);
+}
+
+.slot-card.failed,
+.slot-card.missed {
+  border-color: rgba(255, 92, 122, 0.34);
+  background: rgba(255, 92, 122, 0.045);
+}
+
 .wide-panel {
   grid-column: 1 / -1;
 }
@@ -766,6 +855,69 @@ h1 {
   background: rgba(182, 255, 95, 0.04);
 }
 
+.table-action.active {
+  border-color: rgba(182, 255, 95, 0.5);
+  background: rgba(182, 255, 95, 0.08);
+  color: var(--lime);
+}
+
+.timeline-expanded td {
+  background: rgba(59, 240, 193, 0.028);
+}
+
+.timeline-panel {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(59, 240, 193, 0.16);
+  background: rgba(5, 12, 13, 0.84);
+}
+
+.timeline-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--soft);
+}
+
+.timeline-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.timeline-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+  gap: 6px;
+}
+
+.timeline-point {
+  min-height: 58px;
+  border: 1px solid var(--line);
+  padding: 8px;
+  display: grid;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.timeline-point.active {
+  border-color: rgba(59, 240, 193, 0.36);
+  background: rgba(59, 240, 193, 0.07);
+}
+
+.timeline-point b {
+  font-family: "SFMono-Regular", "Roboto Mono", monospace;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.timeline-point em,
+.timeline-point small {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .watchlist-page .metric-card {
   min-height: 124px;
 }
@@ -798,6 +950,34 @@ h1 {
 
 .watchlist-batch-head .source-summary {
   color: var(--soft);
+}
+
+.batch-recap {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.batch-recap span {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid rgba(59, 240, 193, 0.18);
+  background: rgba(59, 240, 193, 0.035);
+  color: var(--soft);
+  font-size: 12px;
+}
+
+.batch-note {
+  min-height: 38px;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: rgba(4, 12, 13, 0.74);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 0 11px;
 }
 
 .batch-kpis {
@@ -991,6 +1171,41 @@ h1 {
 .preset.active {
   border-color: rgba(59, 240, 193, 0.44);
   background: rgba(59, 240, 193, 0.08);
+}
+
+.version-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+  margin: -4px 0 14px;
+}
+
+.version-strip span {
+  min-height: 58px;
+  border: 1px solid rgba(59, 240, 193, 0.16);
+  background: rgba(59, 240, 193, 0.035);
+  padding: 8px 10px;
+  display: grid;
+  gap: 3px;
+}
+
+.version-strip strong {
+  color: var(--lime);
+  font-size: 12px;
+}
+
+.version-strip em {
+  color: var(--soft);
+  font-style: normal;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.version-strip small {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .preset small {
@@ -1522,6 +1737,7 @@ a {
 
   nav,
   .metric-grid,
+  .runtime-grid,
   .backtest-summary-grid,
   .split,
   .strategy-layout,
@@ -1540,6 +1756,7 @@ a {
   .report-mode-tabs,
   .report-run-list,
   .intraday-clockline,
+  .slot-grid,
   .report-strip {
     grid-template-columns: 1fr 1fr;
   }
@@ -1563,6 +1780,7 @@ a {
   .form-grid,
   .backtest-form,
   .backtest-summary-grid,
+  .runtime-grid,
   .metric-grid {
     grid-template-columns: 1fr;
   }
@@ -1588,6 +1806,7 @@ a {
   .report-mode-tabs,
   .report-run-list,
   .intraday-clockline,
+  .slot-grid,
   .report-strip {
     grid-template-columns: 1fr;
   }
@@ -1604,6 +1823,7 @@ a {
 
   .diagnostic-head,
   .editor-action-strip,
+  .runtime-head,
   .watchlist-batch-head {
     align-items: stretch;
     flex-direction: column;

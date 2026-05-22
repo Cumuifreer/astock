@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
@@ -36,11 +36,14 @@ import type {
   IntradayRadarCandidate,
   IntradayRadarConfig,
   IntradayRadarResult,
+  IntradayTimeline,
   AnalysisReportGroup,
   AnalysisReportSummary,
   FunnelStep,
+  RuntimeHealth,
   StrategyConfig,
   StrategyPreset,
+  StrategyVersion,
   TaskRun,
   WatchlistBatch,
   WatchlistItem,
@@ -83,6 +86,7 @@ const conditionModes: Array<[string, string]> = [
 ];
 
 const reviewStatuses = ['观察中', '已验证', '已放弃', '已错过'];
+const batchReviewStatuses = ['观察中', '有效', '一般', '误报', '已归档'];
 
 function App() {
   const [tab, setTab] = useState<Tab>('overview');
@@ -336,7 +340,7 @@ function App() {
     if (tab === 'map') {
       return <DataMap capabilities={bootstrap.capabilities} afterProbe={() => load(true)} />;
     }
-    return <StatusBoard update={bootstrap.update_status} analyze={bootstrap.analyze_status} backtest={bootstrap.backtest_status} intraday={bootstrap.intraday_status} latestAnalysis={bootstrap.latest_analysis} />;
+    return <StatusBoard runtime={bootstrap.runtime_health} update={bootstrap.update_status} analyze={bootstrap.analyze_status} backtest={bootstrap.backtest_status} intraday={bootstrap.intraday_status} latestAnalysis={bootstrap.latest_analysis} />;
   }, [bootstrap, tab, strategy, strategyName, selectedPresetId]);
 
   return (
@@ -596,12 +600,34 @@ function StrategyPanel(props: {
   const selected = props.presets.find((preset) => preset.id === props.selectedPresetId);
   const customPresets = props.presets.filter((preset) => !preset.is_system);
   const selectedIsTemplate = Boolean(selected?.is_system);
+  const [versions, setVersions] = useState<StrategyVersion[]>([]);
   const update = (key: keyof StrategyConfig, value: unknown) => {
     props.setStrategy({ ...props.strategy, [key]: value });
   };
   const activeAnalysisMode = analysisModes.find((mode) => mode.id === (props.strategy.analysis_mode || 'strict')) || analysisModes[0];
   const suggestedName = suggestStrategyName(props.strategy);
   const nameLooksGeneric = !props.strategyName.trim() || /^未命名策略/.test(props.strategyName.trim());
+
+  useEffect(() => {
+    let alive = true;
+    async function loadVersions() {
+      if (!selected || selected.is_system) {
+        setVersions([]);
+        return;
+      }
+      try {
+        const result = await api.strategyVersions(selected.id);
+        if (alive) setVersions(result.rows || []);
+      } catch {
+        if (alive) setVersions([]);
+      }
+    }
+    void loadVersions();
+    return () => {
+      alive = false;
+    };
+  }, [selected?.id, selected?.is_system, selected?.latest_version_number, selected?.updated_at]);
+
   return (
     <div className="strategy-layout">
       <section className="panel preset-panel">
@@ -627,7 +653,7 @@ function StrategyPanel(props: {
               <span className="preset-main">
                 <strong>{preset.name}</strong>
                 <em>{strategySummary(preset.config)}</em>
-                <i>{formatShortDateTime(preset.updated_at)}</i>
+                <i>{preset.latest_version_number ? `v${preset.latest_version_number}` : '未记录版本'} · {formatShortDateTime(preset.updated_at)}</i>
               </span>
               <small>{preset.is_default ? '默认' : '自定义'}</small>
             </button>
@@ -674,6 +700,17 @@ function StrategyPanel(props: {
           <span>{activeAnalysisMode.label}</span>
           <b>{strategySummary(props.strategy)}</b>
         </div>
+        {versions.length > 0 && (
+          <div className="version-strip">
+            {versions.slice(0, 4).map((version) => (
+              <span key={version.id}>
+                <strong>v{version.version_number}</strong>
+                <em>{version.summary}</em>
+                <small>{formatShortDateTime(version.created_at)}</small>
+              </span>
+            ))}
+          </div>
+        )}
         {selectedIsTemplate && (
           <div className="template-banner">
             保存后会进入“我的策略”。
@@ -1126,6 +1163,8 @@ function WatchlistPage({
     hit_5pct_rate: null,
     hit_8pct_rate: null,
     worst_drawdown: null,
+    best_item: null,
+    worst_item: null,
   };
 
   async function removeBatch(batch: WatchlistBatch) {
@@ -1160,6 +1199,17 @@ function WatchlistPage({
     }
   }
 
+  async function saveBatchMeta(batch: WatchlistBatch, payload: Record<string, unknown>) {
+    const key = `${batch.id}-batch-meta`;
+    setBusyKey(key);
+    try {
+      await api.updateWatchlistBatch(batch.id, payload);
+      await reload();
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   return (
     <div className="page-stack watchlist-page">
       <section className="metric-grid">
@@ -1183,6 +1233,10 @@ function WatchlistPage({
                 <h3>{batch.name || batch.source_label}</h3>
                 <p>{batch.source_label} · {formatInt(batch.item_count)} 只 · 平均累计 {formatPercentRatio(batch.avg_return_latest)}</p>
                 {batch.source_summary && <p className="source-summary">{batch.source_summary}</p>}
+                <div className="batch-recap">
+                  <span>最佳 {batch.best_item ? `${batch.best_item.name} ${formatPercentRatio(batch.best_item.return_latest)}` : '-'}</span>
+                  <span>最弱 {batch.worst_item ? `${batch.worst_item.name} ${formatPercentRatio(batch.worst_item.return_latest)}` : '-'}</span>
+                </div>
               </div>
               <div className="batch-kpis">
                 <span>为正率 <strong>{formatPercentRatio(batch.positive_rate)}</strong></span>
@@ -1190,12 +1244,36 @@ function WatchlistPage({
                 <span>T+5 <strong>{formatPercentRatio(batch.avg_return_5d)}</strong></span>
                 <span>+5% <strong>{formatPercentRatio(batch.hit_5pct_rate)}</strong></span>
                 <span>最大回撤 <strong>{formatPercentRatio(batch.worst_drawdown)}</strong></span>
+                <select
+                  className="watchlist-status"
+                  value={batch.review_status || '观察中'}
+                  disabled={busyKey === `${batch.id}-batch-meta`}
+                  onChange={(event) => void saveBatchMeta(batch, { review_status: event.target.value, note: batch.note || '' })}
+                >
+                  {batchReviewStatuses.map((status) => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
                 <button className="ghost danger-action" disabled={busyKey === batch.id} onClick={() => void removeBatch(batch)}>
                   <Trash2 size={15} />
                   删除批次
                 </button>
               </div>
             </div>
+            <input
+              className="batch-note"
+              defaultValue={batch.note || ''}
+              placeholder="给这批信号写一句复盘备注"
+              disabled={busyKey === `${batch.id}-batch-meta`}
+              onBlur={(event) => {
+                if (event.target.value !== (batch.note || '')) {
+                  void saveBatchMeta(batch, { note: event.target.value, review_status: batch.review_status || '观察中' });
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
+            />
             <div className="table-wrap">
               <table className="watchlist-table">
                 <thead>
@@ -1674,6 +1752,30 @@ function IntradayRadarTable({
   onModeChange: (mode: 'strict' | 'score') => void;
   onAddRows?: (rows: IntradayRadarCandidate[]) => void | Promise<void>;
 }) {
+  const [expandedCode, setExpandedCode] = useState<string | null>(null);
+  const [timeline, setTimeline] = useState<IntradayTimeline | null>(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+
+  async function toggleTimeline(row: IntradayRadarCandidate) {
+    if (expandedCode === row.code) {
+      setExpandedCode(null);
+      setTimeline(null);
+      return;
+    }
+    setExpandedCode(row.code);
+    setTimeline(null);
+    setTimelineLoading(true);
+    try {
+      const tradeDate = formatDate(row.trade_date || row.sample_at);
+      const result = await api.intradayTimeline(row.code, tradeDate === '-' ? null : tradeDate);
+      setTimeline(result);
+    } catch {
+      setTimeline({ code: row.code, name: row.name, trade_date: row.trade_date || null, rows: [] });
+    } finally {
+      setTimelineLoading(false);
+    }
+  }
+
   return (
     <section className="panel radar-table-panel">
       <div className="table-toolbar">
@@ -1717,45 +1819,90 @@ function IntradayRadarTable({
                 <th>本段额</th>
                 <th>量能</th>
                 <th>分数</th>
+                <th>时间线</th>
                 <th>看盘</th>
                 {onAddRows && <th>入池</th>}
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={`${row.sample_at}-${row.radar_mode}-${row.code}`}>
-                  <td>{row.rank}</td>
-                  <td className="mono">{row.code}</td>
-                  <td>
-                    <div className="name-cell">
-                      <strong>{row.name}</strong>
-                      <span>{row.reasons?.slice(0, 2).join(' / ')}</span>
-                    </div>
-                  </td>
-                  <td><span className="signal radar-signal">{row.status}</span></td>
-                  <td>{formatPrice(row.latest_price)}</td>
-                  <td className={toneClass(Number(row.pct_chg || 0))}>{formatPercent(row.pct_chg)}</td>
-                  <td>{formatPercentRatio(row.distance_to_upper)}</td>
-                  <td className={toneClass(Number(row.breakout_clearance || 0))}>{formatPercentRatio(row.breakout_clearance)}</td>
-                  <td>{formatMoney(row.amount)}</td>
-                  <td>{formatMoney(row.amount_delta)}</td>
-                  <td>{formatRatioX(row.amount_ratio)}</td>
-                  <td><strong>{formatPrice(row.radar_score)}</strong></td>
-                  <td><a href={row.chart_url} target="_blank" rel="noreferrer">打开</a></td>
-                  {onAddRows && (
-                    <td>
-                      <button className="table-action" onClick={() => void onAddRows([row])} title="加入观察池">
-                        <Plus size={14} />
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              ))}
+              {rows.map((row) => {
+                const rowKey = `${row.sample_at}-${row.radar_mode}-${row.code}`;
+                const expanded = expandedCode === row.code;
+                return (
+                  <Fragment key={rowKey}>
+                    <tr>
+                      <td>{row.rank}</td>
+                      <td className="mono">{row.code}</td>
+                      <td>
+                        <div className="name-cell">
+                          <strong>{row.name}</strong>
+                          <span>{row.reasons?.slice(0, 2).join(' / ')}</span>
+                        </div>
+                      </td>
+                      <td><span className="signal radar-signal">{row.status}</span></td>
+                      <td>{formatPrice(row.latest_price)}</td>
+                      <td className={toneClass(Number(row.pct_chg || 0))}>{formatPercent(row.pct_chg)}</td>
+                      <td>{formatPercentRatio(row.distance_to_upper)}</td>
+                      <td className={toneClass(Number(row.breakout_clearance || 0))}>{formatPercentRatio(row.breakout_clearance)}</td>
+                      <td>{formatMoney(row.amount)}</td>
+                      <td>{formatMoney(row.amount_delta)}</td>
+                      <td>{formatRatioX(row.amount_ratio)}</td>
+                      <td><strong>{formatPrice(row.radar_score)}</strong></td>
+                      <td>
+                        <button className={expanded ? 'table-action active' : 'table-action'} onClick={() => void toggleTimeline(row)} title="查看盘中时间线">
+                          <History size={14} />
+                        </button>
+                      </td>
+                      <td><a href={row.chart_url} target="_blank" rel="noreferrer">打开</a></td>
+                      {onAddRows && (
+                        <td>
+                          <button className="table-action" onClick={() => void onAddRows([row])} title="加入观察池">
+                            <Plus size={14} />
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                    {expanded && (
+                      <tr className="timeline-expanded">
+                        <td colSpan={onAddRows ? 15 : 14}>
+                          <RadarTimeline timeline={timeline} loading={timelineLoading} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
     </section>
+  );
+}
+
+function RadarTimeline({ timeline, loading }: { timeline: IntradayTimeline | null; loading: boolean }) {
+  if (loading) {
+    return <div className="timeline-panel muted-text">读取盘中轨迹...</div>;
+  }
+  if (!timeline || timeline.rows.length === 0) {
+    return <div className="timeline-panel muted-text">暂无该股票的盘中轨迹。</div>;
+  }
+  return (
+    <div className="timeline-panel">
+      <div className="timeline-head">
+        <strong>{timeline.name || timeline.code}</strong>
+        <span>{timeline.trade_date || '-'} · {formatInt(timeline.rows.length)} 个采样点</span>
+      </div>
+      <div className="timeline-grid">
+        {timeline.rows.map((point) => (
+          <span key={point.sample_at} className={point.strict_status || point.score_status ? 'timeline-point active' : 'timeline-point'}>
+            <b>{point.sample_at.slice(11, 16)}</b>
+            <em>{point.strict_status || point.score_status || '观察外'}</em>
+            <small>{formatPrice(point.latest_price)} · {formatRatioX(point.amount_ratio)}</small>
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1819,12 +1966,14 @@ function DataMap({ capabilities, afterProbe }: { capabilities: Capability[]; aft
 }
 
 function StatusBoard({
+  runtime,
   update,
   analyze,
   backtest,
   intraday,
   latestAnalysis,
 }: {
+  runtime: RuntimeHealth;
   update: TaskRun | null;
   analyze: TaskRun | null;
   backtest: TaskRun | null;
@@ -1832,28 +1981,77 @@ function StatusBoard({
   latestAnalysis: unknown;
 }) {
   return (
-    <div className="status-grid">
-      <section className="panel">
-        <PanelTitle icon={<RefreshCw size={18} />} title="数据更新" />
-        <TaskDetail task={update} />
-      </section>
-      <section className="panel">
-        <PanelTitle icon={<Play size={18} />} title="运行分析" />
-        <TaskDetail task={analyze} />
-      </section>
-      <section className="panel">
-        <PanelTitle icon={<History size={18} />} title="策略回测" />
-        <TaskDetail task={backtest} />
-      </section>
-      <section className="panel">
-        <PanelTitle icon={<Activity size={18} />} title="盘中雷达" />
-        <TaskDetail task={intraday} />
-      </section>
-      <section className="panel wide-panel">
-        <PanelTitle icon={<BarChart3 size={18} />} title="最近分析" />
-        <pre className="json-readout">{JSON.stringify(latestAnalysis || {}, null, 2)}</pre>
-      </section>
+    <div className="page-stack">
+      <RuntimeHealthPanel runtime={runtime} />
+      <div className="status-grid">
+        <section className="panel">
+          <PanelTitle icon={<RefreshCw size={18} />} title="数据更新" />
+          <TaskDetail task={update} />
+        </section>
+        <section className="panel">
+          <PanelTitle icon={<Play size={18} />} title="运行分析" />
+          <TaskDetail task={analyze} />
+        </section>
+        <section className="panel">
+          <PanelTitle icon={<History size={18} />} title="策略回测" />
+          <TaskDetail task={backtest} />
+        </section>
+        <section className="panel">
+          <PanelTitle icon={<Activity size={18} />} title="盘中雷达" />
+          <TaskDetail task={intraday} />
+        </section>
+        <section className="panel wide-panel">
+          <PanelTitle icon={<BarChart3 size={18} />} title="最近分析" />
+          <pre className="json-readout">{JSON.stringify(latestAnalysis || {}, null, 2)}</pre>
+        </section>
+      </div>
     </div>
+  );
+}
+
+function RuntimeHealthPanel({ runtime }: { runtime: RuntimeHealth }) {
+  const latestDates = [
+    `历史 ${runtime.data.latest_history_date || '-'}`,
+    `快照 ${runtime.data.latest_snapshot_date || '-'}`,
+    `盘中 ${formatChinaLocalDateTime(runtime.data.latest_intraday_sample)}`,
+  ].join(' · ');
+  const nextSlot = runtime.scheduler.next_slot?.time || (runtime.scheduler.is_weekend ? '非交易日' : '-');
+  return (
+    <section className="panel runtime-panel">
+      <div className="runtime-head">
+        <PanelTitle icon={<ShieldAlert size={18} />} title="数据健康与定时任务" />
+        <span className={runtime.scheduler.enabled ? 'pill good' : 'pill muted'}>
+          {runtime.scheduler.enabled ? `北京时间 · 下次 ${nextSlot}` : '定时未启用'}
+        </span>
+      </div>
+      <div className="runtime-grid">
+        <div>
+          <span>本地数据</span>
+          <strong>{latestDates}</strong>
+          <small>{formatInt(runtime.data.stock_count)} 只股票</small>
+        </div>
+        <div>
+          <span>任务队列</span>
+          <strong>{formatInt(runtime.tasks.running)} 运行 · {formatInt(runtime.tasks.queued)} 排队</strong>
+          <small>{runtime.tasks.latest_intraday?.stage || runtime.tasks.latest_update?.stage || '暂无活跃阶段'}</small>
+        </div>
+        <div>
+          <span>调度器</span>
+          <strong>{runtime.scheduler.is_weekend ? '周末休眠' : runtime.scheduler.enabled ? '等待交易时段' : '关闭'}</strong>
+          <small>补触发窗口 {formatInt(runtime.scheduler.catchup_minutes)} 分钟</small>
+        </div>
+      </div>
+      <div className="slot-grid">
+        {runtime.scheduler.slots.map((slot) => (
+          <span key={slot.time} className={`slot-card ${slot.status}`}>
+            <b>{slot.time}</b>
+            <em>{slotStatusLabel(slot.status)}</em>
+            <small>{slot.sample_count ? `${formatInt(slot.sample_count)} 样本` : slot.task_status ? statusLabel(slot.task_status) : '-'}</small>
+            <small>{slot.strict_count || slot.score_count ? `${formatInt(slot.strict_count)} / ${formatInt(slot.score_count)}` : ''}</small>
+          </span>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -2504,6 +2702,23 @@ function statusLabel(status: string) {
     running: '运行中',
     completed_full: '完整完成',
     completed_partial: '部分完成',
+    failed: '失败',
+    skipped: '跳过',
+  };
+  return labels[status] || status;
+}
+
+function slotStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: '等待',
+    due: '待触发',
+    missed: '已错过',
+    weekend: '休眠',
+    disabled: '关闭',
+    queued: '排队',
+    running: '运行',
+    completed_full: '完成',
+    completed_partial: '部分',
     failed: '失败',
     skipped: '跳过',
   };

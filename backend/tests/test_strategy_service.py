@@ -126,3 +126,28 @@ def test_list_presets_ignores_rows_deleted_before_migration(tmp_path):
     presets = StrategyService(db).list_presets()
 
     assert "custom-deleted" not in [preset["id"] for preset in presets]
+
+
+def test_save_preset_records_versions_only_when_config_changes(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = StrategyService(db)
+
+    first = service.save_preset("平台临界", {"signal_mode": "platform_setup"})
+    same = service.save_preset("平台临界改名", {"signal_mode": "platform_setup"}, preset_id=first["id"])
+    changed = service.save_preset(
+        "平台临界改名",
+        {"signal_mode": "platform_setup", "platform_setup_max_distance_to_high": 0.02},
+        preset_id=first["id"],
+    )
+
+    versions = service.list_versions(first["id"])
+    presets = service.list_presets()
+    preset = next(row for row in presets if row["id"] == first["id"])
+
+    assert same["id"] == first["id"] == changed["id"]
+    assert [version["version_number"] for version in versions] == [2, 1]
+    assert versions[0]["strategy_name"] == "平台临界改名"
+    assert "距上沿" in versions[0]["summary"]
+    assert preset["latest_version_number"] == 2
+    assert preset["latest_version_id"] == versions[0]["id"]

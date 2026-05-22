@@ -39,8 +39,22 @@ export interface StrategyPreset {
   config: StrategyConfig;
   is_system: boolean;
   is_default: boolean;
+  latest_version_id: string | null;
+  latest_version_number: number | null;
+  latest_version_summary: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface StrategyVersion {
+  id: string;
+  preset_id: string;
+  strategy_name: string;
+  version_number: number;
+  config_hash: string;
+  summary: string;
+  created_at: string;
+  config: StrategyConfig;
 }
 
 export interface StrategyConfig {
@@ -264,6 +278,33 @@ export interface IntradayRadarResult {
   score_rows: IntradayRadarCandidate[];
 }
 
+export interface IntradayTimelineRow {
+  sample_at: string;
+  trade_date: string;
+  latest_price: number | null;
+  pct_chg: number | null;
+  amount: number | null;
+  volume: number | null;
+  strict_status: string | null;
+  strict_score: number | null;
+  score_status: string | null;
+  score_score: number | null;
+  distance_to_upper: number | null;
+  breakout_clearance: number | null;
+  amount_ratio: number | null;
+  amount_delta: number | null;
+  platform_upper: number | null;
+  platform_range: number | null;
+  reasons: string[];
+}
+
+export interface IntradayTimeline {
+  code: string;
+  name: string;
+  trade_date: string | null;
+  rows: IntradayTimelineRow[];
+}
+
 export interface WatchlistItem {
   batch_id: string;
   code: string;
@@ -299,6 +340,8 @@ export interface WatchlistBatch {
   source_label: string;
   source_ref: string | null;
   source_summary: string | null;
+  note: string;
+  review_status: string;
   name: string;
   status: string;
   item_count: number;
@@ -314,9 +357,20 @@ export interface WatchlistBatch {
   hit_5pct_rate: number | null;
   hit_8pct_rate: number | null;
   worst_drawdown: number | null;
+  best_item: WatchlistSummaryItem | null;
+  worst_item: WatchlistSummaryItem | null;
   created_at: string;
   updated_at: string;
   items: WatchlistItem[];
+}
+
+export interface WatchlistSummaryItem {
+  code: string;
+  name: string;
+  return_latest: number | null;
+  return_5d: number | null;
+  max_return: number | null;
+  max_drawdown: number | null;
 }
 
 export interface WatchlistResult {
@@ -335,8 +389,50 @@ export interface WatchlistResult {
     hit_5pct_rate: number | null;
     hit_8pct_rate: number | null;
     worst_drawdown: number | null;
+    best_item: WatchlistSummaryItem | null;
+    worst_item: WatchlistSummaryItem | null;
   };
   batches: WatchlistBatch[];
+}
+
+export interface RuntimeSlot {
+  time: string;
+  sample_at: string;
+  status: string;
+  task_id: string | null;
+  task_status: string | null;
+  stage: string | null;
+  error_message: string | null;
+  sample_count: number;
+  strict_count: number;
+  score_count: number;
+  finished_at: string | null;
+}
+
+export interface RuntimeHealth {
+  data: {
+    latest_history_date: string | null;
+    latest_snapshot_date: string | null;
+    latest_intraday_sample: string | null;
+    stock_count: number;
+  };
+  tasks: {
+    queued: number;
+    running: number;
+    latest_update: TaskRun | null;
+    latest_analyze: TaskRun | null;
+    latest_intraday: TaskRun | null;
+  };
+  scheduler: {
+    enabled: boolean;
+    timezone: string;
+    now: string;
+    is_weekend: boolean;
+    poll_seconds: number;
+    catchup_minutes: number;
+    next_slot: RuntimeSlot | null;
+    slots: RuntimeSlot[];
+  };
 }
 
 export interface Candidate {
@@ -378,4 +474,5 @@ export interface Bootstrap {
   backtest: BacktestResult;
   intraday: IntradayRadarResult;
   watchlist: WatchlistResult;
+  runtime_health: RuntimeHealth;
 }

@@ -242,6 +242,47 @@ def test_intraday_radar_uses_previous_snapshot_deltas(tmp_path):
     assert row["metrics"]["price_change"] > 0
 
 
+def test_intraday_timeline_tracks_candidate_across_samples(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+
+    service = IntradayRadarService(db)
+    first = datetime(2026, 5, 21, 9, 35)
+    second = datetime(2026, 5, 21, 10, 0)
+    for sample_at, price, amount in [(first, 10.34, 10_000_000.0), (second, 10.55, 32_000_000.0)]:
+        service.record_snapshots(
+            pd.DataFrame(
+                [
+                    {
+                        "code": "000001.SZ",
+                        "name": "平安银行",
+                        "latest_price": price,
+                        "pct_chg": 3.0,
+                        "high": price,
+                        "low": 9.9,
+                        "volume": amount / 10,
+                        "amount": amount,
+                        "source": "AkShare 新浪",
+                    }
+                ]
+            ),
+            sample_at=sample_at,
+            trade_date="2026-05-21",
+        )
+        service.run_radar(sample_at=sample_at, config={"min_amount": 0, "candidate_limit": 10})
+
+    timeline = service.timeline("000001.SZ", trade_date="2026-05-21")
+
+    assert [row["sample_at"] for row in timeline["rows"]] == [first, second]
+    assert timeline["code"] == "000001.SZ"
+    assert timeline["name"] == "平安银行"
+    assert timeline["rows"][0]["strict_status"] == "接近平台"
+    assert timeline["rows"][1]["strict_status"] == "刚突破"
+    assert timeline["rows"][1]["score_score"] >= timeline["rows"][0]["score_score"]
+
+
 def test_intraday_radar_queries_previous_snapshots_with_timestamp_param(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

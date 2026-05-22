@@ -1,10 +1,26 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from backend.app.db import Database
+
+
+CHINA_TZ = ZoneInfo("Asia/Shanghai")
+DEFAULT_INTRADAY_SLOTS = (
+    (9, 35),
+    (10, 0),
+    (10, 30),
+    (11, 0),
+    (11, 25),
+    (13, 0),
+    (13, 30),
+    (14, 0),
+    (14, 30),
+    (14, 55),
+)
 
 
 CAPABILITY_DEFINITIONS = {
@@ -61,6 +77,26 @@ CAPABILITY_DEFINITIONS = {
 }
 
 
+def _slot_status(
+    current: datetime,
+    slot: datetime,
+    task: Optional[Dict[str, Any]],
+    scheduler_enabled: bool,
+    catchup_minutes: int,
+) -> str:
+    if not scheduler_enabled:
+        return "disabled"
+    if current.weekday() >= 5:
+        return "weekend"
+    if task:
+        return str(task.get("status") or "queued")
+    if current < slot:
+        return "pending"
+    if slot <= current < slot + timedelta(minutes=catchup_minutes):
+        return "due"
+    return "missed"
+
+
 class DataService:
     def __init__(self, db: Database):
         self.db = db
@@ -91,6 +127,83 @@ class DataService:
             "warnings": self.db.query(
                 "SELECT * FROM warnings ORDER BY created_at DESC LIMIT 8"
             ),
+        }
+
+    def runtime_health(
+        self,
+        now: Optional[datetime] = None,
+        scheduler_enabled: bool = True,
+        poll_seconds: int = 30,
+        catchup_minutes: int = 8,
+    ) -> Dict[str, Any]:
+        current = now or datetime.now(CHINA_TZ)
+        current = current.astimezone(CHINA_TZ) if current.tzinfo else current.replace(tzinfo=CHINA_TZ)
+        today = current.date()
+        task_rows = self.db.query(
+            """
+            SELECT id, status, stage, error_message, started_at, updated_at, finished_at, summary_json
+            FROM task_runs
+            WHERE kind = 'intraday'
+              AND id LIKE ?
+            ORDER BY started_at
+            """,
+            [f"intraday-auto-{today:%Y%m%d}-%"],
+        )
+        tasks_by_id = {row["id"]: row for row in task_rows}
+        slots = []
+        for hour, minute in DEFAULT_INTRADAY_SLOTS:
+            slot = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            task_id = f"intraday-auto-{slot:%Y%m%d-%H%M}"
+            task = tasks_by_id.get(task_id)
+            status = _slot_status(current, slot, task, scheduler_enabled, catchup_minutes)
+            sample_at = slot.replace(tzinfo=None)
+            slots.append(
+                {
+                    "time": f"{hour:02d}:{minute:02d}",
+                    "sample_at": sample_at,
+                    "status": status,
+                    "task_id": task_id if task else None,
+                    "task_status": task.get("status") if task else None,
+                    "stage": task.get("stage") if task else None,
+                    "error_message": task.get("error_message") if task else None,
+                    "sample_count": self.db.scalar(
+                        "SELECT COUNT(*) FROM intraday_snapshots WHERE sample_at = ?",
+                        [sample_at],
+                    )
+                    or 0,
+                    "strict_count": self._intraday_rank_count(sample_at, "strict"),
+                    "score_count": self._intraday_rank_count(sample_at, "score"),
+                    "finished_at": task.get("finished_at") if task else None,
+                }
+            )
+        queued = self.db.scalar("SELECT COUNT(*) FROM task_runs WHERE status = 'queued'") or 0
+        running = self.db.scalar("SELECT COUNT(*) FROM task_runs WHERE status = 'running'") or 0
+        next_slot = next((slot for slot in slots if slot["status"] in {"pending", "due"}), None)
+        latest_sample = self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots")
+        return {
+            "data": {
+                "latest_history_date": self.db.scalar("SELECT MAX(date) FROM historical_bars"),
+                "latest_snapshot_date": self.db.scalar("SELECT MAX(date) FROM daily_snapshots"),
+                "latest_intraday_sample": latest_sample,
+                "stock_count": self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0,
+            },
+            "tasks": {
+                "queued": queued,
+                "running": running,
+                "latest_update": self.latest_task("update"),
+                "latest_analyze": self.latest_task("analyze"),
+                "latest_intraday": self.latest_task("intraday"),
+            },
+            "scheduler": {
+                "enabled": scheduler_enabled,
+                "timezone": "Asia/Shanghai",
+                "now": current.replace(tzinfo=None),
+                "is_weekend": current.weekday() >= 5,
+                "poll_seconds": poll_seconds,
+                "catchup_minutes": catchup_minutes,
+                "next_slot": next_slot,
+                "slots": slots,
+            },
         }
 
     def list_stocks(self, limit: int = 50, offset: int = 0, search: str = "") -> Dict[str, Any]:
@@ -134,6 +247,20 @@ class DataService:
         row.pop("payload_json", None)
         row.pop("queue_order", None)
         return row
+
+    def _intraday_rank_count(self, sample_at: datetime, mode: str) -> int:
+        return int(
+            self.db.scalar(
+                """
+                SELECT COUNT(*)
+                FROM intraday_radar_rankings
+                WHERE sample_at = ?
+                  AND radar_mode = ?
+                """,
+                [sample_at, mode],
+            )
+            or 0
+        )
 
     def latest_analysis_run(self) -> Optional[Dict[str, Any]]:
         rows = self.db.query("SELECT * FROM analysis_runs ORDER BY started_at DESC LIMIT 1")

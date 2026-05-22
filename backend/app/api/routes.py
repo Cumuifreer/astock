@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from backend.app.db import get_database
 from backend.app.schema import migrate
+from backend.app.config import settings
 from backend.app.services.analysis_service import AnalysisService
 from backend.app.services.backtest_service import BacktestService
 from backend.app.services.data_service import DataService
@@ -57,6 +58,11 @@ def bootstrap() -> Dict[str, Any]:
         "candidates": data_service.candidates(limit=50),
         "backtest": data_service.backtest_result(limit=200),
         "watchlist": watchlist_service.result(),
+        "runtime_health": data_service.runtime_health(
+            scheduler_enabled=settings.intraday_scheduler_enabled,
+            poll_seconds=settings.intraday_scheduler_poll_seconds,
+            catchup_minutes=settings.intraday_scheduler_catchup_minutes,
+        ),
     }
 
 
@@ -119,6 +125,24 @@ def intraday_latest(
     return intraday_service.latest(limit=limit)
 
 
+@router.get("/intraday/timeline/{code}")
+def intraday_timeline(
+    code: str,
+    trade_date: Optional[str] = None,
+    limit: int = Query(default=80, ge=1, le=200),
+) -> Dict[str, Any]:
+    return intraday_service.timeline(code=code, trade_date=trade_date, limit=limit)
+
+
+@router.get("/runtime/health")
+def runtime_health() -> Dict[str, Any]:
+    return data_service.runtime_health(
+        scheduler_enabled=settings.intraday_scheduler_enabled,
+        poll_seconds=settings.intraday_scheduler_poll_seconds,
+        catchup_minutes=settings.intraday_scheduler_catchup_minutes,
+    )
+
+
 @router.get("/watchlist")
 def watchlist() -> Dict[str, Any]:
     return watchlist_service.result()
@@ -133,6 +157,14 @@ def add_watchlist_items(payload: Dict[str, Any]) -> Dict[str, Any]:
 def delete_watchlist_batch(batch_id: str) -> Dict[str, Any]:
     watchlist_service.delete_batch(batch_id)
     return {"ok": True}
+
+
+@router.patch("/watchlist/batches/{batch_id}")
+def update_watchlist_batch(batch_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    result = watchlist_service.update_batch(batch_id, payload)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail="观察批次不存在。")
+    return result
 
 
 @router.delete("/watchlist/batches/{batch_id}/items/{code}")
@@ -263,6 +295,14 @@ def list_strategies() -> Dict[str, Any]:
         "rows": strategy_service.list_presets(),
         "default_config": strategy_service.default_config(),
     }
+
+
+@router.get("/strategies/{preset_id}/versions")
+def strategy_versions(preset_id: str) -> Dict[str, Any]:
+    preset = strategy_service.get_preset(preset_id)
+    if not preset:
+        raise HTTPException(status_code=404, detail="策略预设不存在。")
+    return {"rows": strategy_service.list_versions(preset_id)}
 
 
 @router.post("/strategies")

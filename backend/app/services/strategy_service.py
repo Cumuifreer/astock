@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -192,8 +193,13 @@ class StrategyService:
             ORDER BY is_default DESC, is_system DESC, updated_at DESC
             """
         )
+        latest_versions = self._latest_versions()
         for row in rows:
             row["config"] = normalize_strategy_config(json.loads(row.pop("config_json") or "{}"))
+            version = latest_versions.get(row["id"])
+            row["latest_version_id"] = version.get("id") if version else None
+            row["latest_version_number"] = version.get("version_number") if version else None
+            row["latest_version_summary"] = version.get("summary") if version else _strategy_summary(row["config"])
         return rows
 
     def default_config(self) -> Dict[str, Any]:
@@ -220,7 +226,25 @@ class StrategyService:
             return None
         row = rows[0]
         row["config"] = normalize_strategy_config(json.loads(row.pop("config_json") or "{}"))
+        version = self._latest_versions([preset_id]).get(preset_id)
+        row["latest_version_id"] = version.get("id") if version else None
+        row["latest_version_number"] = version.get("version_number") if version else None
+        row["latest_version_summary"] = version.get("summary") if version else _strategy_summary(row["config"])
         return row
+
+    def list_versions(self, preset_id: str) -> List[Dict[str, Any]]:
+        rows = self.db.query(
+            """
+            SELECT *
+            FROM strategy_versions
+            WHERE preset_id = ?
+            ORDER BY version_number DESC
+            """,
+            [preset_id],
+        )
+        for row in rows:
+            row["config"] = normalize_strategy_config(json.loads(row.pop("config_json") or "{}"))
+        return rows
 
     def save_preset(
         self,
@@ -236,10 +260,11 @@ class StrategyService:
             target_id = f"custom-{uuid.uuid4().hex[:12]}"
         if set_default:
             self.db.execute("UPDATE strategy_presets SET is_default = FALSE", write=True)
+        normalized_config = normalize_strategy_config(config)
         row = {
             "id": target_id,
             "name": name.strip() or "未命名策略",
-            "config_json": json.dumps(normalize_strategy_config(config), ensure_ascii=False),
+            "config_json": json.dumps(normalized_config, ensure_ascii=False),
             "is_system": False,
             "is_default": set_default,
             "created_at": existing.get("created_at") if existing else now,
@@ -247,6 +272,7 @@ class StrategyService:
             "deleted_at": None,
         }
         self.db.upsert("strategy_presets", [row], ["id"])
+        self._record_version_if_changed(target_id, row["name"], normalized_config, now)
         return self.get_preset(target_id) or row
 
     def delete_preset(self, preset_id: str) -> bool:
@@ -306,3 +332,102 @@ class StrategyService:
                 ["id"],
             )
         return self.list_presets()
+
+    def _latest_versions(self, preset_ids: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
+        params: List[Any] = []
+        where = ""
+        if preset_ids:
+            placeholders = ", ".join(["?"] * len(preset_ids))
+            where = f"WHERE preset_id IN ({placeholders})"
+            params.extend(preset_ids)
+        rows = self.db.query(
+            f"""
+            SELECT *
+            FROM strategy_versions
+            {where}
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY preset_id ORDER BY version_number DESC) = 1
+            """,
+            params,
+        )
+        return {row["preset_id"]: row for row in rows}
+
+    def _record_version_if_changed(
+        self,
+        preset_id: str,
+        strategy_name: str,
+        config: Dict[str, Any],
+        now: datetime,
+    ) -> None:
+        config_hash = _config_hash(config)
+        latest = self._latest_versions([preset_id]).get(preset_id)
+        if latest and latest.get("config_hash") == config_hash:
+            return
+        version_number = int(latest.get("version_number") or 0) + 1 if latest else 1
+        self.db.upsert(
+            "strategy_versions",
+            [
+                {
+                    "id": f"version-{uuid.uuid4().hex[:12]}",
+                    "preset_id": preset_id,
+                    "strategy_name": strategy_name,
+                    "version_number": version_number,
+                    "config_hash": config_hash,
+                    "config_json": json.dumps(config, ensure_ascii=False),
+                    "summary": _strategy_summary(config),
+                    "created_at": now,
+                }
+            ],
+            ["id"],
+        )
+
+
+def _config_hash(config: Dict[str, Any]) -> str:
+    canonical = json.dumps(normalize_strategy_config(config), ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
+
+
+def _strategy_summary(config: Dict[str, Any]) -> str:
+    normalized = normalize_strategy_config(config)
+    mode_labels = {
+        "breakout_or_pullback": "突破或回踩",
+        "breakout": "右侧突破",
+        "pullback": "左侧回踩",
+        "platform_breakout": "平台突破",
+        "platform_setup": "平台临界",
+    }
+    mode = mode_labels.get(normalized.get("signal_mode"), "自定义")
+    if normalized.get("signal_mode") == "platform_setup":
+        return (
+            f"{mode} · {normalized['platform_setup_lookback_days']}日 · "
+            f"距上沿≤{_pct(normalized['platform_setup_max_distance_to_high'])}"
+        )
+    if normalized.get("signal_mode") == "platform_breakout":
+        return (
+            f"{mode} · {normalized['platform_lookback_days']}日 · "
+            f"区间≤{_pct(normalized['platform_max_range'])} · "
+            f"量比≥{normalized['platform_breakout_volume_ratio']:g}x"
+        )
+    return (
+        f"{mode} · 成交额≥{_money(normalized['min_amount'])} · "
+        f"RPS{normalized['rps_window']} · MA{normalized['ma_short_window']}/{normalized['ma_long_window']}"
+    )
+
+
+def _pct(value: Any) -> str:
+    try:
+        text = f"{float(value) * 100:.2f}".rstrip("0").rstrip(".")
+        return f"{text}%"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _money(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    if abs(number) >= 100_000_000:
+        return f"{number / 100_000_000:g}亿"
+    if abs(number) >= 10_000:
+        return f"{number / 10_000:g}万"
+    return f"{number:g}"

@@ -7,7 +7,7 @@ from backend.app.db import Database
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG, SYSTEM_PRESETS
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 MIGRATIONS = [
@@ -121,6 +121,19 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE strategy_presets ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS strategy_versions (
+        id TEXT PRIMARY KEY,
+        preset_id TEXT,
+        strategy_name TEXT,
+        version_number INTEGER,
+        config_hash TEXT,
+        config_json TEXT,
+        summary TEXT,
+        created_at TIMESTAMP,
+        UNIQUE (preset_id, version_number)
+    )
     """,
     """
     CREATE TABLE IF NOT EXISTS task_runs (
@@ -335,6 +348,8 @@ MIGRATIONS = [
         source_label TEXT,
         source_ref TEXT,
         source_summary TEXT,
+        note TEXT,
+        review_status TEXT,
         name TEXT,
         status TEXT,
         created_at TIMESTAMP,
@@ -343,6 +358,12 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE watchlist_batches ADD COLUMN IF NOT EXISTS source_summary TEXT
+    """,
+    """
+    ALTER TABLE watchlist_batches ADD COLUMN IF NOT EXISTS note TEXT
+    """,
+    """
+    ALTER TABLE watchlist_batches ADD COLUMN IF NOT EXISTS review_status TEXT
     """,
     """
     CREATE TABLE IF NOT EXISTS watchlist_items (

@@ -1,4 +1,4 @@
-import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, IntradayRadarConfig, IntradayRadarResult, StrategyConfig, StrategyPreset, WatchlistResult } from './types';
+import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, IntradayRadarConfig, IntradayRadarResult, IntradayTimeline, RuntimeHealth, StrategyConfig, StrategyPreset, StrategyVersion, WatchlistResult } from './types';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -34,11 +34,16 @@ export const api = {
   startIntradaySnapshot: (payload: Record<string, unknown> = {}) =>
     request('/api/tasks/intraday-snapshot', { method: 'POST', body: JSON.stringify(payload) }),
   intradayLatest: () => request<IntradayRadarResult>('/api/intraday?limit=300'),
+  intradayTimeline: (code: string, tradeDate?: string | null) =>
+    request<IntradayTimeline>(`/api/intraday/timeline/${encodeURIComponent(code)}${tradeDate ? `?trade_date=${encodeURIComponent(tradeDate)}` : ''}`),
+  runtimeHealth: () => request<RuntimeHealth>('/api/runtime/health'),
   watchlist: () => request<WatchlistResult>('/api/watchlist'),
   addToWatchlist: (payload: Record<string, unknown>) =>
     request('/api/watchlist/items', { method: 'POST', body: JSON.stringify(payload) }),
   deleteWatchlistBatch: (id: string) =>
     request(`/api/watchlist/batches/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  updateWatchlistBatch: (id: string, payload: Record<string, unknown>) =>
+    request(`/api/watchlist/batches/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   deleteWatchlistItem: (batchId: string, code: string) =>
     request(`/api/watchlist/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(code)}`, { method: 'DELETE' }),
   updateWatchlistItem: (batchId: string, code: string, payload: Record<string, unknown>) =>
@@ -55,6 +60,8 @@ export const api = {
   backtestResult: (id: string) => request<BacktestResult>(`/api/backtests/${id}?limit=500`),
   saveStrategy: (payload: Record<string, unknown>) =>
     request<{ preset: StrategyPreset }>('/api/strategies', { method: 'POST', body: JSON.stringify(payload) }),
+  strategyVersions: (id: string) =>
+    request<{ rows: StrategyVersion[] }>(`/api/strategies/${encodeURIComponent(id)}/versions`),
   duplicateStrategy: (id: string) =>
     request<{ preset: StrategyPreset }>(`/api/strategies/${id}/duplicate`, { method: 'POST' }),
   deleteStrategy: (id: string) =>

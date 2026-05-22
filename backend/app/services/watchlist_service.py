@@ -12,6 +12,7 @@ from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
 
 
 REVIEW_STATUSES = {"观察中", "已验证", "已放弃", "已错过"}
+BATCH_REVIEW_STATUSES = {"观察中", "有效", "一般", "误报", "已归档"}
 
 
 class WatchlistService:
@@ -26,10 +27,10 @@ class WatchlistService:
         source_ref = str(payload.get("source_ref") or "")
         source_summary = str(payload.get("source_summary") or "")
         batch_id = _batch_id(batch_date, source_type, source_label, source_ref)
+        existing_batch = self.db.query("SELECT * FROM watchlist_batches WHERE id = ?", [batch_id])
+        existing_batch_row = existing_batch[0] if existing_batch else {}
         if not source_summary:
-            source_summary = str(
-                self.db.scalar("SELECT source_summary FROM watchlist_batches WHERE id = ?", [batch_id]) or ""
-            )
+            source_summary = str(existing_batch_row.get("source_summary") or "")
         now = datetime.utcnow()
 
         self.db.upsert(
@@ -42,9 +43,11 @@ class WatchlistService:
                     "source_label": source_label,
                     "source_ref": source_ref,
                     "source_summary": source_summary,
+                    "note": existing_batch_row.get("note") or payload.get("note") or "",
+                    "review_status": _batch_review_status(existing_batch_row.get("review_status") or payload.get("review_status")),
                     "name": payload.get("name") or f"{source_label} · {_format_date(batch_date)}",
                     "status": "active",
-                    "created_at": now,
+                    "created_at": existing_batch_row.get("created_at") or now,
                     "updated_at": now,
                 }
             ],
@@ -121,6 +124,8 @@ class WatchlistService:
                 for item in items_by_batch.get(batch["id"], [])
             ]
             enriched = dict(batch)
+            enriched["note"] = enriched.get("note") or ""
+            enriched["review_status"] = _batch_review_status(enriched.get("review_status"))
             enriched["items"] = batch_items
             enriched["item_count"] = len(batch_items)
             enriched.update(_batch_metrics(batch_items))
@@ -137,6 +142,28 @@ class WatchlistService:
             [batch_id, code],
             write=True,
         )
+
+    def update_batch(self, batch_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        existing = self.db.query(
+            "SELECT * FROM watchlist_batches WHERE id = ? LIMIT 1",
+            [batch_id],
+        )
+        if not existing:
+            return {"ok": False, "batch": None}
+        note = str(payload.get("note") if payload.get("note") is not None else existing[0].get("note") or "")
+        review_status = _batch_review_status(payload.get("review_status") or existing[0].get("review_status"))
+        now = datetime.utcnow()
+        self.db.execute(
+            """
+            UPDATE watchlist_batches
+            SET note = ?, review_status = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            [note, review_status, now, batch_id],
+            write=True,
+        )
+        batch = self.db.query("SELECT * FROM watchlist_batches WHERE id = ? LIMIT 1", [batch_id])
+        return {"ok": bool(batch), "batch": batch[0] if batch else None}
 
     def update_item(self, batch_id: str, code: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         existing = self.db.query(
@@ -288,6 +315,8 @@ def _empty_performance(item: Dict[str, Any]) -> Dict[str, Any]:
 
 def _batch_metrics(items: List[Dict[str, Any]]) -> Dict[str, Any]:
     values = _numeric_values(items, "return_latest")
+    best_item = _extreme_item(items, reverse=True)
+    worst_item = _extreme_item(items, reverse=False)
     return {
         "avg_return_latest": sum(values) / len(values) if values else None,
         "avg_return_1d": _avg(items, "return_1d"),
@@ -305,6 +334,8 @@ def _batch_metrics(items: List[Dict[str, Any]]) -> Dict[str, Any]:
         "hit_5pct_rate": _rate(items, "max_return", 0.05),
         "hit_8pct_rate": _rate(items, "max_return", 0.08),
         "worst_drawdown": min(_numeric_values(items, "max_drawdown")) if _numeric_values(items, "max_drawdown") else None,
+        "best_item": best_item,
+        "worst_item": worst_item,
     }
 
 
@@ -325,6 +356,24 @@ def _avg(items: List[Dict[str, Any]], key: str) -> Optional[float]:
 def _rate(items: List[Dict[str, Any]], key: str, threshold: float) -> Optional[float]:
     values = _numeric_values(items, key)
     return sum(1 for value in values if value >= threshold) / len(values) if values else None
+
+
+def _extreme_item(items: List[Dict[str, Any]], reverse: bool) -> Optional[Dict[str, Any]]:
+    ranked = [
+        item for item in items
+        if safe_float(item.get("return_latest")) is not None
+    ]
+    if not ranked:
+        return None
+    item = sorted(ranked, key=lambda row: safe_float(row.get("return_latest")) or 0, reverse=reverse)[0]
+    return {
+        "code": item.get("code"),
+        "name": item.get("name"),
+        "return_latest": item.get("return_latest"),
+        "return_5d": item.get("return_5d"),
+        "max_return": item.get("max_return"),
+        "max_drawdown": item.get("max_drawdown"),
+    }
 
 
 def _batch_id(batch_date: date, source_type: str, source_label: str, source_ref: str) -> str:
@@ -358,6 +407,11 @@ def _first_number(row: Dict[str, Any], keys: List[str]) -> Optional[float]:
 def _review_status(value: Any) -> str:
     status = str(value or "观察中")
     return status if status in REVIEW_STATUSES else "观察中"
+
+
+def _batch_review_status(value: Any) -> str:
+    status = str(value or "观察中")
+    return status if status in BATCH_REVIEW_STATUSES else "观察中"
 
 
 def _return_at(rows: List[Dict[str, Any]], entry_price: float, day: int) -> Optional[float]:

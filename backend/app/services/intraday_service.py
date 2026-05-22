@@ -241,6 +241,73 @@ class IntradayRadarService:
             "score_rows": score_rows,
         }
 
+    def timeline(self, code: str, trade_date: Optional[str | date] = None, limit: int = 50) -> Dict[str, Any]:
+        target_date = _date_value(trade_date) or self.db.scalar(
+            """
+            SELECT MAX(trade_date)
+            FROM intraday_snapshots
+            WHERE code = ?
+            """,
+            [code],
+        )
+        if not target_date:
+            return {"code": code, "name": code, "trade_date": None, "rows": []}
+        snapshots = self.db.query(
+            """
+            SELECT *
+            FROM intraday_snapshots
+            WHERE code = ?
+              AND trade_date = ?
+            ORDER BY sample_at
+            LIMIT ?
+            """,
+            [code, target_date, max(1, min(limit, 200))],
+        )
+        rankings = self.db.query(
+            """
+            SELECT *
+            FROM intraday_radar_rankings
+            WHERE code = ?
+              AND trade_date = ?
+            ORDER BY sample_at, radar_mode
+            """,
+            [code, target_date],
+        )
+        decoded_rankings = _decode_candidate_rows(rankings)
+        ranking_by_sample: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for row in decoded_rankings:
+            ranking_by_sample.setdefault(_sample_text(row.get("sample_at")), {})[row["radar_mode"]] = row
+        rows: List[Dict[str, Any]] = []
+        for snapshot in snapshots:
+            sample_key = _sample_text(snapshot.get("sample_at"))
+            strict = ranking_by_sample.get(sample_key, {}).get(RADAR_MODE_STRICT)
+            score = ranking_by_sample.get(sample_key, {}).get(RADAR_MODE_SCORE)
+            chosen = strict or score or {}
+            metrics = chosen.get("metrics") or {}
+            rows.append(
+                {
+                    "sample_at": snapshot.get("sample_at"),
+                    "trade_date": snapshot.get("trade_date"),
+                    "latest_price": safe_float(snapshot.get("latest_price")),
+                    "pct_chg": safe_float(snapshot.get("pct_chg")),
+                    "amount": safe_float(snapshot.get("amount")),
+                    "volume": safe_float(snapshot.get("volume")),
+                    "strict_status": strict.get("status") if strict else None,
+                    "strict_score": strict.get("radar_score") if strict else None,
+                    "score_status": score.get("status") if score else None,
+                    "score_score": score.get("radar_score") if score else None,
+                    "distance_to_upper": chosen.get("distance_to_upper"),
+                    "breakout_clearance": chosen.get("breakout_clearance"),
+                    "amount_ratio": chosen.get("amount_ratio"),
+                    "amount_delta": chosen.get("amount_delta"),
+                    "platform_upper": metrics.get("platform_upper"),
+                    "platform_range": metrics.get("platform_range"),
+                    "reasons": chosen.get("reasons") or [],
+                }
+            )
+        name = snapshots[-1].get("name") if snapshots else code
+        return {"code": code, "name": name or code, "trade_date": target_date, "rows": rows}
+
     def _ranking_rows(self, sample_at: Any, radar_mode: str, limit: int) -> List[Dict[str, Any]]:
         rows = self.db.query(
             """
