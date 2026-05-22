@@ -131,6 +131,8 @@ class DataService:
             return None
         row = rows[0]
         row["summary"] = json.loads(row.pop("summary_json") or "{}")
+        row.pop("payload_json", None)
+        row.pop("queue_order", None)
         return row
 
     def latest_analysis_run(self) -> Optional[Dict[str, Any]]:

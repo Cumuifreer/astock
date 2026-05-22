@@ -7,7 +7,7 @@ from backend.app.db import Database
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG, SYSTEM_PRESETS
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 MIGRATIONS = [
@@ -133,12 +133,20 @@ MIGRATIONS = [
         skipped INTEGER,
         warning TEXT,
         summary_json TEXT,
+        payload_json TEXT,
+        queue_order BIGINT,
         cancel_requested BOOLEAN DEFAULT FALSE,
         started_at TIMESTAMP,
         updated_at TIMESTAMP,
         finished_at TIMESTAMP,
         error_message TEXT
     )
+    """,
+    """
+    ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS payload_json TEXT
+    """,
+    """
+    ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS queue_order BIGINT
     """,
     """
     CREATE TABLE IF NOT EXISTS analysis_runs (

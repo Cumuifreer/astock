@@ -180,6 +180,10 @@ button:disabled {
   background: var(--teal);
 }
 
+.dot.queued i {
+  background: var(--amber);
+}
+
 .dot.completed_full i,
 .dot.completed_partial i {
   background: var(--lime);
@@ -369,6 +373,11 @@ h1 {
 .status-badge.running {
   color: var(--teal);
   border-color: rgba(59, 240, 193, 0.36);
+}
+
+.status-badge.queued {
+  color: var(--amber);
+  border-color: rgba(255, 189, 90, 0.34);
 }
 
 .status-badge.completed_full,

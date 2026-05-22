@@ -1,4 +1,4 @@
-export type TaskStatus = 'running' | 'completed_full' | 'completed_partial' | 'failed' | 'skipped';
+export type TaskStatus = 'queued' | 'running' | 'completed_full' | 'completed_partial' | 'failed' | 'skipped';
 
 export interface TaskRun {
   id: string;

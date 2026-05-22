@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +16,7 @@ from backend.app.db import Database
 from backend.app.services.data_service import DataService
 from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.market_utils import safe_float
+from backend.app.services.strategy_service import normalize_strategy_config
 from backend.app.sources.adata_source import ADataSource
 from backend.app.sources.akshare_source import AkShareSource
 from backend.app.sources.baostock_source import BaostockSource
@@ -31,9 +33,13 @@ class TaskBusy(RuntimeError):
 class UpdateService:
     def __init__(self, db: Database):
         self.db = db
-        self.executor = ThreadPoolExecutor(max_workers=2)
+        self.executor = ThreadPoolExecutor(max_workers=1)
         self.data_service = DataService(db)
         self.intraday_service = IntradayRadarService(db)
+        self.analysis_runner: Any = None
+        self.backtest_runner: Any = None
+        self._queue_lock = threading.Lock()
+        self._queue_worker_active = False
         self.public_guard = SourceGuard(
             db,
             min_delay=settings.public_source_min_delay,
@@ -45,77 +51,132 @@ class UpdateService:
             max_delay=settings.baostock_max_delay,
         )
 
-    def start_update(self, options: Optional[Dict[str, Any]] = None) -> str:
-        running = self.db.scalar(
-            "SELECT COUNT(*) FROM task_runs WHERE kind = 'update' AND status = 'running'"
+    def configure_runners(self, analysis_runner: Any = None, backtest_runner: Any = None) -> None:
+        if analysis_runner is not None:
+            self.analysis_runner = analysis_runner
+        if backtest_runner is not None:
+            self.backtest_runner = backtest_runner
+
+    def recover_interrupted_tasks(self) -> None:
+        now = datetime.utcnow()
+        self.db.execute(
+            """
+            UPDATE task_runs
+            SET status = 'failed',
+                stage = '服务重启后中止',
+                warning = '服务重启后中止',
+                error_message = '服务重启后中止',
+                finished_at = ?,
+                updated_at = ?
+            WHERE status = 'running'
+            """,
+            [now, now],
+            write=True,
         )
-        if running:
-            raise TaskBusy("已有数据更新正在运行。")
+
+    def kick_queue(self) -> None:
+        self._ensure_queue_worker()
+
+    def start_update(self, options: Optional[Dict[str, Any]] = None) -> str:
         task_id = f"update-{uuid.uuid4().hex[:12]}"
-        self._write_task(
+        self._enqueue_task(
             task_id,
             kind="update",
-            status="running",
             stage="准备更新",
             source=None,
-            current_stock=None,
-            total=0,
-            processed=0,
-            success=0,
-            failed=0,
-            skipped=0,
-            warning=None,
             summary={},
-            error_message=None,
-            started_at=datetime.utcnow(),
+            payload=options or {},
         )
-        self.executor.submit(self._run_update, task_id, options or {})
         return task_id
 
     def start_analysis(self, config: Dict[str, Any], analysis_runner: Any) -> str:
-        running = self.db.scalar(
-            "SELECT COUNT(*) FROM task_runs WHERE kind = 'analyze' AND status = 'running'"
-        )
-        if running:
-            raise TaskBusy("已有分析正在运行。")
+        self.analysis_runner = analysis_runner
+        frozen_config = json.loads(json.dumps(config, ensure_ascii=False))
         task_id = f"analyze-{uuid.uuid4().hex[:12]}"
-        self._write_task(
+        self._enqueue_task(
             task_id,
             kind="analyze",
-            status="running",
             stage="准备分析",
             source="本地仓库",
-            current_stock=None,
-            total=0,
-            processed=0,
-            success=0,
-            failed=0,
-            skipped=0,
-            warning=None,
             summary={},
-            error_message=None,
-            started_at=datetime.utcnow(),
+            payload={"config": frozen_config},
         )
-        self.executor.submit(self._run_analysis, task_id, config, analysis_runner)
         return task_id
 
-    def start_intraday_sample(self, options: Optional[Dict[str, Any]] = None) -> str:
-        running = self.db.scalar(
-            """
-            SELECT COUNT(*)
-            FROM task_runs
-            WHERE status = 'running'
-        """
+    def start_backtest(self, payload: Dict[str, Any], backtest_runner: Any) -> tuple[str, str]:
+        self.backtest_runner = backtest_runner
+        task_id = f"backtest-{uuid.uuid4().hex[:12]}"
+        run_id = f"backtest-{uuid.uuid4().hex[:12]}"
+        now = datetime.utcnow()
+        frozen_payload = json.loads(json.dumps(payload or {}, ensure_ascii=False))
+        frozen_payload["config"] = normalize_strategy_config(frozen_payload.get("config") or {})
+        frozen_payload["run_id"] = run_id
+        self._enqueue_task(
+            task_id,
+            kind="backtest",
+            stage="准备回测",
+            source="本地仓库",
+            summary={"backtest_run_id": run_id},
+            payload=frozen_payload,
+            started_at=now,
         )
-        if running:
-            raise TaskBusy("已有后台任务正在运行。")
+        self.db.upsert(
+            "backtest_runs",
+            [
+                {
+                    "id": run_id,
+                    "status": "queued",
+                    "started_at": now,
+                    "finished_at": None,
+                    "config_json": json.dumps(frozen_payload["config"], ensure_ascii=False),
+                    "summary_json": "{}",
+                    "error_message": None,
+                }
+            ],
+            ["id"],
+        )
+        return task_id, run_id
+
+    def start_intraday_sample(self, options: Optional[Dict[str, Any]] = None) -> str:
+        existing = self.db.scalar(
+            """
+            SELECT id
+            FROM task_runs
+            WHERE kind = 'intraday'
+              AND status IN ('queued', 'running')
+            ORDER BY started_at
+            LIMIT 1
+            """
+        )
+        if existing:
+            return str(existing)
         task_id = f"intraday-{uuid.uuid4().hex[:12]}"
-        self._write_task(
+        self._enqueue_task(
             task_id,
             kind="intraday",
-            status="running",
             stage="准备盘中采样",
             source="AkShare 新浪",
+            summary={},
+            payload=options or {},
+        )
+        return task_id
+
+    def _enqueue_task(
+        self,
+        task_id: str,
+        kind: str,
+        stage: str,
+        source: Optional[str],
+        summary: Optional[Dict[str, Any]] = None,
+        payload: Optional[Dict[str, Any]] = None,
+        started_at: Optional[datetime] = None,
+    ) -> None:
+        self._write_task(
+            task_id,
+            kind=kind,
+            status="queued",
+            stage=stage,
+            source=source,
             current_stock=None,
             total=0,
             processed=0,
@@ -123,12 +184,96 @@ class UpdateService:
             failed=0,
             skipped=0,
             warning=None,
-            summary={},
+            summary=summary or {},
+            payload=payload or {},
             error_message=None,
-            started_at=datetime.utcnow(),
+            started_at=started_at or datetime.utcnow(),
         )
-        self.executor.submit(self._run_intraday_sample, task_id, options or {})
-        return task_id
+        self._ensure_queue_worker()
+
+    def _ensure_queue_worker(self) -> None:
+        with self._queue_lock:
+            if self._queue_worker_active:
+                return
+            self._queue_worker_active = True
+        try:
+            self.executor.submit(self._drain_queue)
+        except Exception:
+            with self._queue_lock:
+                self._queue_worker_active = False
+            raise
+
+    def _drain_queue(self) -> None:
+        try:
+            while True:
+                task = self._next_queued_task()
+                if not task:
+                    return
+                task_id = task["id"]
+                payload = json.loads(task.get("payload_json") or "{}")
+                self._patch_task(task_id, status="running", warning=None, error_message=None)
+                try:
+                    self._dispatch_queued_task(task, payload)
+                except Exception as exc:
+                    self._patch_task(
+                        task_id,
+                        status="failed",
+                        stage="任务失败",
+                        failed=1,
+                        warning=str(exc),
+                        error_message=str(exc),
+                        finished_at=datetime.utcnow(),
+                    )
+                self._complete_if_still_running(task_id)
+        finally:
+            with self._queue_lock:
+                self._queue_worker_active = False
+            if self.db.scalar("SELECT COUNT(*) FROM task_runs WHERE status = 'queued'"):
+                self._ensure_queue_worker()
+
+    def _next_queued_task(self) -> Optional[Dict[str, Any]]:
+        rows = self.db.query(
+            """
+            SELECT *
+            FROM task_runs
+            WHERE status = 'queued'
+            ORDER BY queue_order NULLS LAST, started_at, id
+            LIMIT 1
+            """
+        )
+        return rows[0] if rows else None
+
+    def _dispatch_queued_task(self, task: Dict[str, Any], payload: Dict[str, Any]) -> None:
+        kind = task.get("kind")
+        task_id = task["id"]
+        if kind == "update":
+            self._run_update(task_id, payload)
+            return
+        if kind == "analyze":
+            if self.analysis_runner is None:
+                raise RuntimeError("分析服务尚未就绪。")
+            self._run_analysis(task_id, payload.get("config") or {}, self.analysis_runner)
+            return
+        if kind == "intraday":
+            self._run_intraday_sample(task_id, payload)
+            return
+        if kind == "backtest":
+            if self.backtest_runner is None:
+                raise RuntimeError("回测服务尚未就绪。")
+            self.backtest_runner.run(payload, run_id=payload.get("run_id"), task_id=task_id)
+            return
+        raise RuntimeError(f"未知任务类型：{kind}")
+
+    def _complete_if_still_running(self, task_id: str) -> None:
+        status = self.db.scalar("SELECT status FROM task_runs WHERE id = ?", [task_id])
+        if status != "running":
+            return
+        self._patch_task(
+            task_id,
+            status="completed_full",
+            stage="任务完成",
+            finished_at=datetime.utcnow(),
+        )
 
     def probe_sources(self, options: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         options = options or {}
@@ -820,6 +965,8 @@ class UpdateService:
             "skipped": values.get("skipped", 0),
             "warning": values.get("warning"),
             "summary_json": json.dumps(values.get("summary") or {}, ensure_ascii=False),
+            "payload_json": json.dumps(values.get("payload") or {}, ensure_ascii=False),
+            "queue_order": values.get("queue_order") or (time.time_ns() if values.get("status") == "queued" else None),
             "cancel_requested": False,
             "started_at": values.get("started_at") or now,
             "updated_at": now,

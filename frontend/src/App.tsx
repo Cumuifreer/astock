@@ -131,10 +131,10 @@ function App() {
     void load();
   }, []);
 
-  const updateRunning = bootstrap?.update_status?.status === 'running';
-  const analyzeRunning = bootstrap?.analyze_status?.status === 'running';
-  const backtestRunning = bootstrap?.backtest_status?.status === 'running';
-  const intradayRunning = bootstrap?.intraday_status?.status === 'running';
+  const updateRunning = isTaskActive(bootstrap?.update_status);
+  const analyzeRunning = isTaskActive(bootstrap?.analyze_status);
+  const backtestRunning = isTaskActive(bootstrap?.backtest_status);
+  const intradayRunning = isTaskActive(bootstrap?.intraday_status);
 
   useEffect(() => {
     if (!updateRunning && !analyzeRunning && !backtestRunning && !intradayRunning) return;
@@ -1029,7 +1029,7 @@ function BacktestPage({
   const [runs, setRuns] = useState<BacktestRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [report, setReport] = useState<BacktestResult>(result);
-  const running = task?.status === 'running';
+  const running = isTaskActive(task);
   const selectedPreset = presets.find((preset) => preset.id === selectedBacktestStrategyId);
   const runStrategy = selectedBacktestStrategyId === 'current' || !selectedPreset ? strategy : selectedPreset.config;
   const runStrategyName = selectedBacktestStrategyId === 'current' || !selectedPreset ? '当前编辑策略' : selectedPreset.name;
@@ -1267,7 +1267,7 @@ function IntradayRadarPage({
   saveConfig: (config: IntradayRadarConfig) => Promise<void>;
 }) {
   const [config, setConfig] = useState<IntradayRadarConfig>(result.config);
-  const running = task?.status === 'running';
+  const running = isTaskActive(task);
   const candidateCount = Number(result.summary?.candidate_count || result.rows.length || 0);
 
   useEffect(() => {
@@ -1306,7 +1306,7 @@ function IntradayRadarPage({
         <MetricCard label="最近采样" value={formatChinaLocalDateTime(result.sample_at)} sub="盘中快照时间" icon={<Activity size={18} />} />
         <MetricCard label="样本股票" value={formatInt(result.sample_count)} sub="本次快照覆盖" icon={<Database size={18} />} />
         <MetricCard label="观察" value={formatInt(candidateCount)} sub="雷达候选" icon={<Gauge size={18} />} />
-        <MetricCard label="状态" value={task?.status === 'running' ? '运行中' : '待命'} sub={task?.stage || '等待采样'} icon={<ShieldAlert size={18} />} />
+        <MetricCard label="状态" value={task?.status === 'queued' ? '排队中' : task?.status === 'running' ? '运行中' : '待命'} sub={task?.stage || '等待采样'} icon={<ShieldAlert size={18} />} />
       </section>
 
       <section className="panel radar-config-panel">
@@ -1500,6 +1500,7 @@ function StatusBoard({
 function TaskDetail({ task }: { task: TaskRun | null }) {
   if (!task) return <EmptyState text="暂无记录。" />;
   const visual = taskProgressVisual(task);
+  const queued = task.status === 'queued';
   const analyzeRunning = task.kind === 'analyze' && task.status === 'running';
   return (
     <div className="task-detail">
@@ -1510,7 +1511,15 @@ function TaskDetail({ task }: { task: TaskRun | null }) {
       <Progress value={visual.value} indeterminate={visual.indeterminate} />
       <div className="task-stats">
         <span>来源 <b>{task.source || '本地缓存'}</b></span>
-        {analyzeRunning ? (
+        {queued ? (
+          <>
+            <span>当前 <b>等待前序任务</b></span>
+            <span>进度 <b>排队中</b></span>
+            <span>成功 <b>{formatInt(task.success)}</b></span>
+            <span>失败 <b>{formatInt(task.failed)}</b></span>
+            <span>跳过 <b>{formatInt(task.skipped)}</b></span>
+          </>
+        ) : analyzeRunning ? (
           <>
             <span>当前阶段 <b>{task.stage || '准备分析'}</b></span>
             <span>方式 <b>批量计算</b></span>
@@ -1669,7 +1678,7 @@ function TaskStrip({ task, fallback }: { task: TaskRun | null; fallback: string 
       <div>
         <span className={`status-badge ${task.status}`}>{statusLabel(task.status)}</span>
         <strong>{task.stage}</strong>
-        <small>{task.kind === 'analyze' && task.status === 'running' ? '阶段推进中' : task.current_stock || task.source || '本地缓存'}</small>
+        <small>{task.status === 'queued' ? '等待前序任务' : task.kind === 'analyze' && task.status === 'running' ? '阶段推进中' : task.current_stock || task.source || '本地缓存'}</small>
       </div>
       <Progress value={visual.value} indeterminate={visual.indeterminate} />
     </div>
@@ -1677,6 +1686,9 @@ function TaskStrip({ task, fallback }: { task: TaskRun | null; fallback: string 
 }
 
 function taskProgressVisual(task: TaskRun) {
+  if (task.status === 'queued') {
+    return { value: 8, indeterminate: false };
+  }
   if (task.kind === 'analyze' && task.status === 'running') {
     return { value: 46, indeterminate: true };
   }
@@ -1701,6 +1713,10 @@ function Progress({ value, indeterminate = false }: { value: number; indetermina
       <i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
     </div>
   );
+}
+
+function isTaskActive(task?: TaskRun | null) {
+  return task?.status === 'queued' || task?.status === 'running';
 }
 
 function MoneyField({
@@ -2014,6 +2030,7 @@ function toneClass(value: number) {
 
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
+    queued: '排队中',
     running: '运行中',
     completed_full: '完整完成',
     completed_partial: '部分完成',

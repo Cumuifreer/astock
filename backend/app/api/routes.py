@@ -24,6 +24,9 @@ analysis_service = AnalysisService(db)
 update_service = UpdateService(db)
 backtest_service = BacktestService(db, analysis_service)
 intraday_service = IntradayRadarService(db)
+update_service.configure_runners(analysis_service, backtest_service)
+update_service.recover_interrupted_tasks()
+update_service.kick_queue()
 
 
 @router.get("/health")
@@ -84,7 +87,7 @@ def start_update(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         task_id = update_service.start_update(payload or {})
     except TaskBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return {"task_id": task_id, "status": "running"}
+    return {"task_id": task_id, "status": "queued"}
 
 
 @router.get("/status/update")
@@ -98,7 +101,7 @@ def start_intraday_snapshot(payload: Optional[Dict[str, Any]] = None) -> Dict[st
         task_id = update_service.start_intraday_sample(payload or {})
     except TaskBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return {"task_id": task_id, "status": "running"}
+    return {"task_id": task_id, "status": "queued"}
 
 
 @router.get("/status/intraday")
@@ -138,7 +141,7 @@ def start_analyze(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         task_id = update_service.start_analysis(config, analysis_service)
     except TaskBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return {"task_id": task_id, "status": "running"}
+    return {"task_id": task_id, "status": "queued"}
 
 
 @router.get("/status/analyze")
@@ -155,10 +158,10 @@ def start_backtest(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     config = body.get("config") or strategy_service.default_config()
     body["config"] = config
     try:
-        task_id, run_id = backtest_service.start(body)
+        task_id, run_id = update_service.start_backtest(body, backtest_service)
     except TaskBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return {"task_id": task_id, "run_id": run_id, "status": "running"}
+    return {"task_id": task_id, "run_id": run_id, "status": "queued"}
 
 
 @router.get("/status/backtest")
