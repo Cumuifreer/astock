@@ -27,6 +27,9 @@ class Settings:
     baostock_max_delay: float = float(os.getenv("ASHARE_BAOSTOCK_MAX_DELAY", "0.45"))
     public_source_min_delay: float = float(os.getenv("ASHARE_PUBLIC_SOURCE_MIN_DELAY", "0.8"))
     public_source_max_delay: float = float(os.getenv("ASHARE_PUBLIC_SOURCE_MAX_DELAY", "2.2"))
+    intraday_scheduler_enabled: bool = os.getenv("ASHARE_INTRADAY_SCHEDULER", "1") == "1"
+    intraday_scheduler_poll_seconds: int = int(os.getenv("ASHARE_INTRADAY_SCHEDULER_POLL_SECONDS", "30"))
+    intraday_scheduler_catchup_minutes: int = int(os.getenv("ASHARE_INTRADAY_SCHEDULER_CATCHUP_MINUTES", "8"))
 
 
 settings = Settings()

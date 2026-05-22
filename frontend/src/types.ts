@@ -251,6 +251,7 @@ export interface IntradayRadarCandidate {
   source: string | null;
   reasons: string[];
   metrics: Record<string, unknown>;
+  chart_url: string;
 }
 
 export interface IntradayRadarResult {

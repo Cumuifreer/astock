@@ -161,6 +161,26 @@ class UpdateService:
         )
         return task_id
 
+    def start_scheduled_intraday_sample(self, sample_at: datetime) -> Optional[str]:
+        slot = sample_at.replace(second=0, microsecond=0)
+        task_id = f"intraday-auto-{slot:%Y%m%d-%H%M}"
+        if self.db.scalar("SELECT id FROM task_runs WHERE id = ?", [task_id]):
+            return None
+        schedule_key = slot.strftime("%Y-%m-%d %H:%M")
+        self._enqueue_task(
+            task_id,
+            kind="intraday",
+            stage="准备盘中采样",
+            source="AkShare 新浪",
+            summary={"schedule_key": schedule_key, "scheduled": True},
+            payload={
+                "sample_at": slot.isoformat(timespec="seconds"),
+                "schedule_key": schedule_key,
+                "scheduled": True,
+            },
+        )
+        return task_id
+
     def _enqueue_task(
         self,
         task_id: str,

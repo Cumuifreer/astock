@@ -1405,6 +1405,7 @@ function IntradayRadarTable({
                 <th>本段额</th>
                 <th>量能</th>
                 <th>分数</th>
+                <th>看盘</th>
               </tr>
             </thead>
             <tbody>
@@ -1427,6 +1428,7 @@ function IntradayRadarTable({
                   <td>{formatMoney(row.amount_delta)}</td>
                   <td>{formatRatioX(row.amount_ratio)}</td>
                   <td><strong>{formatPrice(row.radar_score)}</strong></td>
+                  <td><a href={row.chart_url} target="_blank" rel="noreferrer">打开</a></td>
                 </tr>
               ))}
             </tbody>

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from backend.app.db import Database
-from backend.app.services.market_utils import safe_float
+from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
 
 RADAR_MODE_STRICT = "strict"
 RADAR_MODE_SCORE = "score"
@@ -593,6 +593,7 @@ def _decode_candidate_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for row in rows:
         row["reasons"] = json.loads(row.pop("reasons_json") or "[]")
         row["metrics"] = json.loads(row.pop("metrics_json") or "{}")
+        row["chart_url"] = f"https://finance.sina.com.cn/realstock/company/{to_sina_chart_symbol(row['code'])}/nc.shtml"
     return rows
 
 

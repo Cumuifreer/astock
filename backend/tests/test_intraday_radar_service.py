@@ -99,6 +99,7 @@ def test_intraday_radar_scores_latest_snapshot_against_platform(tmp_path):
     row = result["rows"][0]
     assert row["code"] == "000001.SZ"
     assert row["status"] == "刚突破"
+    assert row["chart_url"] == "https://finance.sina.com.cn/realstock/company/sz000001/nc.shtml"
     assert row["metrics"]["platform_upper"] == 10.35
     assert row["breakout_clearance"] > 0
     assert "突破上沿" in " / ".join(row["reasons"])
