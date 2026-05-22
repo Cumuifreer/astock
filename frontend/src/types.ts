@@ -2,7 +2,7 @@ export type TaskStatus = 'running' | 'completed_full' | 'completed_partial' | 'f
 
 export interface TaskRun {
   id: string;
-  kind: 'update' | 'analyze' | 'backtest';
+  kind: 'update' | 'analyze' | 'backtest' | 'intraday';
   status: TaskStatus;
   stage: string | null;
   source: string | null;
@@ -209,6 +209,54 @@ export interface BacktestRunsResponse {
   rows: BacktestRun[];
 }
 
+export interface IntradayRadarConfig {
+  enabled: boolean;
+  platform_lookback_days: number;
+  platform_max_range: number;
+  near_upper_distance: number;
+  breakout_min_clearance: number;
+  breakout_max_clearance: number;
+  max_pct_chg: number;
+  min_amount: number;
+  min_intraday_amount_ratio: number;
+  candidate_limit: number;
+  require_ma_bullish: boolean;
+  require_macd_strong: boolean;
+  include_bj: boolean;
+  exclude_star_board: boolean;
+}
+
+export interface IntradayRadarCandidate {
+  sample_at: string;
+  trade_date: string;
+  rank: number;
+  code: string;
+  name: string;
+  status: string;
+  radar_score: number | null;
+  latest_price: number | null;
+  pct_chg: number | null;
+  amount: number | null;
+  volume: number | null;
+  distance_to_upper: number | null;
+  breakout_clearance: number | null;
+  amount_delta: number | null;
+  volume_delta: number | null;
+  amount_ratio: number | null;
+  price_change: number | null;
+  source: string | null;
+  reasons: string[];
+  metrics: Record<string, unknown>;
+}
+
+export interface IntradayRadarResult {
+  config: IntradayRadarConfig;
+  sample_at: string | null;
+  sample_count: number;
+  summary: Record<string, unknown>;
+  rows: IntradayRadarCandidate[];
+}
+
 export interface Candidate {
   rank: number;
   code: string;
@@ -240,9 +288,11 @@ export interface Bootstrap {
   update_status: TaskRun | null;
   analyze_status: TaskRun | null;
   backtest_status: TaskRun | null;
+  intraday_status: TaskRun | null;
   latest_analysis: AnalysisRun | null;
   latest_backtest: BacktestRun | null;
   backtest_reports?: BacktestRun[];
   candidates: CandidateBundle;
   backtest: BacktestResult;
+  intraday: IntradayRadarResult;
 }

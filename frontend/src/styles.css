@@ -625,6 +625,56 @@ h1 {
   color: var(--muted);
 }
 
+.intraday-page .metric-card {
+  min-height: 118px;
+}
+
+.intraday-console {
+  display: grid;
+  gap: 12px;
+}
+
+.intraday-clockline {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(58px, 1fr));
+  gap: 6px;
+}
+
+.intraday-clockline span {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(59, 240, 193, 0.16);
+  background: rgba(59, 240, 193, 0.035);
+  color: var(--muted);
+  font-size: 12px;
+  font-family: "SFMono-Regular", "Roboto Mono", monospace;
+}
+
+.radar-config-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.radar-config-panel .panel-title {
+  margin-bottom: 0;
+}
+
+.radar-form {
+  align-items: start;
+}
+
+.radar-table {
+  min-width: 1260px;
+}
+
+.radar-signal {
+  color: var(--lime);
+  border-color: rgba(182, 255, 95, 0.34);
+  background: rgba(182, 255, 95, 0.04);
+}
+
 .report-library {
   display: grid;
   gap: 12px;
@@ -1264,6 +1314,7 @@ a {
 
   .report-mode-tabs,
   .report-run-list,
+  .intraday-clockline,
   .report-strip {
     grid-template-columns: 1fr 1fr;
   }
@@ -1311,6 +1362,7 @@ a {
 
   .report-mode-tabs,
   .report-run-list,
+  .intraday-clockline,
   .report-strip {
     grid-template-columns: 1fr;
   }

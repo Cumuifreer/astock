@@ -33,6 +33,9 @@ import type {
   Candidate,
   CandidateBundle,
   Capability,
+  IntradayRadarCandidate,
+  IntradayRadarConfig,
+  IntradayRadarResult,
   AnalysisReportGroup,
   AnalysisReportSummary,
   FunnelStep,
@@ -42,7 +45,7 @@ import type {
 } from './types';
 import './styles.css';
 
-type Tab = 'overview' | 'warehouse' | 'strategy' | 'results' | 'backtest' | 'map' | 'status';
+type Tab = 'overview' | 'warehouse' | 'strategy' | 'results' | 'intraday' | 'backtest' | 'map' | 'status';
 type UpdateMode = 'full' | 'daily_light';
 
 const navItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
@@ -50,6 +53,7 @@ const navItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: 'warehouse', label: '数据仓库', icon: <Database size={17} /> },
   { id: 'strategy', label: '策略', icon: <SlidersHorizontal size={17} /> },
   { id: 'results', label: '分析结果', icon: <BarChart3 size={17} /> },
+  { id: 'intraday', label: '盘中雷达', icon: <Activity size={17} /> },
   { id: 'backtest', label: '回测', icon: <History size={17} /> },
   { id: 'map', label: '数据地图', icon: <Layers3 size={17} /> },
   { id: 'status', label: '运行状态', icon: <Workflow size={17} /> },
@@ -130,12 +134,13 @@ function App() {
   const updateRunning = bootstrap?.update_status?.status === 'running';
   const analyzeRunning = bootstrap?.analyze_status?.status === 'running';
   const backtestRunning = bootstrap?.backtest_status?.status === 'running';
+  const intradayRunning = bootstrap?.intraday_status?.status === 'running';
 
   useEffect(() => {
-    if (!updateRunning && !analyzeRunning && !backtestRunning) return;
+    if (!updateRunning && !analyzeRunning && !backtestRunning && !intradayRunning) return;
     const timer = window.setInterval(() => void load(true), 2200);
     return () => window.clearInterval(timer);
-  }, [updateRunning, analyzeRunning, backtestRunning]);
+  }, [updateRunning, analyzeRunning, backtestRunning, intradayRunning]);
 
   async function startUpdate(force = false, mode: UpdateMode = 'full') {
     try {
@@ -169,6 +174,27 @@ function App() {
       setTab('backtest');
     } catch (err) {
       setError(err instanceof Error ? err.message : '无法启动回测');
+    }
+  }
+
+  async function startIntradaySnapshot() {
+    try {
+      await api.startIntradaySnapshot({});
+      setNotice('盘中采样已开始');
+      await load(true);
+      setTab('intraday');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '无法启动盘中采样');
+    }
+  }
+
+  async function saveIntradayConfig(config: IntradayRadarConfig) {
+    try {
+      await api.saveIntradayConfig(config);
+      setNotice('盘中雷达设置已保存');
+      await load(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '盘中雷达设置保存失败');
     }
   }
 
@@ -256,6 +282,16 @@ function App() {
       );
     }
     if (tab === 'results') return <Results candidates={bootstrap.candidates.rows} funnel={bootstrap.candidates.funnel} zeroReason={bootstrap.candidates.zero_reason} runId={bootstrap.candidates.run_id} />;
+    if (tab === 'intraday') {
+      return (
+        <IntradayRadarPage
+          result={bootstrap.intraday}
+          task={bootstrap.intraday_status}
+          startSample={startIntradaySnapshot}
+          saveConfig={saveIntradayConfig}
+        />
+      );
+    }
     if (tab === 'backtest') {
       return (
         <BacktestPage
@@ -270,7 +306,7 @@ function App() {
     if (tab === 'map') {
       return <DataMap capabilities={bootstrap.capabilities} afterProbe={() => load(true)} />;
     }
-    return <StatusBoard update={bootstrap.update_status} analyze={bootstrap.analyze_status} backtest={bootstrap.backtest_status} latestAnalysis={bootstrap.latest_analysis} />;
+    return <StatusBoard update={bootstrap.update_status} analyze={bootstrap.analyze_status} backtest={bootstrap.backtest_status} intraday={bootstrap.intraday_status} latestAnalysis={bootstrap.latest_analysis} />;
   }, [bootstrap, tab, strategy, strategyName, selectedPresetId]);
 
   return (
@@ -300,6 +336,7 @@ function App() {
           <StatusDot task={bootstrap?.update_status} label="更新" />
           <StatusDot task={bootstrap?.analyze_status} label="分析" />
           <StatusDot task={bootstrap?.backtest_status} label="回测" />
+          <StatusDot task={bootstrap?.intraday_status} label="雷达" />
         </div>
       </aside>
 
@@ -319,6 +356,9 @@ function App() {
             </button>
             <button className="ghost" disabled={updateRunning} onClick={() => startUpdate(false)}>
               更新数据
+            </button>
+            <button className="ghost" disabled={updateRunning || analyzeRunning || backtestRunning || intradayRunning} onClick={startIntradaySnapshot}>
+              雷达采样
             </button>
             <button className="primary lime" disabled={analyzeRunning || !strategy} onClick={() => startAnalyze(strategy)}>
               <Play size={16} />
@@ -1215,6 +1255,150 @@ function BacktestSignals({ signals }: { signals: BacktestSignal[] }) {
   );
 }
 
+function IntradayRadarPage({
+  result,
+  task,
+  startSample,
+  saveConfig,
+}: {
+  result: IntradayRadarResult;
+  task: TaskRun | null;
+  startSample: () => Promise<void>;
+  saveConfig: (config: IntradayRadarConfig) => Promise<void>;
+}) {
+  const [config, setConfig] = useState<IntradayRadarConfig>(result.config);
+  const running = task?.status === 'running';
+  const candidateCount = Number(result.summary?.candidate_count || result.rows.length || 0);
+
+  useEffect(() => {
+    setConfig(result.config);
+  }, [result.config]);
+
+  const update = (key: keyof IntradayRadarConfig, value: unknown) => {
+    setConfig({ ...config, [key]: value });
+  };
+
+  return (
+    <div className="page-stack intraday-page">
+      <section className="panel intraday-console">
+        <div className="table-toolbar">
+          <PanelTitle icon={<Activity size={18} />} title="盘中雷达" />
+          <div className="quick-actions">
+            <button className="ghost" onClick={() => saveConfig(config)}>
+              <Save size={16} />
+              保存设置
+            </button>
+            <button className="primary lime" disabled={running} onClick={startSample}>
+              <Play size={16} />
+              采样一次
+            </button>
+          </div>
+        </div>
+        <div className="intraday-clockline">
+          {['09:35', '10:00', '10:30', '11:00', '11:25', '13:00', '13:30', '14:00', '14:30', '14:55'].map((item) => (
+            <span key={item}>{item}</span>
+          ))}
+        </div>
+        <TaskStrip task={task} fallback="盘中采样尚未启动" />
+      </section>
+
+      <section className="metric-grid">
+        <MetricCard label="最近采样" value={formatChinaLocalDateTime(result.sample_at)} sub="盘中快照时间" icon={<Activity size={18} />} />
+        <MetricCard label="样本股票" value={formatInt(result.sample_count)} sub="本次快照覆盖" icon={<Database size={18} />} />
+        <MetricCard label="观察" value={formatInt(candidateCount)} sub="雷达候选" icon={<Gauge size={18} />} />
+        <MetricCard label="状态" value={task?.status === 'running' ? '运行中' : '待命'} sub={task?.stage || '等待采样'} icon={<ShieldAlert size={18} />} />
+      </section>
+
+      <section className="panel radar-config-panel">
+        <PanelTitle icon={<Settings2 size={18} />} title="雷达设置" />
+        <div className="form-grid radar-form">
+          <NumberField label="平台观察天数" value={config.platform_lookback_days} onChange={(value) => update('platform_lookback_days', value || 20)} description="从最近历史 K 线向前取样，不包含盘中快照。" />
+          <NumberField label="平台最大振幅" value={config.platform_max_range} onChange={(value) => update('platform_max_range', value || 0)} description={`平台高低区间不超过 ${formatPercentRatio(config.platform_max_range)}。`} />
+          <NumberField label="接近上沿距离" value={config.near_upper_distance} onChange={(value) => update('near_upper_distance', value || 0)} description={`未突破时，距离上沿小于 ${formatPercentRatio(config.near_upper_distance)} 会进入观察。`} />
+          <NumberField label="突破上沿下限" value={config.breakout_min_clearance} onChange={(value) => update('breakout_min_clearance', value || 0)} description="0 表示刚越过平台上沿即可触发。" />
+          <NumberField label="突破上沿上限" value={config.breakout_max_clearance} onChange={(value) => update('breakout_max_clearance', value || 0)} description={`超过 ${formatPercentRatio(config.breakout_max_clearance)} 视为买点偏后。`} />
+          <NumberField label="最大当日涨幅" value={config.max_pct_chg} onChange={(value) => update('max_pct_chg', value || 0)} description={`快照涨幅高于 ${formatPercent(config.max_pct_chg)} 会跳过。`} />
+          <MoneyField label="最小成交额" value={config.min_amount} onChange={(value) => update('min_amount', value || 0)} />
+          <NumberField label="盘中额 / 平台均额" value={config.min_intraday_amount_ratio} onChange={(value) => update('min_intraday_amount_ratio', value || 0)} description={`当前成交额至少达到平台日均成交额的 ${formatPercentRatio(config.min_intraday_amount_ratio)}。`} />
+          <NumberField label="观察上限" value={config.candidate_limit} onChange={(value) => update('candidate_limit', value || 80)} />
+          <label className="toggle">
+            <input type="checkbox" checked={config.require_ma_bullish} onChange={(event) => update('require_ma_bullish', event.target.checked)} />
+            <span>要求 MA5/10/20 多头</span>
+          </label>
+          <label className="toggle">
+            <input type="checkbox" checked={config.require_macd_strong} onChange={(event) => update('require_macd_strong', event.target.checked)} />
+            <span>要求 MACD 强势</span>
+          </label>
+          <label className="toggle">
+            <input type="checkbox" checked={config.exclude_star_board} onChange={(event) => update('exclude_star_board', event.target.checked)} />
+            <span>排除科创板</span>
+          </label>
+        </div>
+      </section>
+
+      <IntradayRadarTable rows={result.rows} sampleAt={result.sample_at} />
+    </div>
+  );
+}
+
+function IntradayRadarTable({ rows, sampleAt }: { rows: IntradayRadarCandidate[]; sampleAt: string | null }) {
+  return (
+    <section className="panel radar-table-panel">
+      <div className="table-toolbar">
+        <PanelTitle icon={<BarChart3 size={18} />} title="观察榜" />
+        <span className="pill">{formatChinaLocalDateTime(sampleAt)} · {formatInt(rows.length)} 只</span>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState text="暂无盘中观察信号。" />
+      ) : (
+        <div className="table-wrap">
+          <table className="radar-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>代码</th>
+                <th>名称</th>
+                <th>状态</th>
+                <th>最新价</th>
+                <th>涨幅</th>
+                <th>距上沿</th>
+                <th>突破</th>
+                <th>成交额</th>
+                <th>本段额</th>
+                <th>额比</th>
+                <th>分数</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={`${row.sample_at}-${row.code}`}>
+                  <td>{row.rank}</td>
+                  <td className="mono">{row.code}</td>
+                  <td>
+                    <div className="name-cell">
+                      <strong>{row.name}</strong>
+                      <span>{row.reasons?.slice(0, 2).join(' / ')}</span>
+                    </div>
+                  </td>
+                  <td><span className="signal radar-signal">{row.status}</span></td>
+                  <td>{formatPrice(row.latest_price)}</td>
+                  <td className={toneClass(Number(row.pct_chg || 0))}>{formatPercent(row.pct_chg)}</td>
+                  <td>{formatPercentRatio(row.distance_to_upper)}</td>
+                  <td className={toneClass(Number(row.breakout_clearance || 0))}>{formatPercentRatio(row.breakout_clearance)}</td>
+                  <td>{formatMoney(row.amount)}</td>
+                  <td>{formatMoney(row.amount_delta)}</td>
+                  <td>{formatRatioX(row.amount_ratio)}</td>
+                  <td><strong>{formatPrice(row.radar_score)}</strong></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DataMap({ capabilities, afterProbe }: { capabilities: Capability[]; afterProbe: () => Promise<void> }) {
   const [probing, setProbing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -1278,11 +1462,13 @@ function StatusBoard({
   update,
   analyze,
   backtest,
+  intraday,
   latestAnalysis,
 }: {
   update: TaskRun | null;
   analyze: TaskRun | null;
   backtest: TaskRun | null;
+  intraday: TaskRun | null;
   latestAnalysis: unknown;
 }) {
   return (
@@ -1298,6 +1484,10 @@ function StatusBoard({
       <section className="panel">
         <PanelTitle icon={<History size={18} />} title="策略回测" />
         <TaskDetail task={backtest} />
+      </section>
+      <section className="panel">
+        <PanelTitle icon={<Activity size={18} />} title="盘中雷达" />
+        <TaskDetail task={intraday} />
       </section>
       <section className="panel wide-panel">
         <PanelTitle icon={<BarChart3 size={18} />} title="最近分析" />
@@ -1768,6 +1958,11 @@ function formatMoney(value: unknown) {
   return number.toFixed(0);
 }
 
+function formatRatioX(value: unknown) {
+  const text = formatPrice(value);
+  return text === '-' ? '-' : `${text}x`;
+}
+
 function formatShortDateTime(value: string | null | undefined) {
   if (!value) return '未完成';
   const date = parseBackendUtc(value);
@@ -1780,6 +1975,11 @@ function formatShortDateTime(value: string | null | undefined) {
     minute: '2-digit',
     hour12: false,
   }).format(date).replace(/\//g, '-');
+}
+
+function formatChinaLocalDateTime(value: string | null | undefined) {
+  if (!value) return '-';
+  return value.slice(5, 16).replace('T', ' ');
 }
 
 function formatDate(value: unknown) {

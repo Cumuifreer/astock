@@ -13,6 +13,7 @@ import pandas as pd
 from backend.app.config import settings
 from backend.app.db import Database
 from backend.app.services.data_service import DataService
+from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.market_utils import safe_float
 from backend.app.sources.adata_source import ADataSource
 from backend.app.sources.akshare_source import AkShareSource
@@ -32,6 +33,7 @@ class UpdateService:
         self.db = db
         self.executor = ThreadPoolExecutor(max_workers=2)
         self.data_service = DataService(db)
+        self.intraday_service = IntradayRadarService(db)
         self.public_guard = SourceGuard(
             db,
             min_delay=settings.public_source_min_delay,
@@ -95,6 +97,37 @@ class UpdateService:
             started_at=datetime.utcnow(),
         )
         self.executor.submit(self._run_analysis, task_id, config, analysis_runner)
+        return task_id
+
+    def start_intraday_sample(self, options: Optional[Dict[str, Any]] = None) -> str:
+        running = self.db.scalar(
+            """
+            SELECT COUNT(*)
+            FROM task_runs
+            WHERE status = 'running'
+        """
+        )
+        if running:
+            raise TaskBusy("已有后台任务正在运行。")
+        task_id = f"intraday-{uuid.uuid4().hex[:12]}"
+        self._write_task(
+            task_id,
+            kind="intraday",
+            status="running",
+            stage="准备盘中采样",
+            source="AkShare 新浪",
+            current_stock=None,
+            total=0,
+            processed=0,
+            success=0,
+            failed=0,
+            skipped=0,
+            warning=None,
+            summary={},
+            error_message=None,
+            started_at=datetime.utcnow(),
+        )
+        self.executor.submit(self._run_intraday_sample, task_id, options or {})
         return task_id
 
     def probe_sources(self, options: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
@@ -292,6 +325,107 @@ class UpdateService:
                 warning=str(exc),
                 finished_at=datetime.utcnow(),
             )
+
+    def _run_intraday_sample(self, task_id: str, options: Dict[str, Any]) -> None:
+        include_bj = bool(options.get("include_bj", settings.include_bj))
+        exclude_star = bool(options.get("exclude_star_board", settings.exclude_star_board))
+        sample_at = _parse_sample_at(options.get("sample_at")) or datetime.now(CHINA_TZ).replace(tzinfo=None)
+        trade_date = sample_at.date()
+        warnings: List[str] = []
+        try:
+            self._patch_task(task_id, stage="拉取盘中快照", source="AkShare 新浪")
+            frame = self._fetch_intraday_snapshot_frame(include_bj, exclude_star, warnings)
+            snapshot_count = self.intraday_service.record_snapshots(
+                frame,
+                sample_at=sample_at,
+                trade_date=trade_date,
+            )
+            self._patch_task(
+                task_id,
+                stage="生成盘中雷达",
+                source="本地仓库",
+                total=2,
+                processed=1,
+                success=1 if snapshot_count else 0,
+            )
+            candidate_count = self.intraday_service.run_radar(sample_at=sample_at)
+            self._patch_task(
+                task_id,
+                status="completed_full" if not warnings else "completed_partial",
+                stage="盘中雷达完成",
+                source="本地仓库",
+                total=2,
+                processed=2,
+                success=1,
+                warning=warnings[-1] if warnings else None,
+                summary={
+                    "snapshot_count": snapshot_count,
+                    "candidate_count": candidate_count,
+                    "sample_at": sample_at.isoformat(timespec="seconds"),
+                    "warnings": warnings,
+                },
+                finished_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            self._patch_task(
+                task_id,
+                status="failed",
+                stage="盘中雷达失败",
+                failed=1,
+                error_message=str(exc),
+                warning=str(exc),
+                finished_at=datetime.utcnow(),
+            )
+
+    def _fetch_intraday_snapshot_frame(
+        self,
+        include_bj: bool,
+        exclude_star: bool,
+        warnings: List[str],
+    ) -> pd.DataFrame:
+        ak = AkShareSource()
+        result = self.public_guard.call(
+            "AkShare 新浪",
+            "盘中行情快照",
+            lambda: ak.fetch_sina_snapshot(include_bj=include_bj, exclude_star=exclude_star),
+            ttl_minutes=15,
+            max_attempts=2,
+            timeout_seconds=120,
+        )
+        chosen = result
+        if result.status != "available":
+            warnings.append(f"新浪盘中快照失败：{result.message}")
+            chosen = self.public_guard.call(
+                "AkShare 腾讯",
+                "盘中行情快照",
+                lambda: ak.fetch_tencent_snapshot(include_bj=include_bj, exclude_star=exclude_star),
+                ttl_minutes=15,
+                max_attempts=1,
+                timeout_seconds=120,
+            )
+        if chosen.status != "available":
+            if chosen.message:
+                warnings.append(f"腾讯盘中快照跳过：{chosen.message}")
+            adata = ADataSource()
+            codes = [
+                item["code"].split(".")[0]
+                for item in self.db.query("SELECT code FROM stock_basic ORDER BY code LIMIT 500")
+            ]
+            chosen = self.public_guard.call(
+                "AData",
+                "盘中行情快照",
+                lambda: adata.fetch_snapshot(
+                    include_bj=include_bj,
+                    exclude_star=exclude_star,
+                    code_list=codes,
+                ),
+                ttl_minutes=15,
+                max_attempts=1,
+                timeout_seconds=120,
+            )
+        if chosen.status != "available":
+            raise RuntimeError(chosen.message or "盘中快照不可用。")
+        return chosen.frame
 
     def _update_basics(
         self,
@@ -705,3 +839,15 @@ class UpdateService:
         changes["updated_at"] = datetime.utcnow()
         merged = {**row, **changes}
         self.db.upsert("task_runs", [merged], ["id"])
+
+
+def _parse_sample_at(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).replace(" ", "T")
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is not None:
+        return parsed.astimezone(CHINA_TZ).replace(tzinfo=None)
+    return parsed

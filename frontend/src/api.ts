@@ -1,4 +1,4 @@
-import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, StrategyConfig, StrategyPreset } from './types';
+import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, IntradayRadarConfig, IntradayRadarResult, StrategyConfig, StrategyPreset } from './types';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -31,6 +31,11 @@ export const api = {
     request('/api/tasks/analyze', { method: 'POST', body: JSON.stringify({ config }) }),
   startBacktest: (payload: Record<string, unknown>) =>
     request('/api/tasks/backtest', { method: 'POST', body: JSON.stringify(payload) }),
+  startIntradaySnapshot: (payload: Record<string, unknown> = {}) =>
+    request('/api/tasks/intraday-snapshot', { method: 'POST', body: JSON.stringify(payload) }),
+  intradayLatest: () => request<IntradayRadarResult>('/api/intraday?limit=300'),
+  saveIntradayConfig: (config: IntradayRadarConfig) =>
+    request<{ config: IntradayRadarConfig }>('/api/intraday/config', { method: 'PUT', body: JSON.stringify({ config }) }),
   analysisReports: () => request<AnalysisReportsResponse>('/api/analysis/reports'),
   analysisReport: (id: string) => request<AnalysisReportDetail>(`/api/analysis/reports/${id}?limit=100`),
   backtestRuns: () => request<BacktestRunsResponse>('/api/backtests'),

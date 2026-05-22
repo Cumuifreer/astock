@@ -9,6 +9,7 @@ from backend.app.schema import migrate
 from backend.app.services.analysis_service import AnalysisService
 from backend.app.services.backtest_service import BacktestService
 from backend.app.services.data_service import DataService
+from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.strategy_service import StrategyService
 from backend.app.services.update_service import TaskBusy, UpdateService
 
@@ -22,6 +23,7 @@ strategy_service = StrategyService(db)
 analysis_service = AnalysisService(db)
 update_service = UpdateService(db)
 backtest_service = BacktestService(db, analysis_service)
+intraday_service = IntradayRadarService(db)
 
 
 @router.get("/health")
@@ -43,8 +45,10 @@ def bootstrap() -> Dict[str, Any]:
         "update_status": data_service.latest_task("update"),
         "analyze_status": data_service.latest_task("analyze"),
         "backtest_status": data_service.latest_task("backtest"),
+        "intraday_status": data_service.latest_task("intraday"),
         "latest_analysis": data_service.latest_analysis_run(),
         "latest_backtest": data_service.latest_backtest_run(),
+        "intraday": intraday_service.latest(limit=200),
         "candidates": data_service.candidates(limit=50),
         "backtest": data_service.backtest_result(limit=200),
     }
@@ -86,6 +90,37 @@ def start_update(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 @router.get("/status/update")
 def update_status() -> Dict[str, Any]:
     return {"task": data_service.latest_task("update")}
+
+
+@router.post("/tasks/intraday-snapshot")
+def start_intraday_snapshot(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    try:
+        task_id = update_service.start_intraday_sample(payload or {})
+    except TaskBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"task_id": task_id, "status": "running"}
+
+
+@router.get("/status/intraday")
+def intraday_status() -> Dict[str, Any]:
+    return {"task": data_service.latest_task("intraday"), "intraday": intraday_service.latest(limit=200)}
+
+
+@router.get("/intraday")
+def intraday_latest(
+    limit: int = Query(default=200, ge=1, le=500),
+) -> Dict[str, Any]:
+    return intraday_service.latest(limit=limit)
+
+
+@router.get("/intraday/config")
+def intraday_config() -> Dict[str, Any]:
+    return {"config": intraday_service.get_config()}
+
+
+@router.put("/intraday/config")
+def save_intraday_config(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return {"config": intraday_service.save_config(payload.get("config") or payload)}
 
 
 @router.post("/tasks/analyze")

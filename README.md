@@ -8,6 +8,7 @@ A-Share Signal 是一个私人使用的 A 股技术分析 Web 应用。它只做
 - 数据仓库：DuckDB，默认文件为 `data/ashare_signal.duckdb`，不会提交到 Git。
 - 前端：Vite + React + TypeScript，构建产物由后端托管。
 - 任务：数据更新和分析分开运行；点击后立即返回，前端轮询真实进度。
+- 盘中雷达：可手动或用定时器触发全市场快照采样，采样入库后自动生成独立观察榜，不覆盖正式分析报告。
 
 ## 数据源
 
@@ -25,6 +26,27 @@ A-Share Signal 是一个私人使用的 A 股技术分析 Web 应用。它只做
 - RPS：直接用本地历史收盘价计算 RPS20、RPS60、RPS120。计算方式为近 N 日涨幅在本地股票池中的百分位排名乘以 100。
 - 振幅：直接用本地 K 线计算，`(high - low) / prev_close`。
 - 流通市值：优先使用本地缓存；AkShare 新浪快照提供流通市值字段时写入缓存。缺失时按策略配置跳过或降级，不会导致分析失败。
+
+## 盘中雷达
+
+盘中雷达使用独立配置和独立表，不会覆盖日线快照、候选股票或报告库。它会在每次盘中采样后自动计算观察榜，主要用于发现“接近平台上沿 / 刚突破但未过热 / 盘中成交额放大”的股票。
+
+手动触发一次采样：
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/api/tasks/intraday-snapshot \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+查看状态和最新观察榜：
+
+```bash
+curl -sS http://127.0.0.1:8000/api/status/intraday
+curl -sS http://127.0.0.1:8000/api/intraday
+```
+
+适合的采样时间可以从 09:35、10:00、10:30、11:00、11:25、13:00、13:30、14:00、14:30、14:55 开始。轻量服务器上不建议全市场 5 分钟一次。
 
 ## 本地启动
 
@@ -109,6 +131,7 @@ curl http://127.0.0.1:8000/api/health
 curl http://127.0.0.1:8000/api/bootstrap
 curl http://127.0.0.1:8000/api/status/update
 curl http://127.0.0.1:8000/api/status/analyze
+curl http://127.0.0.1:8000/api/status/intraday
 curl http://127.0.0.1:8000/api/candidates
 curl http://127.0.0.1:8000/api/data/overview
 curl http://127.0.0.1:8000/api/data/capabilities

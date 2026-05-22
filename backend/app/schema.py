@@ -7,7 +7,7 @@ from backend.app.db import Database
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG, SYSTEM_PRESETS
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 MIGRATIONS = [
@@ -236,6 +236,56 @@ MIGRATIONS = [
         hit_stop_5pct_10d BOOLEAN,
         created_at TIMESTAMP,
         PRIMARY KEY (run_id, as_of_date, code)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS intraday_snapshots (
+        code TEXT,
+        trade_date DATE,
+        sample_at TIMESTAMP,
+        name TEXT,
+        latest_price DOUBLE,
+        pct_chg DOUBLE,
+        high DOUBLE,
+        low DOUBLE,
+        volume DOUBLE,
+        amount DOUBLE,
+        source TEXT,
+        created_at TIMESTAMP,
+        PRIMARY KEY (code, sample_at)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS intraday_radar_config (
+        id TEXT PRIMARY KEY,
+        config_json TEXT,
+        updated_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS intraday_radar_candidates (
+        sample_at TIMESTAMP,
+        trade_date DATE,
+        rank INTEGER,
+        code TEXT,
+        name TEXT,
+        status TEXT,
+        radar_score DOUBLE,
+        latest_price DOUBLE,
+        pct_chg DOUBLE,
+        amount DOUBLE,
+        volume DOUBLE,
+        distance_to_upper DOUBLE,
+        breakout_clearance DOUBLE,
+        amount_delta DOUBLE,
+        volume_delta DOUBLE,
+        amount_ratio DOUBLE,
+        price_change DOUBLE,
+        source TEXT,
+        reasons_json TEXT,
+        metrics_json TEXT,
+        created_at TIMESTAMP,
+        PRIMARY KEY (sample_at, code)
     )
     """,
 ]
