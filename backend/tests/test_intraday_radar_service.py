@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 import pandas as pd
+import pytest
 
 from backend.app.db import Database
 from backend.app.schema import migrate
@@ -238,6 +239,97 @@ def test_intraday_radar_uses_previous_snapshot_deltas(tmp_path):
     assert row["metrics"]["amount_delta"] == 8_500_000.0
     assert row["metrics"]["volume_delta"] == 800_000.0
     assert row["metrics"]["price_change"] > 0
+
+
+def test_intraday_radar_queries_previous_snapshots_with_timestamp_param(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+
+    service = IntradayRadarService(db)
+    first = datetime(2026, 5, 21, 9, 35)
+    second = datetime(2026, 5, 21, 14, 30)
+    common = {
+        "code": "000001.SZ",
+        "name": "平安银行",
+        "pct_chg": 3.5,
+        "high": 10.45,
+        "low": 9.9,
+        "source": "AkShare 新浪",
+    }
+    service.record_snapshots(
+        pd.DataFrame([{**common, "latest_price": 10.35, "volume": 1_000_000.0, "amount": 10_000_000.0}]),
+        sample_at=first,
+        trade_date="2026-05-21",
+    )
+    service.record_snapshots(
+        pd.DataFrame([{**common, "latest_price": 10.55, "volume": 1_800_000.0, "amount": 18_500_000.0}]),
+        sample_at=second,
+        trade_date="2026-05-21",
+    )
+    original_query = db.query
+    previous_snapshot_params = []
+
+    def capture_query(sql, params=None):
+        if "sample_at < ?" in sql:
+            previous_snapshot_params.append(params[-1])
+        return original_query(sql, params)
+
+    monkeypatch.setattr(db, "query", capture_query)
+    service.run_radar(sample_at=second, config={"min_amount": 0, "candidate_limit": 10})
+
+    assert previous_snapshot_params
+    assert isinstance(previous_snapshot_params[0], datetime)
+
+
+def test_intraday_radar_normalizes_amount_ratio_by_sample_time(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+
+    service = IntradayRadarService(db)
+    sample_at = datetime(2026, 5, 21, 10, 0)
+    service.record_snapshots(
+        pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "平安银行",
+                    "latest_price": 10.55,
+                    "pct_chg": 4.2,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 300_000.0,
+                    "amount": 3_000_000.0,
+                    "source": "AkShare 新浪",
+                }
+            ]
+        ),
+        sample_at=sample_at,
+        trade_date="2026-05-21",
+    )
+
+    count = service.run_radar(
+        sample_at=sample_at,
+        config={
+            "platform_lookback_days": 20,
+            "platform_max_range": 0.08,
+            "near_upper_distance": 0.03,
+            "breakout_min_clearance": 0.0,
+            "breakout_max_clearance": 0.08,
+            "max_pct_chg": 8.0,
+            "min_amount": 0,
+            "min_intraday_amount_ratio": 1.0,
+            "candidate_limit": 10,
+        },
+    )
+    row = service.latest(limit=10)["rows"][0]
+
+    assert count == 1
+    assert row["amount_ratio"] == pytest.approx(1.48, abs=0.02)
+    assert row["metrics"]["intraday_time_progress"] == pytest.approx(0.2)
 
 
 def test_intraday_task_records_snapshot_and_runs_radar(tmp_path, monkeypatch):

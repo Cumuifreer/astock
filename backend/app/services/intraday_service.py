@@ -23,7 +23,7 @@ DEFAULT_INTRADAY_RADAR_CONFIG: Dict[str, Any] = {
     "breakout_max_clearance": 0.08,
     "max_pct_chg": 8.0,
     "min_amount": 50_000_000,
-    "min_intraday_amount_ratio": 0.15,
+    "min_intraday_amount_ratio": 1.0,
     "platform_min_bullish_ratio": 0.5,
     "platform_bull_amount_advantage": 0.0,
     "max_recent_gain_5d": 0.10,
@@ -33,6 +33,19 @@ DEFAULT_INTRADAY_RADAR_CONFIG: Dict[str, Any] = {
     "include_bj": False,
     "exclude_star_board": False,
 }
+
+INTRADAY_AMOUNT_PROGRESS = [
+    (9 * 60 + 35, 0.08),
+    (10 * 60, 0.20),
+    (10 * 60 + 30, 0.35),
+    (11 * 60, 0.48),
+    (11 * 60 + 25, 0.56),
+    (13 * 60, 0.62),
+    (13 * 60 + 30, 0.72),
+    (14 * 60, 0.82),
+    (14 * 60 + 30, 0.92),
+    (14 * 60 + 55, 1.00),
+]
 
 
 class IntradayRadarService:
@@ -106,7 +119,8 @@ class IntradayRadarService:
         )
         if not target_sample:
             return 0
-        target_sample_text = _sample_text(target_sample)
+        target_sample_time = _sample_value(target_sample)
+        target_sample_text = _sample_text(target_sample_time)
         snapshots = self.db.query(
             """
             SELECT s.*, b.is_st, b.suspended
@@ -119,9 +133,9 @@ class IntradayRadarService:
         )
         if not snapshots:
             return 0
-        trade_date = _date_value(snapshots[0].get("trade_date")) or _sample_value(target_sample).date()
+        trade_date = _date_value(snapshots[0].get("trade_date")) or target_sample_time.date()
         history = self._history_for_snapshot([row["code"] for row in snapshots], trade_date)
-        previous = self._previous_snapshots([row["code"] for row in snapshots], target_sample_text, trade_date)
+        previous = self._previous_snapshots([row["code"] for row in snapshots], target_sample_time, trade_date)
 
         strict_rows = []
         score_rows = []
@@ -304,7 +318,7 @@ class IntradayRadarService:
     def _previous_snapshots(
         self,
         codes: List[str],
-        sample_at: str,
+        sample_at: datetime,
         trade_date: date,
     ) -> Dict[str, Dict[str, Any]]:
         if not codes:
@@ -382,7 +396,13 @@ class IntradayRadarService:
             return None
 
         platform_avg_amount = _avg_number(platform, "amount")
-        amount_ratio = amount / platform_avg_amount if amount and platform_avg_amount and platform_avg_amount > 0 else None
+        intraday_time_progress = _intraday_time_progress(snapshot.get("sample_at"))
+        expected_amount = (
+            platform_avg_amount * intraday_time_progress
+            if platform_avg_amount and platform_avg_amount > 0 and intraday_time_progress > 0
+            else None
+        )
+        amount_ratio = amount / expected_amount if amount and expected_amount and expected_amount > 0 else None
         if strict and config["min_intraday_amount_ratio"] and (
             amount_ratio is None or amount_ratio < config["min_intraday_amount_ratio"]
         ):
@@ -437,7 +457,7 @@ class IntradayRadarService:
         elif radar_mode == RADAR_MODE_SCORE and breakout_clearance > 0:
             reasons.append(f"突破偏高 {breakout_clearance * 100:.2f}%")
         if amount_ratio is not None:
-            reasons.append(f"盘中额/平台均额 {amount_ratio:.2f}x")
+            reasons.append(f"时段量能 {amount_ratio:.2f}x")
         if bullish_ratio is not None:
             reasons.append(f"阳线占比 {bullish_ratio * 100:.0f}%")
         if bull_amount_advantage is not None:
@@ -490,6 +510,8 @@ class IntradayRadarService:
                     "platform_bullish_ratio": _round_optional(bullish_ratio, 6),
                     "platform_bull_amount_advantage": _round_optional(bull_amount_advantage, 6),
                     "recent_gain_5d": _round_optional(recent_gain_5d, 6),
+                    "intraday_time_progress": _round_optional(intraday_time_progress, 6),
+                    "platform_avg_amount": _round_optional(platform_avg_amount, 2),
                     "amount_delta": _round_optional(amount_delta, 2),
                     "volume_delta": _round_optional(volume_delta, 2),
                     "price_change": _round_optional(price_change, 6),
@@ -597,6 +619,27 @@ def _sample_text(value: Any) -> str:
     if sample is None:
         return str(value)
     return sample.isoformat(timespec="seconds")
+
+
+def _intraday_time_progress(value: Any) -> float:
+    sample = _sample_value(value)
+    if sample is None:
+        return 1.0
+    minute = sample.hour * 60 + sample.minute + sample.second / 60
+    first_minute, first_progress = INTRADAY_AMOUNT_PROGRESS[0]
+    if minute <= first_minute:
+        return first_progress
+    for (start_minute, start_progress), (end_minute, end_progress) in zip(
+        INTRADAY_AMOUNT_PROGRESS,
+        INTRADAY_AMOUNT_PROGRESS[1:],
+    ):
+        if minute <= end_minute:
+            span = end_minute - start_minute
+            if span <= 0:
+                return end_progress
+            ratio = (minute - start_minute) / span
+            return start_progress + (end_progress - start_progress) * ratio
+    return INTRADAY_AMOUNT_PROGRESS[-1][1]
 
 
 def _max_number(rows: List[Dict[str, Any]], key: str) -> Optional[float]:

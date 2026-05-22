@@ -1323,7 +1323,7 @@ function IntradayRadarPage({
           <NumberField label="突破上沿上限" value={config.breakout_max_clearance} onChange={(value) => update('breakout_max_clearance', value || 0)} description={`超过 ${formatPercentRatio(config.breakout_max_clearance)} 视为买点偏后。`} />
           <NumberField label="最大当日涨幅" value={config.max_pct_chg} onChange={(value) => update('max_pct_chg', value || 0)} description={`快照涨幅高于 ${formatPercent(config.max_pct_chg)} 会跳过。`} />
           <MoneyField label="最小成交额" value={config.min_amount} onChange={(value) => update('min_amount', value || 0)} />
-          <NumberField label="盘中额 / 平台均额" value={config.min_intraday_amount_ratio} onChange={(value) => update('min_intraday_amount_ratio', value || 0)} description={`当前成交额至少达到平台日均成交额的 ${formatPercentRatio(config.min_intraday_amount_ratio)}。`} />
+          <NumberField label="时段量能强度" value={config.min_intraday_amount_ratio} onChange={(value) => update('min_intraday_amount_ratio', value || 0)} description={`1.0 表示符合当前时间点正常成交进度，当前阈值 ${formatRatioX(config.min_intraday_amount_ratio)}。`} />
           <NumberField label="平台阳线占比" value={config.platform_min_bullish_ratio} onChange={(value) => update('platform_min_bullish_ratio', value || 0)} description={`平台内阳线占比目标 ${formatPercentRatio(config.platform_min_bullish_ratio)}。`} />
           <NumberField label="阳线均额优势" value={config.platform_bull_amount_advantage} onChange={(value) => update('platform_bull_amount_advantage', value || 0)} description={config.platform_bull_amount_advantage ? `阳线日均成交额至少为阴线的 ${formatRatioX(config.platform_bull_amount_advantage)}。` : '0 表示不作为严格门槛。'} />
           <NumberField label="近5日涨幅上限" value={config.max_recent_gain_5d} onChange={(value) => update('max_recent_gain_5d', value || 0)} description={`最近 5 个历史交易日涨幅高于 ${formatPercentRatio(config.max_recent_gain_5d)} 会视为偏后。`} />
@@ -1403,7 +1403,7 @@ function IntradayRadarTable({
                 <th>突破</th>
                 <th>成交额</th>
                 <th>本段额</th>
-                <th>额比</th>
+                <th>量能</th>
                 <th>分数</th>
               </tr>
             </thead>
