@@ -561,6 +561,100 @@ h1 {
   gap: 12px;
 }
 
+.condition-card {
+  grid-column: span 2;
+  min-height: 124px;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(250px, 1.25fr);
+  gap: 12px;
+  align-items: center;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(255, 255, 255, 0.018);
+  padding: 12px;
+  border-radius: 6px;
+}
+
+.condition-card-toggle {
+  align-items: stretch;
+}
+
+.condition-copy {
+  display: grid;
+  gap: 7px;
+  align-content: center;
+  min-width: 0;
+}
+
+.condition-copy strong {
+  font-size: 15px;
+}
+
+.condition-copy span,
+.condition-status {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.condition-mode {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #071012;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.condition-mode button {
+  min-height: 34px;
+  border: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.065);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.condition-mode button:last-child {
+  border-right: 0;
+}
+
+.condition-mode button.active {
+  color: var(--text);
+  background: rgba(59, 240, 193, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(59, 240, 193, 0.28);
+}
+
+.condition-value {
+  display: grid;
+  gap: 7px;
+  grid-column: 2;
+}
+
+.condition-value input {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  background: #071012;
+  color: var(--text);
+  padding: 0 10px;
+  border-radius: 6px;
+  outline: none;
+}
+
+.condition-value small {
+  color: var(--soft);
+  font-size: 12px;
+}
+
+.condition-status {
+  align-self: end;
+  justify-self: start;
+  grid-column: 2;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 7px 9px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
 .backtest-console {
   display: grid;
   gap: 12px;
@@ -608,6 +702,43 @@ h1 {
 
 .backtest-runline small {
   color: var(--muted);
+}
+
+.report-library {
+  display: grid;
+  gap: 12px;
+}
+
+.report-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.report-strip button {
+  min-height: 84px;
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.018);
+  color: var(--soft);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.report-strip button.active {
+  border-color: rgba(59, 240, 193, 0.52);
+  background: rgba(59, 240, 193, 0.09);
+  color: var(--text);
+}
+
+.report-strip span,
+.report-strip small {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .toggle {
@@ -1211,8 +1342,13 @@ a {
   }
 
   .report-mode-tabs,
-  .report-run-list {
+  .report-run-list,
+  .report-strip {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .condition-card {
+    grid-column: 1 / -1;
   }
 
   .diagnostic-summary {
@@ -1243,11 +1379,18 @@ a {
 
   .field.wide,
   .form-section.wide,
+  .condition-card,
+  .condition-value,
+  .condition-status,
   .mode-tabs,
   .analysis-mode-tabs,
   .field-note,
   .wide-panel {
     grid-column: auto;
+  }
+
+  .condition-card {
+    grid-template-columns: 1fr;
   }
 
   .mode-tabs,
@@ -1256,7 +1399,8 @@ a {
   }
 
   .report-mode-tabs,
-  .report-run-list {
+  .report-run-list,
+  .report-strip {
     grid-template-columns: 1fr;
   }
 

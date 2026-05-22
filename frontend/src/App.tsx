@@ -28,6 +28,7 @@ import { api } from './api';
 import type {
   Bootstrap,
   BacktestResult,
+  BacktestRun,
   BacktestSignal,
   Candidate,
   CandidateBundle,
@@ -159,10 +160,10 @@ function App() {
     }
   }
 
-  async function startBacktest(options: Record<string, unknown>) {
-    if (!strategy) return;
+  async function startBacktest(options: Record<string, unknown>, config = strategy) {
+    if (!config) return;
     try {
-      await api.startBacktest({ ...options, config: strategy });
+      await api.startBacktest({ ...options, config });
       setNotice('回测已开始');
       await load(true);
       setTab('backtest');
@@ -261,6 +262,7 @@ function App() {
           result={bootstrap.backtest}
           task={bootstrap.backtest_status}
           strategy={strategy}
+          presets={bootstrap.strategies}
           startBacktest={startBacktest}
         />
       );
@@ -623,26 +625,25 @@ function StrategyPanel(props: {
                 <span>平台区间</span>
               </div>
               <NumberField label="平台观察天数" value={props.strategy.platform_lookback_days} onChange={(value) => update('platform_lookback_days', value)} description="从最新 K 线前一日往前取样，不含最新 K 线。" />
-              <NumberField label="平台区间最大振幅" value={props.strategy.platform_max_range} onChange={(value) => update('platform_max_range', value)} description={`必须项：平台最高到最低不超过 ${formatPercentRatio(props.strategy.platform_max_range)}。`} />
               <SelectField label="平台振幅口径" value={props.strategy.platform_range_basis} onChange={(value) => update('platform_range_basis', value)} options={[['high_low', '最高价 / 最低价'], ['close', '收盘价区间']]} description="最高价/最低价更严格；收盘价区间会忽略盘中长影线。" />
-              <NumberField label="最小阳线占比" value={props.strategy.platform_min_bullish_ratio} onChange={(value) => update('platform_min_bullish_ratio', value)} description={`必须项：平台内红柱占比至少 ${formatPercentRatio(props.strategy.platform_min_bullish_ratio)}。`} />
+              <PlatformConditionNumber title="平台区间最大振幅" description="平台最高到最低的压缩幅度；适合作为平台形态红线。" mode={props.strategy.platform_max_range_mode} value={props.strategy.platform_max_range} onMode={(value) => update('platform_max_range_mode', value)} onValue={(value) => update('platform_max_range', value)} hint={formatPercentRatio(props.strategy.platform_max_range)} />
+              <PlatformConditionNumber title="最小阳线占比" description="平台内红柱占比，衡量平台里主动上攻的天数。" mode={props.strategy.platform_bullish_ratio_mode} value={props.strategy.platform_min_bullish_ratio} onMode={(value) => update('platform_bullish_ratio_mode', value)} onValue={(value) => update('platform_min_bullish_ratio', value)} hint={formatPercentRatio(props.strategy.platform_min_bullish_ratio)} />
               <NumberField label="阳线占比加分线" value={props.strategy.platform_bullish_ratio_score} onChange={(value) => update('platform_bullish_ratio_score', value)} description={`得分项：达到 ${formatPercentRatio(props.strategy.platform_bullish_ratio_score)} 会提高排序。`} />
-              <NumberField label="阳线均量优势" value={props.strategy.platform_bull_volume_advantage} onChange={(value) => update('platform_bull_volume_advantage', value)} description={`必须项：平台红柱均量 / 绿柱均量至少 ${formatPrice(props.strategy.platform_bull_volume_advantage)}x。`} />
+              <PlatformConditionNumber title="阳线均量优势" description="平台红柱均量 / 绿柱均量，衡量上涨日是否更有量。" mode={props.strategy.platform_bull_volume_advantage_mode} value={props.strategy.platform_bull_volume_advantage} onMode={(value) => update('platform_bull_volume_advantage_mode', value)} onValue={(value) => update('platform_bull_volume_advantage', value)} hint={`${formatPrice(props.strategy.platform_bull_volume_advantage)}x`} />
               <NumberField label="阳线量能加分线" value={props.strategy.platform_bull_volume_advantage_score} onChange={(value) => update('platform_bull_volume_advantage_score', value)} description={`得分项：达到 ${formatPrice(props.strategy.platform_bull_volume_advantage_score)}x 会提高排序。`} />
               <div className="form-section wide">
                 <span>突破确认</span>
               </div>
-              <SelectField label="收盘站上平台上沿" value={props.strategy.platform_breakout_clearance_mode} onChange={(value) => update('platform_breakout_clearance_mode', value)} options={conditionModes} description="判断最新收盘价是否有效突破平台上沿。" />
-              <NumberField label="突破上沿最小幅度" value={props.strategy.platform_breakout_clearance} onChange={(value) => update('platform_breakout_clearance', value)} description={`必须项建议：至少 ${formatPercentRatio(props.strategy.platform_breakout_clearance)}，避免只是假突破。`} />
-              <SelectField label="突破上沿最大距离" value={props.strategy.platform_breakout_max_clearance_mode} onChange={(value) => update('platform_breakout_max_clearance_mode', value)} options={conditionModes} description="用于拦截离平台太远、已经错过买点的形态。" />
-              <NumberField label="最大距离数值" value={props.strategy.platform_breakout_max_clearance} onChange={(value) => update('platform_breakout_max_clearance', value)} description={`得分项建议：${formatPercentRatio(props.strategy.platform_breakout_max_clearance)} 内更接近首日买点。`} />
-              <SelectField label="首次突破确认" value={props.strategy.platform_breakout_first_mode} onChange={(value) => update('platform_breakout_first_mode', value)} options={conditionModes} description="前一交易日还没有有效站上平台上沿。" />
-              <NumberField label="突破量比" value={props.strategy.platform_breakout_volume_ratio} onChange={(value) => update('platform_breakout_volume_ratio', value)} description={`必须项：最新成交量 / 平台均量至少 ${formatPrice(props.strategy.platform_breakout_volume_ratio)}x。`} />
-              <NumberField label="突破涨幅下限" value={props.strategy.platform_breakout_pct_chg_min} onChange={(value) => update('platform_breakout_pct_chg_min', value)} description={`必须项：最新 K 线涨幅至少 ${formatPercent(props.strategy.platform_breakout_pct_chg_min)}。`} />
-              <NumberField label="突破实体强度" value={props.strategy.platform_body_strength_min} onChange={(value) => update('platform_body_strength_min', value)} description="红柱实体 / 上下影线总和；越高说明突破越干净。" />
-              <SelectField label="MA5/10/20 多头排列" value={props.strategy.platform_ma_bullish_mode} onChange={(value) => update('platform_ma_bullish_mode', value)} options={conditionModes} description="默认只参与得分；设为必须时才会淘汰股票。" />
-              <SelectField label="均线上升" value={props.strategy.platform_ma_rising_mode} onChange={(value) => update('platform_ma_rising_mode', value)} options={conditionModes} description="MA5、MA10、MA20 同时上行，偏确认强度。" />
-              <SelectField label="MACD 条件" value={props.strategy.platform_macd_filter_mode} onChange={(value) => update('platform_macd_filter_mode', value)} options={conditionModes} description="默认只参与得分，避免错过刚启动的早期形态。" />
+              <PlatformConditionNumber title="突破上沿最小幅度" description="最新收盘价高于平台上沿的比例，避免轻微假突破。" mode={props.strategy.platform_breakout_clearance_mode} value={props.strategy.platform_breakout_clearance} onMode={(value) => update('platform_breakout_clearance_mode', value)} onValue={(value) => update('platform_breakout_clearance', value)} hint={formatPercentRatio(props.strategy.platform_breakout_clearance)} />
+              <PlatformConditionNumber title="突破上沿最大距离" description="防止离平台太远，超过阈值通常意味着买点已经偏后。" mode={props.strategy.platform_breakout_max_clearance_mode} value={props.strategy.platform_breakout_max_clearance} onMode={(value) => update('platform_breakout_max_clearance_mode', value)} onValue={(value) => update('platform_breakout_max_clearance', value)} hint={formatPercentRatio(props.strategy.platform_breakout_max_clearance)} />
+              <PlatformConditionToggle title="首次突破确认" description="前一交易日还没有有效站上平台上沿。" mode={props.strategy.platform_breakout_first_mode} onMode={(value) => update('platform_breakout_first_mode', value)} />
+              <PlatformConditionNumber title="突破量比" description="最新成交量 / 平台均量，确认突破当天是否明显放量。" mode={props.strategy.platform_breakout_volume_ratio_mode} value={props.strategy.platform_breakout_volume_ratio} onMode={(value) => update('platform_breakout_volume_ratio_mode', value)} onValue={(value) => update('platform_breakout_volume_ratio', value)} hint={`${formatPrice(props.strategy.platform_breakout_volume_ratio)}x`} />
+              <PlatformConditionNumber title="突破涨幅下限" description="最新 K 线当日涨幅，确认突破强度。" mode={props.strategy.platform_breakout_pct_chg_mode} value={props.strategy.platform_breakout_pct_chg_min} onMode={(value) => update('platform_breakout_pct_chg_mode', value)} onValue={(value) => update('platform_breakout_pct_chg_min', value)} hint={formatPercent(props.strategy.platform_breakout_pct_chg_min)} />
+              <PlatformConditionToggle title="突破阳线" description="最新 K 线必须为红柱阳线。" mode={props.strategy.platform_breakout_bullish_mode} onMode={(value) => update('platform_breakout_bullish_mode', value)} />
+              <PlatformConditionNumber title="突破实体强度" description="红柱实体 / 上下影线总和；越高说明突破越干净。" mode={props.strategy.platform_body_strength_mode} value={props.strategy.platform_body_strength_min} onMode={(value) => update('platform_body_strength_mode', value)} onValue={(value) => update('platform_body_strength_min', value)} hint={formatPrice(props.strategy.platform_body_strength_min)} />
+              <PlatformConditionToggle title="MA5/10/20 多头排列" description="MA5 > MA10 > MA20，偏趋势确认。" mode={props.strategy.platform_ma_bullish_mode} onMode={(value) => update('platform_ma_bullish_mode', value)} />
+              <PlatformConditionToggle title="均线上升" description="MA5、MA10、MA20 同时上行，偏强度确认。" mode={props.strategy.platform_ma_rising_mode} onMode={(value) => update('platform_ma_rising_mode', value)} />
+              <PlatformConditionToggle title="MACD 条件" description="默认更适合参与排序，避免错过刚启动的早期形态。" mode={props.strategy.platform_macd_filter_mode} onMode={(value) => update('platform_macd_filter_mode', value)} />
               <SelectField label="MACD 位置" value={props.strategy.macd_position} onChange={(value) => update('macd_position', value)} options={[['dif_above_zero', 'DIF 在 0 轴上方'], ['dif_dea_above_zero', 'DIF 与 DEA 均在 0 轴上方']]} description="用于判断 MACD 条件是否满足。" />
             </>
           )}
@@ -955,30 +956,70 @@ function BacktestPage({
   result,
   task,
   strategy,
+  presets,
   startBacktest,
 }: {
   result: BacktestResult;
   task: TaskRun | null;
   strategy: StrategyConfig;
-  startBacktest: (options: Record<string, unknown>) => Promise<void>;
+  presets: StrategyPreset[];
+  startBacktest: (options: Record<string, unknown>, config?: StrategyConfig) => Promise<void>;
 }) {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [step, setStep] = useState('5');
   const [candidateLimit, setCandidateLimit] = useState(String(strategy.candidate_limit || 50));
+  const [strategySource, setStrategySource] = useState<'current' | 'preset'>('current');
+  const [selectedPresetId, setSelectedPresetId] = useState(presets.find((preset) => preset.is_default)?.id || presets[0]?.id || '');
+  const [floatPolicy, setFloatPolicy] = useState('allow_missing');
+  const [runs, setRuns] = useState<BacktestRun[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [report, setReport] = useState<BacktestResult>(result);
   const running = task?.status === 'running';
+  const selectedPreset = presets.find((preset) => preset.id === selectedPresetId);
+  const runStrategy = strategySource === 'preset' && selectedPreset ? selectedPreset.config : strategy;
+  const runStrategyName = strategySource === 'preset' && selectedPreset ? selectedPreset.name : '当前编辑策略';
 
   useEffect(() => {
-    setCandidateLimit(String(strategy.candidate_limit || 50));
-  }, [strategy.candidate_limit]);
+    setCandidateLimit(String(runStrategy.candidate_limit || 50));
+  }, [runStrategy.candidate_limit]);
+
+  useEffect(() => {
+    if (!selectedPresetId && presets[0]) setSelectedPresetId(presets[0].id);
+  }, [presets, selectedPresetId]);
+
+  useEffect(() => {
+    async function loadRuns() {
+      try {
+        const response = await api.backtestRuns();
+        setRuns(response.rows || []);
+      } catch {
+        setRuns([]);
+      }
+    }
+    void loadRuns();
+  }, [result?.run?.id, task?.status]);
+
+  useEffect(() => {
+    if (!selectedRunId || selectedRunId === result?.run?.id) {
+      setReport(result);
+    }
+  }, [result, selectedRunId]);
+
+  async function selectRun(runId: string) {
+    setSelectedRunId(runId);
+    setReport(await api.backtestResult(runId));
+  }
 
   async function runBacktest() {
+    setSelectedRunId(null);
     await startBacktest({
       start_date: startDate || undefined,
       end_date: endDate || undefined,
       step: Number(step) || 5,
-      candidate_limit: Number(candidateLimit) || strategy.candidate_limit || 50,
-    });
+      candidate_limit: Number(candidateLimit) || runStrategy.candidate_limit || 50,
+      float_market_value_policy: floatPolicy,
+    }, runStrategy);
   }
 
   return (
@@ -992,6 +1033,23 @@ function BacktestPage({
           </button>
         </div>
         <div className="backtest-form">
+          <label className="field">
+            <span>策略来源</span>
+            <select value={strategySource} onChange={(event) => setStrategySource(event.target.value as 'current' | 'preset')}>
+              <option value="current">当前编辑策略</option>
+              <option value="preset">选择已保存策略</option>
+            </select>
+            <small className="field-hint">启动回测时会保存当时的策略快照</small>
+          </label>
+          <label className="field">
+            <span>回测策略</span>
+            <select value={selectedPresetId} disabled={strategySource === 'current'} onChange={(event) => setSelectedPresetId(event.target.value)}>
+              {presets.map((preset) => (
+                <option key={preset.id} value={preset.id}>{preset.name}</option>
+              ))}
+            </select>
+            <small className="field-hint">{runStrategyName}</small>
+          </label>
           <label className="field">
             <span>开始日期</span>
             <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
@@ -1012,17 +1070,61 @@ function BacktestPage({
             <input inputMode="numeric" value={candidateLimit} onChange={(event) => setCandidateLimit(event.target.value)} />
             <small className="field-hint">沿用当前策略，可临时覆盖</small>
           </label>
+          <label className="field">
+            <span>历史市值缺失</span>
+            <select value={floatPolicy} onChange={(event) => setFloatPolicy(event.target.value)}>
+              <option value="allow_missing">回测中保留缺失股票</option>
+              <option value="latest_proxy">使用最新市值近似</option>
+              <option value="strategy">按策略处理</option>
+            </select>
+            <small className="field-hint">只影响回测，不改变本地数据</small>
+          </label>
         </div>
         <div className="backtest-mode-readout">
-          <span>{analysisModeLabel(strategy.analysis_mode)}</span>
-          <b>{strategySummary(strategy)}</b>
+          <span>{analysisModeLabel(runStrategy.analysis_mode)}</span>
+          <b>{strategySummary(runStrategy)}</b>
         </div>
         <TaskStrip task={task} fallback="回测尚未启动" />
       </section>
 
-      <BacktestSummary result={result} />
-      <BacktestSignals signals={result?.signals || []} />
+      <BacktestReportLibrary runs={runs} selectedRunId={report?.run?.id || null} onSelect={selectRun} />
+      <BacktestSummary result={report} />
+      <BacktestSignals signals={report?.signals || []} />
     </div>
+  );
+}
+
+function BacktestReportLibrary({
+  runs,
+  selectedRunId,
+  onSelect,
+}: {
+  runs: BacktestRun[];
+  selectedRunId: string | null;
+  onSelect: (id: string) => Promise<void>;
+}) {
+  if (!runs.length) return null;
+  return (
+    <section className="panel report-library">
+      <div className="table-toolbar">
+        <PanelTitle icon={<Layers3 size={18} />} title="回测报告库" />
+        <span className="pill">最近 {formatInt(runs.length)} 份</span>
+      </div>
+      <div className="report-strip">
+        {runs.map((run) => (
+          <button
+            key={run.id}
+            className={run.id === selectedRunId ? 'active' : ''}
+            onClick={() => void onSelect(run.id)}
+            type="button"
+          >
+            <strong>{formatShortDateTime(run.finished_at || run.started_at)}</strong>
+            <span>{analysisModeLabel(run.config?.analysis_mode)} · {signalModeLabel(run.config?.signal_mode)}</span>
+            <small>{formatDate(run.summary?.start_date)} → {formatDate(run.summary?.end_date)} · {formatInt(run.summary?.signal_count)} 条</small>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1517,6 +1619,105 @@ function SelectField({
   );
 }
 
+function PlatformConditionNumber({
+  title,
+  description,
+  mode,
+  value,
+  onMode,
+  onValue,
+  hint,
+}: {
+  title: string;
+  description: string;
+  mode: string;
+  value: number | null;
+  onMode: (value: string) => void;
+  onValue: (value: number) => void;
+  hint: string;
+}) {
+  const [draft, setDraft] = useState(value == null ? '' : String(value));
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(value == null ? '' : String(value));
+    }
+  }, [value, editing]);
+
+  function changeValue(raw: string) {
+    setDraft(raw);
+    if (raw.trim() === '') return;
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) {
+      onValue(parsed);
+    }
+  }
+
+  return (
+    <div className="condition-card">
+      <div className="condition-copy">
+        <strong>{title}</strong>
+        <span>{description}</span>
+      </div>
+      <ConditionModePicker value={mode} onChange={onMode} />
+      <label className="condition-value">
+        <input
+          inputMode="decimal"
+          value={editing ? draft : value ?? ''}
+          onBlur={() => {
+            setEditing(false);
+            setDraft(value == null ? '' : String(value));
+          }}
+          onChange={(event) => changeValue(event.target.value)}
+          onFocus={() => setEditing(true)}
+        />
+        <small>{mode === 'off' ? '当前不参与' : hint}</small>
+      </label>
+    </div>
+  );
+}
+
+function PlatformConditionToggle({
+  title,
+  description,
+  mode,
+  onMode,
+}: {
+  title: string;
+  description: string;
+  mode: string;
+  onMode: (value: string) => void;
+}) {
+  return (
+    <div className="condition-card condition-card-toggle">
+      <div className="condition-copy">
+        <strong>{title}</strong>
+        <span>{description}</span>
+      </div>
+      <ConditionModePicker value={mode} onChange={onMode} />
+      <small className="condition-status">{mode === 'must' ? '命中后才进入排序' : mode === 'score' ? '不淘汰，只影响排名' : '暂不参与本策略'}</small>
+    </div>
+  );
+}
+
+function ConditionModePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="condition-mode" role="group" aria-label="条件模式">
+      {conditionModes.map(([modeValue, label]) => (
+        <button
+          key={modeValue}
+          className={modeValue === value ? 'active' : ''}
+          onClick={() => onChange(modeValue)}
+          type="button"
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Banner({ tone, text, onClose }: { tone: 'danger' | 'good'; text: string; onClose: () => void }) {
   return (
     <div className={`banner ${tone}`}>
@@ -1605,24 +1806,28 @@ function formatInt(value: unknown) {
 }
 
 function formatPrice(value: unknown) {
+  if (value === null || value === undefined || value === '') return '-';
   const number = Number(value);
   if (!Number.isFinite(number)) return '-';
   return number.toFixed(2);
 }
 
 function formatPercent(value: unknown) {
+  if (value === null || value === undefined || value === '') return '-';
   const number = Number(value);
   if (!Number.isFinite(number)) return '-';
   return `${number.toFixed(2)}%`;
 }
 
 function formatPercentRatio(value: unknown) {
+  if (value === null || value === undefined || value === '') return '-';
   const number = Number(value);
   if (!Number.isFinite(number)) return '-';
   return `${(number * 100).toFixed(2)}%`;
 }
 
 function formatMoney(value: unknown) {
+  if (value === null || value === undefined || value === '') return '-';
   const number = Number(value);
   if (!Number.isFinite(number)) return '-';
   if (Math.abs(number) >= 100_000_000) return `${(number / 100_000_000).toFixed(2)} 亿`;
@@ -1662,6 +1867,10 @@ function flattenReports(groups: AnalysisReportGroup[]) {
 
 function analysisModeLabel(mode: string | undefined) {
   return analysisModes.find((item) => item.id === (mode || 'strict'))?.label || '严格筛选';
+}
+
+function signalModeLabel(mode: string | undefined) {
+  return signalModes.find((item) => item.id === mode)?.label || '策略';
 }
 
 function toneClass(value: number) {

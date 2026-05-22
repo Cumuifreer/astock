@@ -183,6 +183,153 @@ def test_data_service_returns_latest_backtest_result(tmp_path):
     assert result["signals"][0]["metrics"]["rps20"] == 80
 
 
+def test_data_service_can_return_saved_backtest_report_by_run_id(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "backtest_runs",
+        [
+            {
+                "id": "backtest-old",
+                "status": "completed_full",
+                "started_at": "2026-01-01T10:00:00",
+                "finished_at": "2026-01-01T10:05:00",
+                "config_json": '{"signal_mode": "platform_setup"}',
+                "summary_json": '{"signal_count": 1}',
+                "error_message": None,
+            },
+            {
+                "id": "backtest-new",
+                "status": "completed_full",
+                "started_at": "2026-01-02T10:00:00",
+                "finished_at": "2026-01-02T10:05:00",
+                "config_json": '{"signal_mode": "platform_breakout"}',
+                "summary_json": '{"signal_count": 1}',
+                "error_message": None,
+            },
+        ],
+        ["id"],
+    )
+    for run_id, signal_date, code in [
+        ("backtest-old", "2026-01-01", "000001.SZ"),
+        ("backtest-new", "2026-01-02", "000002.SZ"),
+    ]:
+        db.upsert(
+            "backtest_signals",
+            [
+                {
+                    "run_id": run_id,
+                    "as_of_date": signal_date,
+                    "rank": 1,
+                    "code": code,
+                    "name": code,
+                    "latest_price": 10.0,
+                    "signal_type": "平台突破观察",
+                    "signal_score": 80.0,
+                    "reasons_json": "[]",
+                    "metrics_json": "{}",
+                    "entry_date": None,
+                    "entry_price": None,
+                    "return_5d": None,
+                    "return_10d": None,
+                    "return_20d": None,
+                    "max_return_10d": None,
+                    "max_drawdown_10d": None,
+                    "hit_5pct_10d": None,
+                    "hit_8pct_10d": None,
+                    "hit_stop_5pct_10d": None,
+                    "created_at": "2026-01-01T10:05:00",
+                }
+            ],
+            ["run_id", "as_of_date", "code"],
+        )
+
+    service = DataService(db)
+    runs = service.backtest_runs()
+    old = service.backtest_result("backtest-old")
+
+    assert [run["id"] for run in runs[:2]] == ["backtest-new", "backtest-old"]
+    assert old["run"]["id"] == "backtest-old"
+    assert old["signals"][0]["code"] == "000001.SZ"
+
+
+def test_backtest_latest_float_market_value_policy_uses_newer_proxy_for_history(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "stock_basic",
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "exchange": "SZ",
+                "list_date": "1991-04-03",
+                "source": "test",
+                "is_st": False,
+                "suspended": False,
+                "updated_at": "2026-01-01T00:00:00",
+            }
+        ],
+        ["code"],
+    )
+    start = date(2026, 1, 1)
+    db.upsert(
+        "historical_bars",
+        [
+            {
+                "code": "000001.SZ",
+                "date": start + timedelta(days=index),
+                "open": 10 + index * 0.1,
+                "high": 10.3 + index * 0.1,
+                "low": 9.8 + index * 0.1,
+                "close": 10.1 + index * 0.1,
+                "prev_close": 10 + index * 0.1,
+                "volume": 1000 + index,
+                "amount": 200_000_000,
+                "turn": 2.0,
+                "pct_chg": 1.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Baostock",
+                "updated_at": "2026-01-01T00:00:00",
+            }
+            for index in range(35)
+        ],
+        ["code", "date"],
+    )
+    db.upsert(
+        "float_market_values",
+        [
+            {
+                "code": "000001.SZ",
+                "date": "2026-02-20",
+                "float_shares": 1_000_000_000,
+                "float_market_value": 12_000_000_000,
+                "source": "latest proxy",
+                "updated_at": "2026-02-20T00:00:00",
+            }
+        ],
+        ["code", "date"],
+    )
+
+    base_strategy = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "ma_short_window": 5,
+        "ma_long_window": 10,
+        "min_float_market_value": 10_000_000_000,
+        "max_float_market_value": 20_000_000_000,
+        "missing_float_market_value_policy": "skip",
+    }
+    regular = AnalysisService(db)._build_analysis_frame(base_strategy, as_of_date=date(2026, 1, 20))
+    proxied = AnalysisService(db)._build_analysis_frame(
+        {**base_strategy, "_backtest_float_market_value_policy": "latest_proxy"},
+        as_of_date=date(2026, 1, 20),
+    )
+
+    assert regular.iloc[0]["float_market_value"] is None
+    assert proxied.iloc[0]["float_market_value"] == 12_000_000_000
+
+
 def test_backtest_service_runs_one_historical_date(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

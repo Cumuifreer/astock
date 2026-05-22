@@ -642,6 +642,183 @@ def test_platform_breakout_score_thresholds_reward_cleaner_platform_quality():
     assert zero_reason is None
 
 
+def test_platform_breakout_condition_modes_filter_only_must_conditions_in_score_mode():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平台合格量能一般",
+                "latest_price": 10.5,
+                "amount": 600_000_000,
+                "float_market_value": 40_000_000_000,
+                "ma_short": 10.1,
+                "ma_long": 9.9,
+                "rps20": 80.0,
+                "turnover_rate": 5.0,
+                "pct_chg": 6.0,
+                "amplitude": 0.1,
+                "volume_ratio": 1.0,
+                "ma_distance": 0.04,
+                "platform_ready": True,
+                "platform_range": 0.1,
+                "platform_bullish_ratio": 0.52,
+                "platform_bull_volume_ratio": 1.12,
+                "platform_breakout_volume_ratio": 2.2,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 6.0,
+                "platform_breakout_clearance": 0.05,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": True,
+                "platform_body_strength": 1.25,
+                "platform_ma_bullish": False,
+                "platform_ma_rising": False,
+                "macd_dif": -0.02,
+                "macd_dea": -0.04,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "000002.SZ",
+                "name": "平台过宽",
+                "latest_price": 10.4,
+                "amount": 600_000_000,
+                "float_market_value": 40_000_000_000,
+                "ma_short": 10.1,
+                "ma_long": 9.9,
+                "rps20": 80.0,
+                "turnover_rate": 5.0,
+                "pct_chg": 6.0,
+                "amplitude": 0.1,
+                "volume_ratio": 1.0,
+                "ma_distance": 0.04,
+                "platform_ready": True,
+                "platform_range": 0.22,
+                "platform_bullish_ratio": 0.7,
+                "platform_bull_volume_ratio": 1.4,
+                "platform_breakout_volume_ratio": 4.0,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 6.0,
+                "platform_breakout_clearance": 0.05,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": True,
+                "platform_body_strength": 1.25,
+                "platform_ma_bullish": True,
+                "platform_ma_rising": True,
+                "macd_dif": 0.2,
+                "macd_dea": 0.12,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "analysis_mode": "score",
+        "signal_mode": "platform_breakout",
+        "trend_filter": "none",
+        "min_rps20": None,
+        "max_turnover": None,
+        "volume_ratio_min": None,
+        "max_amplitude": None,
+        "max_ma_distance": None,
+        "platform_max_range": 0.12,
+        "platform_max_range_mode": "must",
+        "platform_breakout_volume_ratio": 3.0,
+        "platform_breakout_volume_ratio_mode": "score",
+        "candidate_limit": 10,
+    }
+
+    candidates, funnel, zero_reason = apply_strategy_filters(rows, config)
+
+    assert [row["code"] for row in candidates] == ["000001.SZ"]
+    assert any(step["step_name"] == "平台振幅" for step in funnel)
+    assert "突破量比" not in [step["step_name"] for step in funnel]
+    assert zero_reason is None
+
+
+def test_platform_breakout_off_conditions_do_not_score():
+    base_row = {
+        "name": "测试",
+        "latest_price": 10.5,
+        "amount": 600_000_000,
+        "float_market_value": 40_000_000_000,
+        "ma_short": 10.1,
+        "ma_long": 9.9,
+        "rps20": 80.0,
+        "turnover_rate": 5.0,
+        "pct_chg": 6.0,
+        "amplitude": 0.1,
+        "volume_ratio": 1.0,
+        "ma_distance": 0.04,
+        "platform_ready": True,
+        "platform_breakout_above_upper": True,
+        "platform_first_breakout": True,
+        "platform_breakout_bullish": True,
+        "platform_ma_bullish": True,
+        "platform_ma_rising": True,
+        "macd_dif": 0.2,
+        "macd_dea": 0.12,
+        "is_st": False,
+        "suspended": False,
+    }
+    rows = pd.DataFrame(
+        [
+            {
+                **base_row,
+                "code": "000001.SZ",
+                "platform_range": 0.24,
+                "platform_bullish_ratio": 0.3,
+                "platform_bull_volume_ratio": 0.6,
+                "platform_breakout_volume_ratio": 0.8,
+                "platform_breakout_pct_chg": 1.2,
+                "platform_breakout_clearance": 0.25,
+                "platform_body_strength": 0.2,
+            },
+            {
+                **base_row,
+                "code": "000002.SZ",
+                "platform_range": 0.06,
+                "platform_bullish_ratio": 0.7,
+                "platform_bull_volume_ratio": 1.5,
+                "platform_breakout_volume_ratio": 4.0,
+                "platform_breakout_pct_chg": 8.0,
+                "platform_breakout_clearance": 0.04,
+                "platform_body_strength": 1.6,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "analysis_mode": "score",
+        "signal_mode": "platform_breakout",
+        "trend_filter": "none",
+        "min_rps20": None,
+        "max_turnover": None,
+        "volume_ratio_min": None,
+        "max_amplitude": None,
+        "max_ma_distance": None,
+        "platform_max_range_mode": "off",
+        "platform_breakout_clearance_mode": "off",
+        "platform_breakout_max_clearance_mode": "off",
+        "platform_breakout_first_mode": "off",
+        "platform_bullish_ratio_mode": "off",
+        "platform_bull_volume_advantage_mode": "off",
+        "platform_breakout_volume_ratio_mode": "off",
+        "platform_breakout_pct_chg_mode": "off",
+        "platform_breakout_bullish_mode": "off",
+        "platform_body_strength_mode": "off",
+        "platform_ma_bullish_mode": "off",
+        "platform_ma_rising_mode": "off",
+        "platform_macd_filter_mode": "off",
+        "candidate_limit": 10,
+    }
+
+    candidates, _, _ = apply_strategy_filters(rows, config)
+
+    assert len(candidates) == 2
+    assert candidates[0]["signal_score"] == candidates[1]["signal_score"]
+
+
 def test_platform_setup_filters_keep_near_upper_not_overheated_candidates():
     rows = pd.DataFrame(
         [
@@ -883,6 +1060,16 @@ def test_score_analysis_mode_ranks_near_matches_without_signal_hard_filters():
         "platform_min_bullish_ratio": 0.55,
         "platform_breakout_volume_ratio": 2.5,
         "platform_breakout_pct_chg_min": 5,
+        "platform_max_range_mode": "score",
+        "platform_breakout_clearance_mode": "off",
+        "platform_breakout_max_clearance_mode": "score",
+        "platform_breakout_first_mode": "off",
+        "platform_bullish_ratio_mode": "score",
+        "platform_bull_volume_advantage_mode": "score",
+        "platform_breakout_volume_ratio_mode": "score",
+        "platform_breakout_pct_chg_mode": "score",
+        "platform_breakout_bullish_mode": "score",
+        "platform_body_strength_mode": "score",
         "candidate_limit": 10,
     }
 

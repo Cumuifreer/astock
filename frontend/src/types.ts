@@ -57,6 +57,7 @@ export interface StrategyConfig {
   pullback_tolerance: number;
   platform_lookback_days: number;
   platform_max_range: number;
+  platform_max_range_mode: string;
   platform_range_basis: string;
   platform_breakout_require_close_above: boolean;
   platform_breakout_clearance_mode: string;
@@ -65,12 +66,18 @@ export interface StrategyConfig {
   platform_breakout_max_clearance_mode: string;
   platform_breakout_first_mode: string;
   platform_min_bullish_ratio: number;
+  platform_bullish_ratio_mode: string;
   platform_bullish_ratio_score: number;
   platform_bull_volume_advantage: number;
+  platform_bull_volume_advantage_mode: string;
   platform_bull_volume_advantage_score: number;
   platform_breakout_volume_ratio: number;
+  platform_breakout_volume_ratio_mode: string;
   platform_breakout_pct_chg_min: number;
+  platform_breakout_pct_chg_mode: string;
+  platform_breakout_bullish_mode: string;
   platform_body_strength_min: number;
+  platform_body_strength_mode: string;
   platform_ma_trend_enabled: boolean;
   platform_ma_bullish_mode: string;
   platform_ma_rising_required: boolean;
@@ -198,6 +205,10 @@ export interface BacktestResult {
   signals: BacktestSignal[];
 }
 
+export interface BacktestRunsResponse {
+  rows: BacktestRun[];
+}
+
 export interface Candidate {
   rank: number;
   code: string;
@@ -231,6 +242,7 @@ export interface Bootstrap {
   backtest_status: TaskRun | null;
   latest_analysis: AnalysisRun | null;
   latest_backtest: BacktestRun | null;
+  backtest_reports?: BacktestRun[];
   candidates: CandidateBundle;
   backtest: BacktestResult;
 }

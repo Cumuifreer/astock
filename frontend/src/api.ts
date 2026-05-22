@@ -1,4 +1,4 @@
-import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, Bootstrap, StrategyConfig, StrategyPreset } from './types';
+import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, StrategyConfig, StrategyPreset } from './types';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -33,7 +33,9 @@ export const api = {
     request('/api/tasks/backtest', { method: 'POST', body: JSON.stringify(payload) }),
   analysisReports: () => request<AnalysisReportsResponse>('/api/analysis/reports'),
   analysisReport: (id: string) => request<AnalysisReportDetail>(`/api/analysis/reports/${id}?limit=100`),
+  backtestRuns: () => request<BacktestRunsResponse>('/api/backtests'),
   backtestLatest: () => request<BacktestResult>('/api/backtests/latest?limit=500'),
+  backtestResult: (id: string) => request<BacktestResult>(`/api/backtests/${id}?limit=500`),
   saveStrategy: (payload: Record<string, unknown>) =>
     request<{ preset: StrategyPreset }>('/api/strategies', { method: 'POST', body: JSON.stringify(payload) }),
   duplicateStrategy: (id: string) =>

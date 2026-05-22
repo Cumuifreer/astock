@@ -254,6 +254,13 @@ class BacktestService:
             raise RuntimeError("当前日期范围内没有可回测交易日。")
 
         strategy = normalize_strategy_config(payload.get("config") or {})
+        float_policy = str(payload.get("float_market_value_policy") or "strategy")
+        if float_policy not in {"strategy", "allow_missing", "latest_proxy"}:
+            float_policy = "strategy"
+        if float_policy == "allow_missing":
+            strategy["missing_float_market_value_policy"] = "allow"
+        if float_policy == "latest_proxy":
+            strategy["_backtest_float_market_value_policy"] = "latest_proxy"
         candidate_limit = safe_float(payload.get("candidate_limit"))
         if candidate_limit is not None and candidate_limit > 0:
             strategy["candidate_limit"] = int(max(1, min(candidate_limit, 500)))
@@ -265,6 +272,7 @@ class BacktestService:
             "sampled_dates": len(sampled_dates),
             "label_horizon": LABEL_HORIZON,
             "entry_rule": "next_open",
+            "float_market_value_policy": float_policy,
         }
         return strategy, sampled_dates, options
 

@@ -22,6 +22,7 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "pullback_tolerance": 0.035,
     "platform_lookback_days": 20,
     "platform_max_range": 0.12,
+    "platform_max_range_mode": "must",
     "platform_range_basis": "high_low",
     "platform_breakout_require_close_above": True,
     "platform_breakout_clearance_mode": "must",
@@ -30,12 +31,18 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "platform_breakout_max_clearance_mode": "score",
     "platform_breakout_first_mode": "must",
     "platform_min_bullish_ratio": 0.5,
+    "platform_bullish_ratio_mode": "must",
     "platform_bullish_ratio_score": 0.6,
     "platform_bull_volume_advantage": 1.1,
+    "platform_bull_volume_advantage_mode": "must",
     "platform_bull_volume_advantage_score": 1.2,
     "platform_breakout_volume_ratio": 3.0,
+    "platform_breakout_volume_ratio_mode": "must",
     "platform_breakout_pct_chg_min": 5.0,
+    "platform_breakout_pct_chg_mode": "must",
+    "platform_breakout_bullish_mode": "must",
     "platform_body_strength_min": 1.0,
+    "platform_body_strength_mode": "must",
     "platform_ma_trend_enabled": True,
     "platform_ma_bullish_mode": "score",
     "platform_ma_rising_required": True,
@@ -142,6 +149,20 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
         merged["platform_breakout_max_clearance_mode"] = "score"
     if merged.get("platform_breakout_first_mode") not in {"must", "score", "off"}:
         merged["platform_breakout_first_mode"] = "must"
+    if merged.get("platform_max_range_mode") not in {"must", "score", "off"}:
+        merged["platform_max_range_mode"] = "must"
+    if merged.get("platform_bullish_ratio_mode") not in {"must", "score", "off"}:
+        merged["platform_bullish_ratio_mode"] = "must"
+    if merged.get("platform_bull_volume_advantage_mode") not in {"must", "score", "off"}:
+        merged["platform_bull_volume_advantage_mode"] = "must"
+    if merged.get("platform_breakout_volume_ratio_mode") not in {"must", "score", "off"}:
+        merged["platform_breakout_volume_ratio_mode"] = "must"
+    if merged.get("platform_breakout_pct_chg_mode") not in {"must", "score", "off"}:
+        merged["platform_breakout_pct_chg_mode"] = "must"
+    if merged.get("platform_breakout_bullish_mode") not in {"must", "score", "off"}:
+        merged["platform_breakout_bullish_mode"] = "must"
+    if merged.get("platform_body_strength_mode") not in {"must", "score", "off"}:
+        merged["platform_body_strength_mode"] = "must"
     if merged.get("platform_ma_bullish_mode") not in {"must", "score", "off"}:
         merged["platform_ma_bullish_mode"] = "score"
     if merged.get("platform_ma_rising_mode") not in {"must", "score", "off"}:

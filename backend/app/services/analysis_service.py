@@ -353,6 +353,11 @@ def apply_strategy_filters(
         mark("流通市值", before, working, "缺失时按策略配置降级")
 
     if strategy.get("analysis_mode") == "score":
+        if strategy.get("signal_mode") == "platform_breakout":
+            working = _apply_platform_breakout_filters(working, strategy, funnel)
+            if working.empty:
+                zero_reason = _zero_reason(funnel)
+                return [], funnel, zero_reason
         return _rank_candidates(
             working,
             strategy,
@@ -515,14 +520,15 @@ def _apply_platform_breakout_filters(
     funnel: List[Dict[str, Any]],
 ) -> pd.DataFrame:
     working = _bool_filter(frame, "platform_ready", "平台数据", funnel, "需要足够历史 K 线")
-    working = _numeric_filter(
-        working,
-        "platform_range",
-        None,
-        strategy.get("platform_max_range"),
-        "平台振幅",
-        funnel,
-    )
+    if _condition_mode(strategy, "platform_max_range_mode", "must") == "must":
+        working = _numeric_filter(
+            working,
+            "platform_range",
+            None,
+            strategy.get("platform_max_range"),
+            "平台振幅",
+            funnel,
+        )
     clearance_mode = _condition_mode(
         strategy,
         "platform_breakout_clearance_mode",
@@ -548,47 +554,53 @@ def _apply_platform_breakout_filters(
         )
     if _condition_mode(strategy, "platform_breakout_first_mode", "score") == "must":
         working = _bool_filter(working, "platform_first_breakout", "首次突破", funnel, "前一交易日未有效站上平台上沿")
-    working = _numeric_filter(
-        working,
-        "platform_bullish_ratio",
-        strategy.get("platform_min_bullish_ratio"),
-        None,
-        "阳线占比",
-        funnel,
-    )
-    working = _numeric_filter(
-        working,
-        "platform_bull_volume_ratio",
-        strategy.get("platform_bull_volume_advantage"),
-        None,
-        "阳线量能",
-        funnel,
-    )
-    working = _numeric_filter(
-        working,
-        "platform_breakout_volume_ratio",
-        strategy.get("platform_breakout_volume_ratio"),
-        None,
-        "突破量比",
-        funnel,
-    )
-    working = _numeric_filter(
-        working,
-        "platform_breakout_pct_chg",
-        strategy.get("platform_breakout_pct_chg_min"),
-        None,
-        "突破涨幅",
-        funnel,
-    )
-    working = _bool_filter(working, "platform_breakout_bullish", "突破阳线", funnel, "突破当日为红柱")
-    working = _numeric_filter(
-        working,
-        "platform_body_strength",
-        strategy.get("platform_body_strength_min"),
-        None,
-        "实体强度",
-        funnel,
-    )
+    if _condition_mode(strategy, "platform_bullish_ratio_mode", "must") == "must":
+        working = _numeric_filter(
+            working,
+            "platform_bullish_ratio",
+            strategy.get("platform_min_bullish_ratio"),
+            None,
+            "阳线占比",
+            funnel,
+        )
+    if _condition_mode(strategy, "platform_bull_volume_advantage_mode", "must") == "must":
+        working = _numeric_filter(
+            working,
+            "platform_bull_volume_ratio",
+            strategy.get("platform_bull_volume_advantage"),
+            None,
+            "阳线量能",
+            funnel,
+        )
+    if _condition_mode(strategy, "platform_breakout_volume_ratio_mode", "must") == "must":
+        working = _numeric_filter(
+            working,
+            "platform_breakout_volume_ratio",
+            strategy.get("platform_breakout_volume_ratio"),
+            None,
+            "突破量比",
+            funnel,
+        )
+    if _condition_mode(strategy, "platform_breakout_pct_chg_mode", "must") == "must":
+        working = _numeric_filter(
+            working,
+            "platform_breakout_pct_chg",
+            strategy.get("platform_breakout_pct_chg_min"),
+            None,
+            "突破涨幅",
+            funnel,
+        )
+    if _condition_mode(strategy, "platform_breakout_bullish_mode", "must") == "must":
+        working = _bool_filter(working, "platform_breakout_bullish", "突破阳线", funnel, "突破当日为红柱")
+    if _condition_mode(strategy, "platform_body_strength_mode", "must") == "must":
+        working = _numeric_filter(
+            working,
+            "platform_body_strength",
+            strategy.get("platform_body_strength_min"),
+            None,
+            "实体强度",
+            funnel,
+        )
     if _condition_mode(strategy, "platform_ma_bullish_mode", "score") == "must":
         working = _bool_filter(working, "platform_ma_bullish", "MA5/10/20 多头", funnel, "MA5 > MA10 > MA20")
     if _condition_mode(strategy, "platform_ma_rising_mode", "score") == "must":
@@ -815,6 +827,13 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
         breakout_pct = safe_float(row.get("platform_breakout_pct_chg"))
         breakout_clearance = safe_float(row.get("platform_breakout_clearance"))
         body_strength = safe_float(row.get("platform_body_strength"))
+        range_mode = _condition_mode(strategy, "platform_max_range_mode", "must")
+        bullish_ratio_mode = _condition_mode(strategy, "platform_bullish_ratio_mode", "must")
+        bull_volume_mode = _condition_mode(strategy, "platform_bull_volume_advantage_mode", "must")
+        breakout_volume_mode = _condition_mode(strategy, "platform_breakout_volume_ratio_mode", "must")
+        breakout_pct_mode = _condition_mode(strategy, "platform_breakout_pct_chg_mode", "must")
+        breakout_bullish_mode = _condition_mode(strategy, "platform_breakout_bullish_mode", "must")
+        body_strength_mode = _condition_mode(strategy, "platform_body_strength_mode", "must")
         ma_bullish_mode = _condition_mode(strategy, "platform_ma_bullish_mode", "score")
         ma_rising_mode = _condition_mode(strategy, "platform_ma_rising_mode", "score")
         macd_filter_mode = _condition_mode(strategy, "platform_macd_filter_mode", "score")
@@ -825,12 +844,12 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
         else:
             macd_ok = dif is not None and dif > 0
 
-        breakout_volume = min((breakout_volume_ratio or 0) * 7, 24)
-        bull_volume = min((bull_volume_ratio or 0) * 7, 14)
-        pct_bonus = min(max(breakout_pct or 0, 0) * 1.2, 14)
+        breakout_volume = min((breakout_volume_ratio or 0) * 7, 24) if breakout_volume_mode != "off" else 0
+        bull_volume = min((bull_volume_ratio or 0) * 7, 14) if bull_volume_mode != "off" else 0
+        pct_bonus = min(max(breakout_pct or 0, 0) * 1.2, 14) if breakout_pct_mode != "off" else 0
         trend_bonus = 10 if ma_bullish_mode != "off" and row.get("platform_ma_bullish") else 0
         macd_bonus = 6 if macd_filter_mode != "off" and macd_ok else 0
-        range_penalty = min((platform_range or 0) * 80, 8)
+        range_penalty = min((platform_range or 0) * 80, 8) if range_mode != "off" else 0
         score = float(rps) * 0.45 + breakout_volume + bull_volume + pct_bonus + trend_bonus + macd_bonus - range_penalty
 
         max_range = safe_float(strategy.get("platform_max_range"))
@@ -847,7 +866,7 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
             strategy.get("min_rps20")
         )
 
-        if max_range is not None and platform_range is not None:
+        if range_mode != "off" and max_range is not None and platform_range is not None:
             score += 7 if platform_range <= max_range else -min((platform_range - max_range) * 70, 8)
         if _condition_mode(strategy, "platform_breakout_clearance_mode", "must") != "off" and breakout_clearance is not None:
             score += 8 if breakout_clearance >= min_clearance else -8
@@ -863,25 +882,34 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
                 score -= min((breakout_clearance - max_clearance) * 160, 18)
         if _condition_mode(strategy, "platform_breakout_first_mode", "score") != "off":
             score += 6 if row.get("platform_first_breakout") else -8
-        if min_breakout_volume is not None and breakout_volume_ratio is not None:
+        if breakout_volume_mode != "off" and min_breakout_volume is not None and breakout_volume_ratio is not None:
             if breakout_volume_ratio >= min_breakout_volume:
                 score += 8
             elif breakout_volume_ratio >= min_breakout_volume * 0.7:
                 score += 3
         if (
-            min_bullish_ratio is not None
+            bullish_ratio_mode != "off"
+            and min_bullish_ratio is not None
             and bullish_ratio is not None
             and bullish_ratio >= min_bullish_ratio
         ):
             score += 2
-        if score_bullish_ratio is not None and bullish_ratio is not None:
+        if bullish_ratio_mode != "off" and score_bullish_ratio is not None and bullish_ratio is not None:
             score += 5 if bullish_ratio >= score_bullish_ratio else 0
-        if min_bull_volume is not None and bull_volume_ratio is not None and bull_volume_ratio >= min_bull_volume:
+        if (
+            bull_volume_mode != "off"
+            and min_bull_volume is not None
+            and bull_volume_ratio is not None
+            and bull_volume_ratio >= min_bull_volume
+        ):
             score += 2
-        if score_bull_volume is not None and bull_volume_ratio is not None:
+        if bull_volume_mode != "off" and score_bull_volume is not None and bull_volume_ratio is not None:
             score += 5 if bull_volume_ratio >= score_bull_volume else 0
         if (
-            min_breakout_pct is not None
+            breakout_pct_mode != "off"
+            and body_strength_mode != "off"
+            and breakout_bullish_mode != "off"
+            and min_breakout_pct is not None
             and min_body_strength is not None
             and breakout_pct is not None
             and body_strength is not None
@@ -1068,21 +1096,42 @@ class AnalysisService:
             return pd.DataFrame()
         if target_date:
             snapshots = pd.DataFrame()
-            float_values = pd.DataFrame(
-                self.db.query(
-                    """
-                    SELECT *
-                    FROM (
-                        SELECT *,
-                               ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS row_num
-                        FROM float_market_values
-                        WHERE date <= ?
+            if strategy.get("_backtest_float_market_value_policy") == "latest_proxy":
+                float_values = pd.DataFrame(
+                    self.db.query(
+                        """
+                        SELECT *
+                        FROM (
+                            SELECT *,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY code
+                                       ORDER BY
+                                           CASE WHEN date <= ? THEN 0 ELSE 1 END,
+                                           date DESC
+                                   ) AS row_num
+                            FROM float_market_values
+                        )
+                        WHERE row_num = 1
+                        """,
+                        [target_date],
                     )
-                    WHERE row_num = 1
-                    """,
-                    [target_date],
                 )
-            )
+            else:
+                float_values = pd.DataFrame(
+                    self.db.query(
+                        """
+                        SELECT *
+                        FROM (
+                            SELECT *,
+                                   ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS row_num
+                            FROM float_market_values
+                            WHERE date <= ?
+                        )
+                        WHERE row_num = 1
+                        """,
+                        [target_date],
+                    )
+                )
         else:
             snapshots = pd.DataFrame(
                 self.db.query(
