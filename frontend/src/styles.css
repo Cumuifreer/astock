@@ -147,6 +147,16 @@ button:disabled {
   color: var(--red);
 }
 
+.ghost.small-action {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.danger-action {
+  color: var(--red);
+}
+
 .icon-button {
   width: 40px;
   padding: 0;
@@ -233,6 +243,14 @@ h1 {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+}
+
+.toolbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -715,6 +733,67 @@ h1 {
   background: rgba(182, 255, 95, 0.04);
 }
 
+.watchlist-page .metric-card {
+  min-height: 124px;
+}
+
+.watchlist-batch {
+  display: grid;
+  gap: 14px;
+}
+
+.watchlist-batch-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.watchlist-batch-head h3 {
+  margin-top: 4px;
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.watchlist-batch-head p {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.batch-kpis {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.batch-kpis span {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.batch-kpis strong {
+  color: var(--text);
+}
+
+.watchlist-table {
+  min-width: 1320px;
+}
+
+.name-cell.compact {
+  gap: 1px;
+}
+
 .report-library {
   display: grid;
   gap: 12px;
@@ -898,6 +977,30 @@ h1 {
 .table-wrap {
   overflow: auto;
   border: 1px solid var(--line);
+}
+
+.table-action {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(59, 240, 193, 0.24);
+  background: rgba(59, 240, 193, 0.05);
+  color: var(--teal);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.table-action:hover {
+  border-color: rgba(59, 240, 193, 0.55);
+  background: rgba(59, 240, 193, 0.1);
+}
+
+.table-action.danger {
+  color: var(--red);
+  border-color: rgba(255, 92, 122, 0.24);
+  background: rgba(255, 92, 122, 0.045);
 }
 
 table {
@@ -1418,7 +1521,8 @@ a {
   }
 
   .diagnostic-head,
-  .editor-action-strip {
+  .editor-action-strip,
+  .watchlist-batch-head {
     align-items: stretch;
     flex-direction: column;
   }

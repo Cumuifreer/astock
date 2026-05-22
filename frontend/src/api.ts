@@ -1,4 +1,4 @@
-import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, IntradayRadarConfig, IntradayRadarResult, StrategyConfig, StrategyPreset } from './types';
+import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, IntradayRadarConfig, IntradayRadarResult, StrategyConfig, StrategyPreset, WatchlistResult } from './types';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -34,6 +34,13 @@ export const api = {
   startIntradaySnapshot: (payload: Record<string, unknown> = {}) =>
     request('/api/tasks/intraday-snapshot', { method: 'POST', body: JSON.stringify(payload) }),
   intradayLatest: () => request<IntradayRadarResult>('/api/intraday?limit=300'),
+  watchlist: () => request<WatchlistResult>('/api/watchlist'),
+  addToWatchlist: (payload: Record<string, unknown>) =>
+    request('/api/watchlist/items', { method: 'POST', body: JSON.stringify(payload) }),
+  deleteWatchlistBatch: (id: string) =>
+    request(`/api/watchlist/batches/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  deleteWatchlistItem: (batchId: string, code: string) =>
+    request(`/api/watchlist/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(code)}`, { method: 'DELETE' }),
   saveIntradayConfig: (config: IntradayRadarConfig) =>
     request<{ config: IntradayRadarConfig }>('/api/intraday/config', { method: 'PUT', body: JSON.stringify({ config }) }),
   analysisReports: () => request<AnalysisReportsResponse>('/api/analysis/reports'),

@@ -42,18 +42,22 @@ import type {
   StrategyConfig,
   StrategyPreset,
   TaskRun,
+  WatchlistBatch,
+  WatchlistItem,
+  WatchlistResult,
 } from './types';
 import './styles.css';
 
-type Tab = 'overview' | 'warehouse' | 'strategy' | 'results' | 'intraday' | 'backtest' | 'map' | 'status';
+type Tab = 'overview' | 'warehouse' | 'strategy' | 'intraday' | 'results' | 'watchlist' | 'backtest' | 'map' | 'status';
 type UpdateMode = 'full' | 'daily_light';
 
 const navItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: 'overview', label: '总览', icon: <Gauge size={17} /> },
   { id: 'warehouse', label: '数据仓库', icon: <Database size={17} /> },
   { id: 'strategy', label: '策略', icon: <SlidersHorizontal size={17} /> },
-  { id: 'results', label: '分析结果', icon: <BarChart3 size={17} /> },
   { id: 'intraday', label: '盘中雷达', icon: <Activity size={17} /> },
+  { id: 'results', label: '分析结果', icon: <BarChart3 size={17} /> },
+  { id: 'watchlist', label: '观察池', icon: <Star size={17} /> },
   { id: 'backtest', label: '回测', icon: <History size={17} /> },
   { id: 'map', label: '数据地图', icon: <Layers3 size={17} /> },
   { id: 'status', label: '运行状态', icon: <Workflow size={17} /> },
@@ -198,6 +202,16 @@ function App() {
     }
   }
 
+  async function addToWatchlist(payload: Record<string, unknown>) {
+    try {
+      await api.addToWatchlist(payload);
+      setNotice('已加入观察池');
+      await load(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加入观察池失败');
+    }
+  }
+
   async function saveStrategy(setDefault = false) {
     if (!strategy) return;
     try {
@@ -281,7 +295,6 @@ function App() {
         />
       );
     }
-    if (tab === 'results') return <Results candidates={bootstrap.candidates.rows} funnel={bootstrap.candidates.funnel} zeroReason={bootstrap.candidates.zero_reason} runId={bootstrap.candidates.run_id} />;
     if (tab === 'intraday') {
       return (
         <IntradayRadarPage
@@ -289,8 +302,23 @@ function App() {
           task={bootstrap.intraday_status}
           startSample={startIntradaySnapshot}
           saveConfig={saveIntradayConfig}
+          addToWatchlist={addToWatchlist}
         />
       );
+    }
+    if (tab === 'results') {
+      return (
+        <Results
+          candidates={bootstrap.candidates.rows}
+          funnel={bootstrap.candidates.funnel}
+          zeroReason={bootstrap.candidates.zero_reason}
+          runId={bootstrap.candidates.run_id}
+          addToWatchlist={addToWatchlist}
+        />
+      );
+    }
+    if (tab === 'watchlist') {
+      return <WatchlistPage result={bootstrap.watchlist} reload={() => load(true)} />;
     }
     if (tab === 'backtest') {
       return (
@@ -768,20 +796,28 @@ function Results({
   zeroReason,
   runId = null,
   compact = false,
+  addToWatchlist,
 }: {
   candidates: Candidate[];
   funnel: FunnelStep[];
   zeroReason: string | null;
   runId?: string | null;
   compact?: boolean;
+  addToWatchlist?: (payload: Record<string, unknown>) => Promise<void>;
 }) {
   if (compact) {
     return <CandidatePanel candidates={candidates} zeroReason={zeroReason} title="最新候选" />;
   }
-  return <ReportResults initialCandidates={{ run_id: runId, rows: candidates, funnel, zero_reason: zeroReason }} />;
+  return <ReportResults initialCandidates={{ run_id: runId, rows: candidates, funnel, zero_reason: zeroReason }} addToWatchlist={addToWatchlist} />;
 }
 
-function ReportResults({ initialCandidates }: { initialCandidates: CandidateBundle }) {
+function ReportResults({
+  initialCandidates,
+  addToWatchlist,
+}: {
+  initialCandidates: CandidateBundle;
+  addToWatchlist?: (payload: Record<string, unknown>) => Promise<void>;
+}) {
   const [groups, setGroups] = useState<AnalysisReportGroup[]>([]);
   const [selectedMode, setSelectedMode] = useState<string>('');
   const [selectedRunId, setSelectedRunId] = useState<string | null>(initialCandidates.run_id);
@@ -845,6 +881,18 @@ function ReportResults({ initialCandidates }: { initialCandidates: CandidateBund
 
   const selectedReports = groups.find((group) => group.signal_mode === selectedMode)?.reports || [];
   const selectedReport = selectedReports.find((report) => report.id === selectedRunId);
+  const sourceLabel = selectedReport
+    ? `${analysisModeLabel(selectedReport.config?.analysis_mode)} · ${signalModeLabel(selectedReport.config?.signal_mode)}`
+    : '分析结果';
+  const addRows = addToWatchlist
+    ? (rows: Candidate[]) => addToWatchlist({
+      source_type: 'analysis',
+      source_label: sourceLabel,
+      source_ref: bundle.run_id || selectedRunId || '',
+      batch_date: reportDate(selectedReport),
+      items: rows.map(candidateWatchlistPayload),
+    })
+    : undefined;
 
   return (
     <div className="results-stack">
@@ -862,7 +910,7 @@ function ReportResults({ initialCandidates }: { initialCandidates: CandidateBund
         }}
         onRunChange={setSelectedRunId}
       />
-      <CandidatePanel candidates={bundle.rows} zeroReason={bundle.zero_reason} title="候选股票" />
+      <CandidatePanel candidates={bundle.rows} zeroReason={bundle.zero_reason} title="候选股票" onAddRows={addRows} />
       <Funnel funnel={bundle.funnel} candidateCount={bundle.rows.length} zeroReason={bundle.zero_reason} />
     </div>
   );
@@ -872,16 +920,26 @@ function CandidatePanel({
   candidates,
   zeroReason,
   title,
+  onAddRows,
 }: {
   candidates: Candidate[];
   zeroReason: string | null;
   title: string;
+  onAddRows?: (rows: Candidate[]) => void | Promise<void>;
 }) {
   return (
     <section className="panel">
       <div className="table-toolbar">
         <PanelTitle icon={<BarChart3 size={18} />} title={title} />
-        <span className="pill">{formatInt(candidates.length)} 只</span>
+        <div className="toolbar-actions">
+          {onAddRows && candidates.length > 0 && (
+            <button className="ghost small-action" onClick={() => void onAddRows(candidates)}>
+              <Plus size={14} />
+              加入本页
+            </button>
+          )}
+          <span className="pill">{formatInt(candidates.length)} 只</span>
+        </div>
       </div>
       {candidates.length === 0 && <EmptyState text={zeroReason || '暂无候选。'} />}
       {candidates.length > 0 && (
@@ -903,6 +961,7 @@ function CandidatePanel({
                 <th>信号</th>
                 <th>分数</th>
                 <th>看图</th>
+                {onAddRows && <th>入池</th>}
               </tr>
             </thead>
             <tbody>
@@ -927,6 +986,13 @@ function CandidatePanel({
                   <td><span className="signal">{row.signal_type}</span></td>
                   <td><strong>{formatPrice(row.signal_score)}</strong></td>
                   <td><a href={row.chart_url} target="_blank" rel="noreferrer">打开</a></td>
+                  {onAddRows && (
+                    <td>
+                      <button className="table-action" onClick={() => void onAddRows([row])} title="加入观察池">
+                        <Plus size={14} />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -1004,6 +1070,145 @@ function ReportSelector({
         </div>
       )}
     </section>
+  );
+}
+
+function WatchlistPage({
+  result,
+  reload,
+}: {
+  result: WatchlistResult;
+  reload: () => Promise<void>;
+}) {
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const summary = result.summary || {
+    batch_count: 0,
+    item_count: 0,
+    avg_return_latest: null,
+    positive_count: 0,
+    hit_5pct_count: 0,
+    hit_8pct_count: 0,
+  };
+
+  async function removeBatch(batch: WatchlistBatch) {
+    setBusyKey(batch.id);
+    try {
+      await api.deleteWatchlistBatch(batch.id);
+      await reload();
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function removeItem(item: WatchlistItem) {
+    const key = `${item.batch_id}-${item.code}`;
+    setBusyKey(key);
+    try {
+      await api.deleteWatchlistItem(item.batch_id, item.code);
+      await reload();
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  return (
+    <div className="page-stack watchlist-page">
+      <section className="metric-grid">
+        <MetricCard label="批次" value={formatInt(summary.batch_count)} sub={`${formatInt(summary.item_count)} 只观察`} icon={<Star size={18} />} />
+        <MetricCard label="平均累计" value={formatPercentRatio(summary.avg_return_latest)} sub={`${formatInt(summary.positive_count)} 只为正`} icon={<LineChart size={18} />} />
+        <MetricCard label="+5% 触达" value={formatInt(summary.hit_5pct_count)} sub={`+8% ${formatInt(summary.hit_8pct_count)} 只`} icon={<Gauge size={18} />} />
+        <MetricCard label="最新收盘" value={latestWatchlistDate(result.batches)} sub="来自本地历史 K 线" icon={<Database size={18} />} />
+      </section>
+
+      {result.batches.length === 0 ? (
+        <section className="panel">
+          <PanelTitle icon={<Star size={18} />} title="观察池" />
+          <EmptyState text="还没有加入观察股票。" />
+        </section>
+      ) : (
+        result.batches.map((batch) => (
+          <section className="panel watchlist-batch" key={batch.id}>
+            <div className="watchlist-batch-head">
+              <div>
+                <span className="eyebrow">{formatDate(batch.batch_date)} · {sourceTypeLabel(batch.source_type)}</span>
+                <h3>{batch.name || batch.source_label}</h3>
+                <p>{batch.source_label} · {formatInt(batch.item_count)} 只 · 平均累计 {formatPercentRatio(batch.avg_return_latest)}</p>
+              </div>
+              <div className="batch-kpis">
+                <span>为正 <strong>{formatInt(batch.positive_count)}</strong></span>
+                <span>+5% <strong>{formatInt(batch.hit_5pct_count)}</strong></span>
+                <span>+8% <strong>{formatInt(batch.hit_8pct_count)}</strong></span>
+                <button className="ghost danger-action" disabled={busyKey === batch.id} onClick={() => void removeBatch(batch)}>
+                  <Trash2 size={15} />
+                  删除批次
+                </button>
+              </div>
+            </div>
+            <div className="table-wrap">
+              <table className="watchlist-table">
+                <thead>
+                  <tr>
+                    <th>代码</th>
+                    <th>名称</th>
+                    <th>入池价</th>
+                    <th>最新</th>
+                    <th>累计</th>
+                    <th>T+1</th>
+                    <th>T+3</th>
+                    <th>T+5</th>
+                    <th>T+10</th>
+                    <th>最高</th>
+                    <th>回撤</th>
+                    <th>天数</th>
+                    <th>看盘</th>
+                    <th>删除</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {batch.items.map((item) => (
+                    <tr key={`${batch.id}-${item.code}`}>
+                      <td className="mono">{item.code}</td>
+                      <td>
+                        <div className="name-cell">
+                          <strong>{item.name}</strong>
+                          <span>{item.signal_type || batch.source_label} · {item.reasons?.slice(0, 2).join(' / ') || '观察记录'}</span>
+                        </div>
+                      </td>
+                      <td>{formatPrice(item.entry_price)}</td>
+                      <td>
+                        <div className="name-cell compact">
+                          <strong>{formatPrice(item.latest_close)}</strong>
+                          <span>{formatDate(item.latest_date)}</span>
+                        </div>
+                      </td>
+                      <td className={toneClass(Number(item.return_latest || 0))}>{formatPercentRatio(item.return_latest)}</td>
+                      <td className={toneClass(Number(item.return_1d || 0))}>{formatPercentRatio(item.return_1d)}</td>
+                      <td className={toneClass(Number(item.return_3d || 0))}>{formatPercentRatio(item.return_3d)}</td>
+                      <td className={toneClass(Number(item.return_5d || 0))}>{formatPercentRatio(item.return_5d)}</td>
+                      <td className={toneClass(Number(item.return_10d || 0))}>{formatPercentRatio(item.return_10d)}</td>
+                      <td className={toneClass(Number(item.max_return || 0))}>{formatPercentRatio(item.max_return)}</td>
+                      <td className={toneClass(Number(item.max_drawdown || 0))}>{formatPercentRatio(item.max_drawdown)}</td>
+                      <td>{formatInt(item.days)}</td>
+                      <td><a href={item.chart_url} target="_blank" rel="noreferrer">打开</a></td>
+                      <td>
+                        <button
+                          className="table-action danger"
+                          disabled={busyKey === `${item.batch_id}-${item.code}`}
+                          onClick={() => void removeItem(item)}
+                          title="移出观察池"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ))
+      )}
+    </div>
   );
 }
 
@@ -1260,11 +1465,13 @@ function IntradayRadarPage({
   task,
   startSample,
   saveConfig,
+  addToWatchlist,
 }: {
   result: IntradayRadarResult;
   task: TaskRun | null;
   startSample: () => Promise<void>;
   saveConfig: (config: IntradayRadarConfig) => Promise<void>;
+  addToWatchlist?: (payload: Record<string, unknown>) => Promise<void>;
 }) {
   const [config, setConfig] = useState<IntradayRadarConfig>(result.config);
   const [radarMode, setRadarMode] = useState<'strict' | 'score'>('strict');
@@ -1350,6 +1557,15 @@ function IntradayRadarPage({
         strictCount={strictRows.length}
         scoreCount={scoreRows.length}
         onModeChange={setRadarMode}
+        onAddRows={addToWatchlist
+          ? (rows) => addToWatchlist({
+            source_type: 'intraday',
+            source_label: `盘中雷达 · ${radarMode === 'score' ? '综合打分' : '严格筛选'}`,
+            source_ref: result.sample_at || '',
+            batch_date: formatDate(result.sample_at || new Date().toISOString()),
+            items: rows.map(intradayWatchlistPayload),
+          })
+          : undefined}
       />
     </div>
   );
@@ -1362,6 +1578,7 @@ function IntradayRadarTable({
   strictCount,
   scoreCount,
   onModeChange,
+  onAddRows,
 }: {
   rows: IntradayRadarCandidate[];
   mode: 'strict' | 'score';
@@ -1369,6 +1586,7 @@ function IntradayRadarTable({
   strictCount: number;
   scoreCount: number;
   onModeChange: (mode: 'strict' | 'score') => void;
+  onAddRows?: (rows: IntradayRadarCandidate[]) => void | Promise<void>;
 }) {
   return (
     <section className="panel radar-table-panel">
@@ -1384,7 +1602,15 @@ function IntradayRadarTable({
             <small>{formatInt(scoreCount)} 只</small>
           </button>
         </div>
-        <span className="pill">{formatChinaLocalDateTime(sampleAt)} · {formatInt(rows.length)} 只</span>
+        <div className="toolbar-actions">
+          {onAddRows && rows.length > 0 && (
+            <button className="ghost small-action" onClick={() => void onAddRows(rows)}>
+              <Plus size={14} />
+              加入本榜
+            </button>
+          )}
+          <span className="pill">{formatChinaLocalDateTime(sampleAt)} · {formatInt(rows.length)} 只</span>
+        </div>
       </div>
       {rows.length === 0 ? (
         <EmptyState text={mode === 'strict' ? '严格筛选暂无盘中观察信号。' : '综合打分暂无盘中观察信号。'} />
@@ -1406,6 +1632,7 @@ function IntradayRadarTable({
                 <th>量能</th>
                 <th>分数</th>
                 <th>看盘</th>
+                {onAddRows && <th>入池</th>}
               </tr>
             </thead>
             <tbody>
@@ -1429,6 +1656,13 @@ function IntradayRadarTable({
                   <td>{formatRatioX(row.amount_ratio)}</td>
                   <td><strong>{formatPrice(row.radar_score)}</strong></td>
                   <td><a href={row.chart_url} target="_blank" rel="noreferrer">打开</a></td>
+                  {onAddRows && (
+                    <td>
+                      <button className="table-action" onClick={() => void onAddRows([row])} title="加入观察池">
+                        <Plus size={14} />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -2052,6 +2286,74 @@ function flattenReports(groups: AnalysisReportGroup[]) {
   return groups
     .flatMap((group) => group.reports)
     .sort((a, b) => String(b.finished_at || b.started_at).localeCompare(String(a.finished_at || a.started_at)));
+}
+
+function reportDate(report?: AnalysisReportSummary) {
+  return formatDate(report?.finished_at || report?.started_at || new Date().toISOString());
+}
+
+function candidateWatchlistPayload(row: Candidate) {
+  return {
+    code: row.code,
+    name: row.name,
+    entry_price: row.latest_price,
+    signal_score: row.signal_score,
+    signal_type: row.signal_type,
+    chart_url: row.chart_url,
+    reasons: row.reasons || [],
+    metrics: {
+      pct_chg: row.pct_chg,
+      amount: row.amount,
+      turnover_rate: row.turnover_rate,
+      amplitude: row.amplitude,
+      rps20: row.rps20,
+      rps60: row.rps60,
+      rps120: row.rps120,
+      ma_short: row.ma_short,
+      ma_long: row.ma_long,
+      float_market_value: row.float_market_value,
+    },
+  };
+}
+
+function intradayWatchlistPayload(row: IntradayRadarCandidate) {
+  return {
+    code: row.code,
+    name: row.name,
+    entry_price: row.latest_price,
+    signal_score: row.radar_score,
+    signal_type: row.status,
+    chart_url: row.chart_url,
+    reasons: row.reasons || [],
+    metrics: {
+      radar_mode: row.radar_mode,
+      pct_chg: row.pct_chg,
+      amount: row.amount,
+      distance_to_upper: row.distance_to_upper,
+      breakout_clearance: row.breakout_clearance,
+      amount_ratio: row.amount_ratio,
+      ...row.metrics,
+    },
+  };
+}
+
+function latestWatchlistDate(batches: WatchlistBatch[]) {
+  const dates = batches
+    .flatMap((batch) => batch.items)
+    .map((item) => item.latest_date)
+    .filter(Boolean)
+    .sort();
+  const latest = dates[dates.length - 1];
+  return latest ? formatDate(latest) : '-';
+}
+
+function sourceTypeLabel(value: string) {
+  const labels: Record<string, string> = {
+    analysis: '分析',
+    intraday: '盘中',
+    manual: '手动',
+  };
+  return labels[value] || value;
 }
 
 function analysisModeLabel(mode: string | undefined) {

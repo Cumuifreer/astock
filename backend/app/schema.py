@@ -7,7 +7,7 @@ from backend.app.db import Database
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG, SYSTEM_PRESETS
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 MIGRATIONS = [
@@ -321,6 +321,39 @@ MIGRATIONS = [
         metrics_json TEXT,
         created_at TIMESTAMP,
         PRIMARY KEY (sample_at, radar_mode, code)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS watchlist_batches (
+        id TEXT PRIMARY KEY,
+        batch_date DATE,
+        source_type TEXT,
+        source_label TEXT,
+        source_ref TEXT,
+        name TEXT,
+        status TEXT,
+        created_at TIMESTAMP,
+        updated_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS watchlist_items (
+        batch_id TEXT,
+        code TEXT,
+        name TEXT,
+        entry_date DATE,
+        entry_price DOUBLE,
+        source_type TEXT,
+        source_label TEXT,
+        source_ref TEXT,
+        signal_score DOUBLE,
+        signal_type TEXT,
+        chart_url TEXT,
+        reasons_json TEXT,
+        metrics_json TEXT,
+        created_at TIMESTAMP,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (batch_id, code)
     )
     """,
 ]

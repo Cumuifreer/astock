@@ -264,6 +264,62 @@ export interface IntradayRadarResult {
   score_rows: IntradayRadarCandidate[];
 }
 
+export interface WatchlistItem {
+  batch_id: string;
+  code: string;
+  name: string;
+  entry_date: string;
+  entry_price: number | null;
+  source_type: string;
+  source_label: string;
+  source_ref: string | null;
+  signal_score: number | null;
+  signal_type: string | null;
+  chart_url: string;
+  reasons: string[];
+  metrics: Record<string, unknown>;
+  days: number;
+  latest_date: string | null;
+  latest_close: number | null;
+  return_latest: number | null;
+  return_1d: number | null;
+  return_3d: number | null;
+  return_5d: number | null;
+  return_10d: number | null;
+  max_return: number | null;
+  max_drawdown: number | null;
+}
+
+export interface WatchlistBatch {
+  id: string;
+  batch_date: string;
+  source_type: string;
+  source_label: string;
+  source_ref: string | null;
+  name: string;
+  status: string;
+  item_count: number;
+  avg_return_latest: number | null;
+  positive_count: number;
+  hit_5pct_count: number;
+  hit_8pct_count: number;
+  created_at: string;
+  updated_at: string;
+  items: WatchlistItem[];
+}
+
+export interface WatchlistResult {
+  summary: {
+    batch_count: number;
+    item_count: number;
+    avg_return_latest: number | null;
+    positive_count: number;
+    hit_5pct_count: number;
+    hit_8pct_count: number;
+  };
+  batches: WatchlistBatch[];
+}
+
 export interface Candidate {
   rank: number;
   code: string;
@@ -302,4 +358,5 @@ export interface Bootstrap {
   candidates: CandidateBundle;
   backtest: BacktestResult;
   intraday: IntradayRadarResult;
+  watchlist: WatchlistResult;
 }

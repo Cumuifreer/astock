@@ -12,6 +12,7 @@ from backend.app.services.data_service import DataService
 from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.strategy_service import StrategyService
 from backend.app.services.update_service import TaskBusy, UpdateService
+from backend.app.services.watchlist_service import WatchlistService
 
 
 router = APIRouter(prefix="/api")
@@ -24,6 +25,7 @@ analysis_service = AnalysisService(db)
 update_service = UpdateService(db)
 backtest_service = BacktestService(db, analysis_service)
 intraday_service = IntradayRadarService(db)
+watchlist_service = WatchlistService(db)
 update_service.configure_runners(analysis_service, backtest_service)
 update_service.recover_interrupted_tasks()
 update_service.kick_queue()
@@ -54,6 +56,7 @@ def bootstrap() -> Dict[str, Any]:
         "intraday": intraday_service.latest(limit=200),
         "candidates": data_service.candidates(limit=50),
         "backtest": data_service.backtest_result(limit=200),
+        "watchlist": watchlist_service.result(),
     }
 
 
@@ -114,6 +117,28 @@ def intraday_latest(
     limit: int = Query(default=200, ge=1, le=500),
 ) -> Dict[str, Any]:
     return intraday_service.latest(limit=limit)
+
+
+@router.get("/watchlist")
+def watchlist() -> Dict[str, Any]:
+    return watchlist_service.result()
+
+
+@router.post("/watchlist/items")
+def add_watchlist_items(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return watchlist_service.add_items(payload)
+
+
+@router.delete("/watchlist/batches/{batch_id}")
+def delete_watchlist_batch(batch_id: str) -> Dict[str, Any]:
+    watchlist_service.delete_batch(batch_id)
+    return {"ok": True}
+
+
+@router.delete("/watchlist/batches/{batch_id}/items/{code}")
+def delete_watchlist_item(batch_id: str, code: str) -> Dict[str, Any]:
+    watchlist_service.delete_item(batch_id, code)
+    return {"ok": True}
 
 
 @router.get("/intraday/config")
