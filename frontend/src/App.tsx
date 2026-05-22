@@ -1315,21 +1315,34 @@ function StatusBoard({
 
 function TaskDetail({ task }: { task: TaskRun | null }) {
   if (!task) return <EmptyState text="暂无记录。" />;
-  const percent = task.total ? Math.round((task.processed / task.total) * 100) : task.status === 'running' ? 18 : 100;
+  const visual = taskProgressVisual(task);
+  const analyzeRunning = task.kind === 'analyze' && task.status === 'running';
   return (
     <div className="task-detail">
       <div className="status-line">
         <span className={`status-badge ${task.status}`}>{statusLabel(task.status)}</span>
         <strong>{task.stage || '等待'}</strong>
       </div>
-      <Progress value={percent} />
+      <Progress value={visual.value} indeterminate={visual.indeterminate} />
       <div className="task-stats">
         <span>来源 <b>{task.source || '本地缓存'}</b></span>
-        <span>当前 <b>{task.current_stock || '-'}</b></span>
-        <span>进度 <b>{formatInt(task.processed)} / {formatInt(task.total)}</b></span>
-        <span>成功 <b>{formatInt(task.success)}</b></span>
-        <span>失败 <b>{formatInt(task.failed)}</b></span>
-        <span>跳过 <b>{formatInt(task.skipped)}</b></span>
+        {analyzeRunning ? (
+          <>
+            <span>当前阶段 <b>{task.stage || '准备分析'}</b></span>
+            <span>方式 <b>批量计算</b></span>
+            <span>进度 <b>自动刷新</b></span>
+            <span>结果 <b>完成后写入报告</b></span>
+            <span>状态 <b>运行中</b></span>
+          </>
+        ) : (
+          <>
+            <span>当前 <b>{task.current_stock || '-'}</b></span>
+            <span>进度 <b>{formatInt(task.processed)} / {formatInt(task.total)}</b></span>
+            <span>成功 <b>{formatInt(task.success)}</b></span>
+            <span>失败 <b>{formatInt(task.failed)}</b></span>
+            <span>跳过 <b>{formatInt(task.skipped)}</b></span>
+          </>
+        )}
       </div>
       {task.warning && <InlineError text={task.warning} />}
       {task.error_message && <InlineError text={task.error_message} />}
@@ -1466,17 +1479,27 @@ function PanelTitle({ icon, title }: { icon: ReactNode; title: string }) {
 
 function TaskStrip({ task, fallback }: { task: TaskRun | null; fallback: string }) {
   if (!task) return <div className="task-strip idle">{fallback}</div>;
-  const percent = task.total ? Math.round((task.processed / task.total) * 100) : task.status === 'running' ? 18 : 100;
+  const visual = taskProgressVisual(task);
   return (
     <div className="task-strip">
       <div>
         <span className={`status-badge ${task.status}`}>{statusLabel(task.status)}</span>
         <strong>{task.stage}</strong>
-        <small>{task.current_stock || task.source || '本地缓存'}</small>
+        <small>{task.kind === 'analyze' && task.status === 'running' ? '阶段推进中' : task.current_stock || task.source || '本地缓存'}</small>
       </div>
-      <Progress value={percent} />
+      <Progress value={visual.value} indeterminate={visual.indeterminate} />
     </div>
   );
+}
+
+function taskProgressVisual(task: TaskRun) {
+  if (task.kind === 'analyze' && task.status === 'running') {
+    return { value: 46, indeterminate: true };
+  }
+  return {
+    value: task.total ? Math.round((task.processed / task.total) * 100) : task.status === 'running' ? 18 : 100,
+    indeterminate: false,
+  };
 }
 
 function StatusDot({ task, label }: { task?: TaskRun | null; label: string }) {
@@ -1488,9 +1511,9 @@ function StatusDot({ task, label }: { task?: TaskRun | null; label: string }) {
   );
 }
 
-function Progress({ value }: { value: number }) {
+function Progress({ value, indeterminate = false }: { value: number; indeterminate?: boolean }) {
   return (
-    <div className="progress" aria-label={`进度 ${value}%`}>
+    <div className={indeterminate ? 'progress indeterminate' : 'progress'} aria-label={indeterminate ? '运行中' : `进度 ${value}%`}>
       <i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
     </div>
   );

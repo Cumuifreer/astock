@@ -401,6 +401,21 @@ h1 {
   background: linear-gradient(90deg, var(--teal), var(--lime));
 }
 
+.progress.indeterminate i {
+  width: 42% !important;
+  animation: progress-scan 1.35s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+@keyframes progress-scan {
+  0% {
+    transform: translateX(-110%);
+  }
+
+  100% {
+    transform: translateX(240%);
+  }
+}
+
 .coverage-line,
 .capability-row,
 .status-line,

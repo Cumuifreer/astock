@@ -165,14 +165,23 @@ class UpdateService:
 
     def _run_analysis(self, task_id: str, config: Dict[str, Any], analysis_runner: Any) -> None:
         try:
-            self._patch_task(task_id, stage="读取本地数据", processed=1, total=3)
-            run_id = analysis_runner.run(config)
+            def progress(stage: str, processed: int, total: int) -> None:
+                self._patch_task(
+                    task_id,
+                    stage=stage,
+                    source="本地仓库",
+                    processed=processed,
+                    total=total,
+                )
+
+            run_id = analysis_runner.run(config, progress=progress)
             candidates = self.data_service.candidates(run_id, limit=1)
             self._patch_task(
                 task_id,
                 status="completed_full",
                 stage="分析完成",
-                processed=3,
+                processed=7,
+                total=7,
                 success=1,
                 summary={
                     "analysis_run_id": run_id,

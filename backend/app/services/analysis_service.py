@@ -4,13 +4,17 @@ import json
 import math
 import uuid
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
 from backend.app.db import Database
 from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
 from backend.app.services.strategy_service import normalize_strategy_config
+
+
+AnalysisProgress = Callable[[str, int, int], None]
+ANALYSIS_TOTAL_STEPS = 7
 
 
 def compute_amplitude(
@@ -1007,11 +1011,16 @@ def _zero_reason(funnel: List[Dict[str, Any]]) -> str:
     return f"主要卡在“{largest['step_name']}”：该层过滤掉 {largest['removed_count']} 只股票。"
 
 
+def _emit_analysis_progress(progress: Optional[AnalysisProgress], stage: str, processed: int) -> None:
+    if progress:
+        progress(stage, processed, ANALYSIS_TOTAL_STEPS)
+
+
 class AnalysisService:
     def __init__(self, db: Database):
         self.db = db
 
-    def run(self, config: Dict[str, Any]) -> str:
+    def run(self, config: Dict[str, Any], progress: Optional[AnalysisProgress] = None) -> str:
         run_id = f"analysis-{uuid.uuid4().hex[:12]}"
         strategy = normalize_strategy_config(config)
         now = datetime.utcnow()
@@ -1031,8 +1040,13 @@ class AnalysisService:
             ["id"],
         )
         try:
-            rows = self._build_analysis_frame(strategy)
-            candidates, funnel, zero_reason = apply_strategy_filters(rows, strategy)
+            rows = self._build_analysis_frame(strategy, progress=progress)
+            _emit_analysis_progress(progress, "应用策略条件", 5)
+            if rows.empty:
+                candidates, funnel, zero_reason = [], [], _zero_reason([])
+            else:
+                candidates, funnel, zero_reason = apply_strategy_filters(rows, strategy)
+            _emit_analysis_progress(progress, "保存分析报告", 6)
             self._persist_results(run_id, candidates, funnel, zero_reason)
             status = "completed_full"
             summary = {
@@ -1065,8 +1079,14 @@ class AnalysisService:
             raise
         return run_id
 
-    def _build_analysis_frame(self, strategy: Dict[str, Any], as_of_date: Optional[date] = None) -> pd.DataFrame:
+    def _build_analysis_frame(
+        self,
+        strategy: Dict[str, Any],
+        as_of_date: Optional[date] = None,
+        progress: Optional[AnalysisProgress] = None,
+    ) -> pd.DataFrame:
         target_date = _date_value(as_of_date) if as_of_date else None
+        _emit_analysis_progress(progress, "读取本地行情", 1)
         if target_date:
             bars = pd.DataFrame(
                 self.db.query(
@@ -1094,6 +1114,7 @@ class AnalysisService:
             )
         if bars.empty:
             return pd.DataFrame()
+        _emit_analysis_progress(progress, "合并快照与市值", 2)
         if target_date:
             snapshots = pd.DataFrame()
             if strategy.get("_backtest_float_market_value_policy") == "latest_proxy":
@@ -1151,7 +1172,9 @@ class AnalysisService:
                     """
                 )
             )
+        _emit_analysis_progress(progress, "计算相对强弱", 3)
         rps_scores = compute_rps_scores(bars[["code", "date", "close"]], windows=(20, 60, 120))
+        _emit_analysis_progress(progress, "计算技术形态", 4)
         output = []
         for code, group in bars.groupby("code"):
             group = group.sort_values("date")
