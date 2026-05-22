@@ -1235,7 +1235,8 @@ function BacktestPage({
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [report, setReport] = useState<BacktestResult>(result);
   const running = isTaskActive(task);
-  const selectedPreset = presets.find((preset) => preset.id === selectedBacktestStrategyId);
+  const backtestPresets = presets.filter((preset) => !preset.is_system);
+  const selectedPreset = backtestPresets.find((preset) => preset.id === selectedBacktestStrategyId);
   const runStrategy = selectedBacktestStrategyId === 'current' || !selectedPreset ? strategy : selectedPreset.config;
   const runStrategyName = selectedBacktestStrategyId === 'current' || !selectedPreset ? '当前编辑策略' : selectedPreset.name;
 
@@ -1298,11 +1299,11 @@ function BacktestPage({
             <span>回测策略</span>
             <select value={selectedBacktestStrategyId} onChange={(event) => setSelectedBacktestStrategyId(event.target.value)}>
               <option value="current">当前编辑策略</option>
-              {presets.map((preset) => (
+              {backtestPresets.map((preset) => (
                 <option key={preset.id} value={preset.id}>{preset.name}</option>
               ))}
             </select>
-            <small className="field-hint">{runStrategyName} · 启动时保存策略快照</small>
+            <small className="field-hint">{runStrategyName} · 只列出我的策略</small>
           </label>
           <label className="field">
             <span>开始日期</span>
