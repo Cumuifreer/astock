@@ -305,7 +305,7 @@ def test_trend_resonance_filters_keep_multi_indicator_candidate():
                 "trend_stoch_k_above_d": True,
                 "trend_stoch_overheated": False,
                 "trend_signal_match": True,
-                "trend_signal_label": "雷霆共振",
+                "trend_signal_label": "强动能确认",
             },
             {
                 "code": "000002.SZ",
@@ -343,7 +343,7 @@ def test_trend_resonance_filters_keep_multi_indicator_candidate():
                 "trend_stoch_k_above_d": True,
                 "trend_stoch_overheated": False,
                 "trend_signal_match": True,
-                "trend_signal_label": "顺势而为",
+                "trend_signal_label": "趋势延续",
             },
         ]
     )
@@ -366,7 +366,7 @@ def test_trend_resonance_filters_keep_multi_indicator_candidate():
 
     assert zero_reason is None
     assert [candidate["code"] for candidate in candidates] == ["000001.SZ"]
-    assert candidates[0]["signal_type"] == "雷霆共振"
+    assert candidates[0]["signal_type"] == "强动能确认"
     assert any("EMA60" in reason for reason in candidates[0]["reasons"])
     assert any(step["step_name"] == "EMA60 上升" for step in funnel)
 

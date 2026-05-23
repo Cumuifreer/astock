@@ -361,7 +361,7 @@ def compute_trend_resonance_metrics(group: pd.DataFrame, strategy: Dict[str, Any
         signal_match = stealth
     else:
         signal_match = thunder or follow or stealth
-    signal_label = "雷霆共振" if thunder else "顺势而为" if follow else "暗度陈仓" if stealth else "趋势观察"
+    signal_label = "强动能确认" if thunder else "趋势延续" if follow else "早期转强" if stealth else "趋势观察"
 
     return {
         "trend_ready": True,
@@ -930,7 +930,7 @@ def _apply_trend_resonance_filters(
         step = "随机指标金叉" if stoch_mode == "cross_up" else "随机指标共振"
         note = "慢速随机指标 K 上穿 D" if stoch_mode == "cross_up" else "慢速随机指标 K 在 D 上方"
         working = _bool_filter(working, column, step, funnel, note)
-    working = _bool_filter(working, "trend_signal_match", "趋势信号", funnel, "雷霆共振、顺势而为或暗度陈仓至少一种成立")
+    working = _bool_filter(working, "trend_signal_match", "趋势信号", funnel, "强动能确认、趋势延续或早期转强至少一种成立")
     return working
 
 

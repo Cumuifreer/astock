@@ -848,7 +848,7 @@ function StrategyPanel(props: {
               <NumberField label="EMA 快线" value={props.strategy.trend_ema_fast_window} onChange={(value) => update('trend_ema_fast_window', value)} description="默认 13，观察短线趋势是否抬头。" />
               <NumberField label="EMA 中线" value={props.strategy.trend_ema_mid_window} onChange={(value) => update('trend_ema_mid_window', value)} description="默认 21，用来控制买点是否离节奏线太远。" />
               <NumberField label="EMA 长线" value={props.strategy.trend_ema_long_window} onChange={(value) => update('trend_ema_long_window', value)} description="默认 60，判断中期趋势方向。" />
-              <SelectField label="趋势信号" value={props.strategy.trend_entry_signal} onChange={(value) => update('trend_entry_signal', value)} options={[['any', '三类信号都看'], ['thunder', '只看雷霆共振'], ['follow', '只看顺势而为'], ['stealth', '只看暗度陈仓']]} description="雷霆偏强确认，顺势偏趋势延续，暗度陈仓偏早期转强。" />
+              <SelectField label="趋势信号" value={props.strategy.trend_entry_signal} onChange={(value) => update('trend_entry_signal', value)} options={[['any', '全部趋势信号'], ['thunder', '强动能确认'], ['follow', '趋势延续'], ['stealth', '早期转强']]} description="强动能看趋势、MACD、随机指标同时走强；趋势延续看沿长期均线上方保持强势；早期转强偏观察趋势刚改善。" />
               <NumberField label="MACD 快线" value={props.strategy.trend_macd_fast} onChange={(value) => update('trend_macd_fast', value)} description="默认 4，来自文章参数 4-26-6。" />
               <NumberField label="MACD 慢线" value={props.strategy.trend_macd_slow} onChange={(value) => update('trend_macd_slow', value)} />
               <NumberField label="MACD 信号线" value={props.strategy.trend_macd_signal} onChange={(value) => update('trend_macd_signal', value)} />
