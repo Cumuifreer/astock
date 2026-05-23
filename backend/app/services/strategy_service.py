@@ -135,6 +135,20 @@ SYSTEM_PRESETS = [
     },
 ]
 
+STRATEGY_VERSIONS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS strategy_versions (
+    id TEXT PRIMARY KEY,
+    preset_id TEXT,
+    strategy_name TEXT,
+    version_number INTEGER,
+    config_hash TEXT,
+    config_json TEXT,
+    summary TEXT,
+    created_at TIMESTAMP,
+    UNIQUE (preset_id, version_number)
+)
+"""
+
 
 def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     merged = {**DEFAULT_STRATEGY_CONFIG, **(config or {})}
@@ -236,6 +250,7 @@ class StrategyService:
 
     def list_versions(self, preset_id: str) -> List[Dict[str, Any]]:
         try:
+            self._ensure_versions_table()
             rows = self.db.query(
                 """
                 SELECT *
@@ -346,6 +361,7 @@ class StrategyService:
             where = f"WHERE preset_id IN ({placeholders})"
             params.extend(preset_ids)
         try:
+            self._ensure_versions_table()
             rows = self.db.query(
                 f"""
                 SELECT *
@@ -370,6 +386,10 @@ class StrategyService:
         config: Dict[str, Any],
         now: datetime,
     ) -> None:
+        try:
+            self._ensure_versions_table()
+        except duckdb.Error:
+            return
         config_hash = _config_hash(config)
         latest = self._latest_versions([preset_id]).get(preset_id)
         if latest and latest.get("config_hash") == config_hash:
@@ -394,6 +414,9 @@ class StrategyService:
             )
         except duckdb.Error:
             return
+
+    def _ensure_versions_table(self) -> None:
+        self.db.execute(STRATEGY_VERSIONS_TABLE_SQL, write=True)
 
 
 def _config_hash(config: Dict[str, Any]) -> str:

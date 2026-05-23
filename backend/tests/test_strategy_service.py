@@ -153,15 +153,16 @@ def test_save_preset_records_versions_only_when_config_changes(tmp_path):
     assert preset["latest_version_id"] == versions[0]["id"]
 
 
-def test_save_preset_still_succeeds_when_version_table_is_missing(tmp_path):
+def test_save_preset_recreates_missing_version_table_and_records_version(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.execute("DROP TABLE strategy_versions", write=True)
     service = StrategyService(db)
 
     preset = service.save_preset("临时策略", {"signal_mode": "platform_setup"})
+    versions = service.list_versions(preset["id"])
 
     assert preset["id"].startswith("custom-")
     assert preset["name"] == "临时策略"
-    assert preset["latest_version_number"] is None
-    assert service.list_versions(preset["id"]) == []
+    assert preset["latest_version_number"] == 1
+    assert [version["version_number"] for version in versions] == [1]
