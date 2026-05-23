@@ -10,6 +10,7 @@ from backend.app.services.strategy_service import (
     SYSTEM_PRESETS,
     _config_hash,
     _strategy_summary,
+    insert_strategy_versions,
     normalize_strategy_config,
 )
 
@@ -485,4 +486,4 @@ def backfill_strategy_versions(db: Database) -> None:
                 "created_at": row.get("updated_at") or datetime.utcnow(),
             }
         )
-    db.upsert("strategy_versions", version_rows, ["id"])
+    insert_strategy_versions(db, version_rows)

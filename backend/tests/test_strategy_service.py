@@ -168,7 +168,27 @@ def test_save_preset_recreates_missing_version_table_and_records_version(tmp_pat
     assert [version["version_number"] for version in versions] == [1]
 
 
-def test_migrate_backfills_initial_version_for_existing_custom_presets(tmp_path):
+def test_save_preset_records_version_without_generic_version_upsert(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    original_upsert = db.upsert
+
+    def guarded_upsert(table, rows, key_columns):
+        if table == "strategy_versions":
+            raise AssertionError("strategy version writes must not use generic upsert")
+        return original_upsert(table, rows, key_columns)
+
+    monkeypatch.setattr(db, "upsert", guarded_upsert)
+    service = StrategyService(db)
+
+    preset = service.save_preset("临时策略", {"signal_mode": "platform_setup"})
+    versions = service.list_versions(preset["id"])
+
+    assert preset["latest_version_number"] == 1
+    assert [version["version_number"] for version in versions] == [1]
+
+
+def test_migrate_backfills_initial_version_for_existing_custom_presets(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert(
@@ -187,6 +207,14 @@ def test_migrate_backfills_initial_version_for_existing_custom_presets(tmp_path)
         ],
         ["id"],
     )
+    original_upsert = db.upsert
+
+    def guarded_upsert(table, rows, key_columns):
+        if table == "strategy_versions":
+            raise AssertionError("strategy version writes must not use generic upsert")
+        return original_upsert(table, rows, key_columns)
+
+    monkeypatch.setattr(db, "upsert", guarded_upsert)
 
     migrate(db)
     preset = StrategyService(db).get_preset("custom-existing")

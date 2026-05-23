@@ -149,6 +149,45 @@ CREATE TABLE IF NOT EXISTS strategy_versions (
 )
 """
 
+STRATEGY_VERSION_COLUMNS = [
+    "id",
+    "preset_id",
+    "strategy_name",
+    "version_number",
+    "config_hash",
+    "config_json",
+    "summary",
+    "created_at",
+]
+
+
+def insert_strategy_versions(db: Database, rows: List[Dict[str, Any]]) -> int:
+    inserted = 0
+    if not rows:
+        return inserted
+    db.execute(STRATEGY_VERSIONS_TABLE_SQL, write=True)
+    placeholders = ", ".join(["?"] * len(STRATEGY_VERSION_COLUMNS))
+    column_sql = ", ".join(STRATEGY_VERSION_COLUMNS)
+    insert_sql = f"INSERT INTO strategy_versions ({column_sql}) VALUES ({placeholders})"
+    for row in rows:
+        if db.scalar(
+            """
+            SELECT 1
+            FROM strategy_versions
+            WHERE preset_id = ? AND version_number = ?
+            LIMIT 1
+            """,
+            [row["preset_id"], row["version_number"]],
+        ):
+            continue
+        db.execute(
+            insert_sql,
+            [row.get(column) for column in STRATEGY_VERSION_COLUMNS],
+            write=True,
+        )
+        inserted += 1
+    return inserted
+
 
 def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     merged = {**DEFAULT_STRATEGY_CONFIG, **(config or {})}
@@ -396,8 +435,8 @@ class StrategyService:
             return
         version_number = int(latest.get("version_number") or 0) + 1 if latest else 1
         try:
-            self.db.upsert(
-                "strategy_versions",
+            insert_strategy_versions(
+                self.db,
                 [
                     {
                         "id": f"version-{uuid.uuid4().hex[:12]}",
@@ -410,7 +449,6 @@ class StrategyService:
                         "created_at": now,
                     }
                 ],
-                ["id"],
             )
         except duckdb.Error:
             return
