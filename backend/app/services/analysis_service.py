@@ -277,6 +277,124 @@ def compute_platform_setup_metrics(group: pd.DataFrame, strategy: Dict[str, Any]
     }
 
 
+def compute_trend_resonance_metrics(group: pd.DataFrame, strategy: Dict[str, Any]) -> Dict[str, Any]:
+    clean = group.copy().sort_values("date")
+    for column in ["open", "high", "low", "close", "volume"]:
+        clean[column] = pd.to_numeric(clean.get(column), errors="coerce")
+
+    ema_fast_window = max(2, int(strategy.get("trend_ema_fast_window") or 13))
+    ema_mid_window = max(ema_fast_window + 1, int(strategy.get("trend_ema_mid_window") or 21))
+    ema_long_window = max(ema_mid_window + 1, int(strategy.get("trend_ema_long_window") or 60))
+    stoch_window = max(5, int(strategy.get("trend_stoch_window") or 27))
+    k_smooth = max(1, int(strategy.get("trend_stoch_k_smooth") or 9))
+    d_smooth = max(1, int(strategy.get("trend_stoch_d_smooth") or 3))
+    required_rows = max(ema_long_window + 2, int(strategy.get("trend_macd_slow") or 26) + int(strategy.get("trend_macd_signal") or 6) + 2, stoch_window + k_smooth + d_smooth)
+    clean = clean.dropna(subset=["high", "low", "close"])
+    if len(clean) < required_rows:
+        return {"trend_ready": False}
+
+    close = clean["close"]
+    latest_close = safe_float(close.iloc[-1])
+    prev_close = safe_float(close.iloc[-2])
+    ema_fast_series = close.ewm(span=ema_fast_window, adjust=False).mean()
+    ema_mid_series = close.ewm(span=ema_mid_window, adjust=False).mean()
+    ema_long_series = close.ewm(span=ema_long_window, adjust=False).mean()
+    ema_fast = safe_float(ema_fast_series.iloc[-1])
+    ema_mid = safe_float(ema_mid_series.iloc[-1])
+    ema_long = safe_float(ema_long_series.iloc[-1])
+    prev_ema_fast = safe_float(ema_fast_series.iloc[-2])
+    prev_ema_mid = safe_float(ema_mid_series.iloc[-2])
+    prev_ema_long = safe_float(ema_long_series.iloc[-2])
+
+    macd_dif, macd_dea, macd_hist = _macd_values(
+        close,
+        int(strategy.get("trend_macd_fast") or 4),
+        int(strategy.get("trend_macd_slow") or 26),
+        int(strategy.get("trend_macd_signal") or 6),
+        include_hist=True,
+    )
+    stoch_k, stoch_d, prev_stoch_k, prev_stoch_d = _slow_stochastic_values(
+        clean["high"],
+        clean["low"],
+        close,
+        stoch_window,
+        k_smooth,
+        d_smooth,
+    )
+    recent_gain_10d = None
+    if len(close) >= 11:
+        base = safe_float(close.iloc[-11])
+        if base is not None and latest_close is not None and base > 0:
+            recent_gain_10d = (latest_close - base) / base
+    ema_mid_distance = (
+        (latest_close - ema_mid) / ema_mid
+        if latest_close is not None and ema_mid is not None and ema_mid > 0
+        else None
+    )
+
+    price_above_ema_long = latest_close is not None and ema_long is not None and latest_close > ema_long
+    ema_fast_above_mid = ema_fast is not None and ema_mid is not None and ema_fast > ema_mid
+    ema_long_rising = ema_long is not None and prev_ema_long is not None and ema_long > prev_ema_long
+    ema_fast_rising = ema_fast is not None and prev_ema_fast is not None and ema_fast > prev_ema_fast
+    ema_mid_rising = ema_mid is not None and prev_ema_mid is not None and ema_mid > prev_ema_mid
+    macd_dif_above_dea = macd_dif is not None and macd_dea is not None and macd_dif > macd_dea
+    macd_dif_above_zero = macd_dif is not None and macd_dif > 0
+    stoch_k_above_d = stoch_k is not None and stoch_d is not None and stoch_k > stoch_d
+    stoch_cross_up = (
+        stoch_k_above_d
+        and prev_stoch_k is not None
+        and prev_stoch_d is not None
+        and prev_stoch_k <= prev_stoch_d
+    )
+    overheat_level = safe_float(strategy.get("trend_stoch_overheat")) or 85.0
+    stoch_overheated = stoch_k is not None and stoch_k >= overheat_level
+
+    thunder = bool(price_above_ema_long and ema_fast_above_mid and macd_dif_above_dea and stoch_k_above_d)
+    follow = bool(price_above_ema_long and ema_fast_above_mid and macd_dif_above_zero)
+    stealth = bool(price_above_ema_long and ema_fast_rising and ema_mid_rising and macd_dif_above_dea and not stoch_overheated)
+    entry_signal = strategy.get("trend_entry_signal") or "any"
+    if entry_signal == "thunder":
+        signal_match = thunder
+    elif entry_signal == "follow":
+        signal_match = follow
+    elif entry_signal == "stealth":
+        signal_match = stealth
+    else:
+        signal_match = thunder or follow or stealth
+    signal_label = "雷霆共振" if thunder else "顺势而为" if follow else "暗度陈仓" if stealth else "趋势观察"
+
+    return {
+        "trend_ready": True,
+        "trend_close": _round_optional(latest_close, 6),
+        "trend_prev_close": _round_optional(prev_close, 6),
+        "trend_ema_fast": _round_optional(ema_fast, 6),
+        "trend_ema_mid": _round_optional(ema_mid, 6),
+        "trend_ema_long": _round_optional(ema_long, 6),
+        "trend_price_above_ema_long": bool(price_above_ema_long),
+        "trend_ema_fast_above_mid": bool(ema_fast_above_mid),
+        "trend_ema_long_rising": bool(ema_long_rising),
+        "trend_ema_fast_rising": bool(ema_fast_rising),
+        "trend_ema_mid_rising": bool(ema_mid_rising),
+        "trend_ema_mid_distance": _round_optional(ema_mid_distance, 6),
+        "trend_recent_gain_10d": _round_optional(recent_gain_10d, 6),
+        "trend_macd_dif": _round_optional(macd_dif, 6),
+        "trend_macd_dea": _round_optional(macd_dea, 6),
+        "trend_macd_hist": _round_optional(macd_hist, 6),
+        "trend_macd_dif_above_dea": bool(macd_dif_above_dea),
+        "trend_macd_dif_above_zero": bool(macd_dif_above_zero),
+        "trend_stoch_k": _round_optional(stoch_k, 6),
+        "trend_stoch_d": _round_optional(stoch_d, 6),
+        "trend_stoch_k_above_d": bool(stoch_k_above_d),
+        "trend_stoch_cross_up": bool(stoch_cross_up),
+        "trend_stoch_overheated": bool(stoch_overheated),
+        "trend_thunder_signal": thunder,
+        "trend_follow_signal": follow,
+        "trend_stealth_signal": stealth,
+        "trend_signal_match": bool(signal_match),
+        "trend_signal_label": signal_label,
+    }
+
+
 def _platform_ma_values(closes: pd.Series) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     clean = pd.to_numeric(closes, errors="coerce").dropna()
     if len(clean) < 20:
@@ -296,15 +414,49 @@ def _ordered_positive(
     return fast is not None and mid is not None and slow is not None and fast > mid > slow
 
 
-def _macd_values(closes: pd.Series) -> Tuple[Optional[float], Optional[float]]:
+def _macd_values(
+    closes: pd.Series,
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+    include_hist: bool = False,
+) -> Tuple[Optional[float], Optional[float]] | Tuple[Optional[float], Optional[float], Optional[float]]:
     clean = pd.to_numeric(closes, errors="coerce").dropna()
-    if len(clean) < 26:
-        return None, None
-    ema12 = clean.ewm(span=12, adjust=False).mean()
-    ema26 = clean.ewm(span=26, adjust=False).mean()
-    dif = ema12 - ema26
-    dea = dif.ewm(span=9, adjust=False).mean()
+    if len(clean) < slow + signal:
+        return (None, None, None) if include_hist else (None, None)
+    ema_fast = clean.ewm(span=fast, adjust=False).mean()
+    ema_slow = clean.ewm(span=slow, adjust=False).mean()
+    dif = ema_fast - ema_slow
+    dea = dif.ewm(span=signal, adjust=False).mean()
+    hist = (dif - dea) * 2
+    if include_hist:
+        return float(dif.iloc[-1]), float(dea.iloc[-1]), float(hist.iloc[-1])
     return float(dif.iloc[-1]), float(dea.iloc[-1])
+
+
+def _slow_stochastic_values(
+    highs: pd.Series,
+    lows: pd.Series,
+    closes: pd.Series,
+    window: int,
+    k_smooth: int,
+    d_smooth: int,
+) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+    high = pd.to_numeric(highs, errors="coerce")
+    low = pd.to_numeric(lows, errors="coerce")
+    close = pd.to_numeric(closes, errors="coerce")
+    lowest = low.rolling(window=window, min_periods=window).min()
+    highest = high.rolling(window=window, min_periods=window).max()
+    spread = highest - lowest
+    raw_k = ((close - lowest) / spread.replace(0, pd.NA)) * 100
+    slow_k = raw_k.rolling(window=k_smooth, min_periods=k_smooth).mean()
+    slow_d = slow_k.rolling(window=d_smooth, min_periods=d_smooth).mean()
+    valid = pd.DataFrame({"k": slow_k, "d": slow_d}).dropna()
+    if len(valid) < 2:
+        return None, None, None, None
+    latest = valid.iloc[-1]
+    previous = valid.iloc[-2]
+    return float(latest["k"]), float(latest["d"]), float(previous["k"]), float(previous["d"])
 
 
 def _round_optional(value: Optional[float], digits: int) -> Optional[float]:
@@ -362,6 +514,11 @@ def apply_strategy_filters(
             if working.empty:
                 zero_reason = _zero_reason(funnel)
                 return [], funnel, zero_reason
+        if strategy.get("signal_mode") == "trend_resonance":
+            working = _apply_trend_resonance_filters(working, strategy, funnel)
+            if working.empty:
+                zero_reason = _zero_reason(funnel)
+                return [], funnel, zero_reason
         return _rank_candidates(
             working,
             strategy,
@@ -369,7 +526,7 @@ def apply_strategy_filters(
             score_mode=True,
         )
 
-    if strategy.get("trend_filter") == "ma_short_above_long":
+    if strategy.get("trend_filter") == "ma_short_above_long" and strategy.get("signal_mode") != "trend_resonance":
         before = len(working)
         working = working[
             pd.to_numeric(working.get("ma_short"), errors="coerce")
@@ -428,6 +585,8 @@ def apply_strategy_filters(
         working = _apply_platform_breakout_filters(working, strategy, funnel)
     if strategy.get("signal_mode") == "platform_setup":
         working = _apply_platform_setup_filters(working, strategy, funnel)
+    if strategy.get("signal_mode") == "trend_resonance":
+        working = _apply_trend_resonance_filters(working, strategy, funnel)
 
     if working.empty:
         zero_reason = _zero_reason(funnel)
@@ -712,6 +871,68 @@ def _apply_platform_setup_filters(
     return working
 
 
+def _apply_trend_resonance_filters(
+    frame: pd.DataFrame,
+    strategy: Dict[str, Any],
+    funnel: List[Dict[str, Any]],
+) -> pd.DataFrame:
+    working = _bool_filter(frame, "trend_ready", "趋势数据", funnel, "需要足够历史 K 线")
+    if strategy.get("trend_require_price_above_ema_long"):
+        working = _bool_filter(working, "trend_price_above_ema_long", "价格站上 EMA60", funnel, "最新收盘在中期趋势线上方")
+    if strategy.get("trend_require_ema_long_rising"):
+        working = _bool_filter(working, "trend_ema_long_rising", "EMA60 上升", funnel, "中期趋势线向上")
+    if strategy.get("trend_require_ema_fast_above_mid"):
+        working = _bool_filter(working, "trend_ema_fast_above_mid", "EMA13/21 多头", funnel, "EMA13 在 EMA21 上方")
+    working = _numeric_filter(
+        working,
+        "trend_ema_mid_distance",
+        None,
+        strategy.get("trend_max_ema_mid_distance"),
+        "EMA21 乖离",
+        funnel,
+    )
+    working = _numeric_filter(
+        working,
+        "trend_recent_gain_10d",
+        None,
+        strategy.get("trend_max_recent_gain_10d"),
+        "短线不过热",
+        funnel,
+    )
+    macd_mode = strategy.get("trend_macd_mode") or "dif_above_dea"
+    if macd_mode != "off":
+        before = len(working)
+        dif = pd.to_numeric(working.get("trend_macd_dif"), errors="coerce")
+        dea = pd.to_numeric(working.get("trend_macd_dea"), errors="coerce")
+        if macd_mode == "dif_dea_above_zero":
+            mask = (dif > dea) & (dif > 0) & (dea > 0)
+            note = "DIF 强于 DEA，且二者在 0 轴上方"
+        elif macd_mode == "dif_above_zero":
+            mask = dif > 0
+            note = "DIF 在 0 轴上方"
+        else:
+            mask = dif > dea
+            note = "DIF 强于 DEA"
+        working = working[mask]
+        funnel.append(
+            {
+                "step_name": "MACD 共振",
+                "before_count": int(before),
+                "after_count": int(len(working)),
+                "removed_count": int(before - len(working)),
+                "note": note,
+            }
+        )
+    stoch_mode = strategy.get("trend_stoch_mode") or "k_above_d"
+    if stoch_mode != "off":
+        column = "trend_stoch_cross_up" if stoch_mode == "cross_up" else "trend_stoch_k_above_d"
+        step = "随机指标金叉" if stoch_mode == "cross_up" else "随机指标共振"
+        note = "慢速随机指标 K 上穿 D" if stoch_mode == "cross_up" else "慢速随机指标 K 在 D 上方"
+        working = _bool_filter(working, column, step, funnel, note)
+    working = _bool_filter(working, "trend_signal_match", "趋势信号", funnel, "雷霆共振、顺势而为或暗度陈仓至少一种成立")
+    return working
+
+
 def _bool_filter(
     frame: pd.DataFrame,
     column: str,
@@ -750,10 +971,15 @@ def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
         if strategy.get("analysis_mode") == "score":
             return "平台突破观察"
         return "平台突破"
+    if strategy.get("signal_mode") == "trend_resonance":
+        return str(row.get("trend_signal_label") or "趋势共振")
     distance = safe_float(row.get("ma_distance"))
     volume_ratio = safe_float(row.get("volume_ratio")) or 0
-    if strategy.get("signal_mode") == "pullback":
+    direction = strategy.get("breakout_pullback_direction") or "both"
+    if direction == "pullback":
         return "左侧回踩"
+    if direction == "breakout":
+        return "右侧突破"
     if distance is not None and distance <= float(strategy.get("pullback_tolerance") or 0.04):
         return "左侧回踩"
     if volume_ratio >= float(strategy.get("volume_ratio_min") or 1.0):
@@ -929,6 +1155,48 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
         if ma_rising_mode != "off" and row.get("platform_ma_rising") and macd_bonus > 0:
             score += 4
         return round(max(score, 0), 2)
+    if strategy.get("signal_mode") == "trend_resonance":
+        score = float(rps) * 0.38
+        if row.get("trend_price_above_ema_long"):
+            score += 10
+        if row.get("trend_ema_long_rising"):
+            score += 12
+        if row.get("trend_ema_fast_above_mid"):
+            score += 10
+        if row.get("trend_ema_fast_rising"):
+            score += 5
+        if row.get("trend_ema_mid_rising"):
+            score += 5
+        if row.get("trend_macd_dif_above_dea"):
+            score += 10
+        if row.get("trend_macd_dif_above_zero"):
+            score += 6
+        if row.get("trend_stoch_k_above_d"):
+            score += 8
+        if row.get("trend_stoch_cross_up"):
+            score += 4
+        if row.get("trend_thunder_signal"):
+            score += 8
+        elif row.get("trend_follow_signal"):
+            score += 5
+        elif row.get("trend_stealth_signal"):
+            score += 6
+        distance = safe_float(row.get("trend_ema_mid_distance"))
+        max_distance = safe_float(strategy.get("trend_max_ema_mid_distance")) or 0.12
+        if distance is not None:
+            if distance <= max_distance:
+                score += max(0.0, (max_distance - max(distance, 0.0)) / max_distance) * 8
+            else:
+                score -= min((distance - max_distance) * 100, 18)
+        recent_gain = safe_float(row.get("trend_recent_gain_10d"))
+        max_gain = safe_float(strategy.get("trend_max_recent_gain_10d")) or 0.28
+        if recent_gain is not None and recent_gain > max_gain:
+            score -= min((recent_gain - max_gain) * 80, 18)
+        if row.get("trend_stoch_overheated"):
+            score -= 8
+        score += min((safe_float(row.get("volume_ratio")) or 0) * 4, 10)
+        score += min((safe_float(row.get("turnover_rate")) or 0) * 0.8, 8)
+        return round(max(score, 0), 2)
     volume_ratio = min((safe_float(row.get("volume_ratio")) or 0) * 8, 20)
     trend_bonus = 12 if (safe_float(row.get("ma_short")) or 0) > (safe_float(row.get("ma_long")) or 0) else 0
     turnover = min((safe_float(row.get("turnover_rate")) or 0) * 1.5, 12)
@@ -999,6 +1267,33 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
         macd_dif = safe_float(row.get("macd_dif"))
         if macd_dif is not None and macd_dif > 0:
             reasons.append("MACD 位于 0 轴上方")
+    if strategy.get("signal_mode") == "trend_resonance":
+        ema_fast = safe_float(row.get("trend_ema_fast"))
+        ema_mid = safe_float(row.get("trend_ema_mid"))
+        ema_long = safe_float(row.get("trend_ema_long"))
+        if ema_fast is not None and ema_mid is not None and ema_long is not None:
+            reasons.append(
+                f"EMA{strategy.get('trend_ema_fast_window')}/"
+                f"{strategy.get('trend_ema_mid_window')}/"
+                f"EMA{strategy.get('trend_ema_long_window')} {ema_fast:.2f}/{ema_mid:.2f}/{ema_long:.2f}"
+            )
+        distance = safe_float(row.get("trend_ema_mid_distance"))
+        if distance is not None:
+            reasons.append(f"距 EMA21 {distance * 100:.2f}%")
+        macd_dif = safe_float(row.get("trend_macd_dif"))
+        macd_dea = safe_float(row.get("trend_macd_dea"))
+        if macd_dif is not None and macd_dea is not None:
+            reasons.append(f"MACD DIF/DEA {macd_dif:.3f}/{macd_dea:.3f}")
+        stoch_k = safe_float(row.get("trend_stoch_k"))
+        stoch_d = safe_float(row.get("trend_stoch_d"))
+        if stoch_k is not None and stoch_d is not None:
+            reasons.append(f"随机指标 K/D {stoch_k:.1f}/{stoch_d:.1f}")
+        recent_gain = safe_float(row.get("trend_recent_gain_10d"))
+        if recent_gain is not None:
+            reasons.append(f"近10日涨幅 {recent_gain * 100:.2f}%")
+        label = row.get("trend_signal_label")
+        if label:
+            reasons.append(str(label))
     return reasons
 
 
@@ -1211,6 +1506,8 @@ class AnalysisService:
             platform_metrics = compute_platform_breakout_metrics(group, strategy)
             if strategy.get("signal_mode") == "platform_setup":
                 platform_metrics.update(compute_platform_setup_metrics(group, strategy))
+            if strategy.get("signal_mode") == "trend_resonance":
+                platform_metrics.update(compute_trend_resonance_metrics(group, strategy))
             output.append(
                 {
                     "code": code,

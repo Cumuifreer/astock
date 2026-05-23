@@ -2,7 +2,7 @@ import json
 
 from backend.app.db import Database
 from backend.app.schema import migrate
-from backend.app.services.strategy_service import StrategyService
+from backend.app.services.strategy_service import StrategyService, normalize_strategy_config
 
 
 def test_list_presets_normalizes_missing_new_fields(tmp_path):
@@ -39,6 +39,19 @@ def test_list_presets_normalizes_missing_new_fields(tmp_path):
     assert old["config"]["platform_ma_bullish_mode"] == "score"
     assert old["config"]["platform_ma_rising_mode"] == "score"
     assert old["config"]["platform_macd_filter_mode"] == "score"
+
+
+def test_normalize_legacy_breakout_modes_to_unified_mode():
+    breakout = normalize_strategy_config({"signal_mode": "breakout"})
+    pullback = normalize_strategy_config({"signal_mode": "pullback"})
+    combined = normalize_strategy_config({"signal_mode": "breakout_or_pullback"})
+
+    assert breakout["signal_mode"] == "breakout_or_pullback"
+    assert breakout["breakout_pullback_direction"] == "breakout"
+    assert pullback["signal_mode"] == "breakout_or_pullback"
+    assert pullback["breakout_pullback_direction"] == "pullback"
+    assert combined["breakout_pullback_direction"] == "both"
+    assert normalize_strategy_config({"signal_mode": "trend_resonance"})["trend_ema_long_window"] == 60
 
 
 def test_migrate_refreshes_system_template_config_without_resetting_user_default(tmp_path):

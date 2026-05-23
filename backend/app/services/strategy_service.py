@@ -21,6 +21,7 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "trend_filter": "ma_short_above_long",
     "analysis_mode": "strict",
     "signal_mode": "breakout_or_pullback",
+    "breakout_pullback_direction": "both",
     "breakout_lookback": 20,
     "pullback_tolerance": 0.035,
     "platform_lookback_days": 20,
@@ -60,6 +61,24 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "platform_setup_ma_convergence_max": 0.05,
     "platform_setup_require_ma_turning": True,
     "platform_setup_macd_mode": "dif_above_dea",
+    "trend_ema_fast_window": 13,
+    "trend_ema_mid_window": 21,
+    "trend_ema_long_window": 60,
+    "trend_macd_fast": 4,
+    "trend_macd_slow": 26,
+    "trend_macd_signal": 6,
+    "trend_stoch_window": 27,
+    "trend_stoch_k_smooth": 9,
+    "trend_stoch_d_smooth": 3,
+    "trend_entry_signal": "any",
+    "trend_require_price_above_ema_long": True,
+    "trend_require_ema_long_rising": True,
+    "trend_require_ema_fast_above_mid": True,
+    "trend_macd_mode": "dif_above_dea",
+    "trend_stoch_mode": "k_above_d",
+    "trend_max_ema_mid_distance": 0.12,
+    "trend_max_recent_gain_10d": 0.28,
+    "trend_stoch_overheat": 85.0,
     "macd_filter_enabled": True,
     "macd_position": "dif_dea_above_zero",
     "max_amplitude": 0.12,
@@ -85,7 +104,7 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
 SYSTEM_PRESETS = [
     {
         "id": "system-momentum",
-        "name": "右侧强势突破",
+        "name": "突破回踩",
         "is_default": True,
         "config": DEFAULT_STRATEGY_CONFIG,
     },
@@ -95,7 +114,8 @@ SYSTEM_PRESETS = [
         "is_default": False,
         "config": {
             **DEFAULT_STRATEGY_CONFIG,
-            "signal_mode": "pullback",
+            "signal_mode": "breakout_or_pullback",
+            "breakout_pullback_direction": "pullback",
             "min_rps20": 60.0,
             "volume_ratio_min": 0.8,
             "max_ma_distance": 0.08,
@@ -131,6 +151,23 @@ SYSTEM_PRESETS = [
             "max_ma_distance": 0.1,
             "min_pct_chg": -3.0,
             "max_pct_chg": 6.0,
+        },
+    },
+    {
+        "id": "system-trend-resonance",
+        "name": "趋势共振",
+        "is_default": False,
+        "config": {
+            **DEFAULT_STRATEGY_CONFIG,
+            "signal_mode": "trend_resonance",
+            "analysis_mode": "score",
+            "trend_filter": "none",
+            "min_rps20": 60.0,
+            "min_pct_chg": -3.0,
+            "max_pct_chg": 8.0,
+            "volume_ratio_min": None,
+            "max_ma_distance": None,
+            "sort_by": "signal_score",
         },
     },
 ]
@@ -191,10 +228,39 @@ def insert_strategy_versions(db: Database, rows: List[Dict[str, Any]]) -> int:
 
 def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     merged = {**DEFAULT_STRATEGY_CONFIG, **(config or {})}
+    raw_signal_mode = merged.get("signal_mode")
+    if raw_signal_mode in {"breakout", "pullback"}:
+        merged["signal_mode"] = "breakout_or_pullback"
+        if not (config or {}).get("breakout_pullback_direction"):
+            merged["breakout_pullback_direction"] = str(raw_signal_mode)
+    if merged.get("signal_mode") not in {
+        "breakout_or_pullback",
+        "platform_breakout",
+        "platform_setup",
+        "trend_resonance",
+    }:
+        merged["signal_mode"] = "breakout_or_pullback"
+    if merged.get("breakout_pullback_direction") not in {"both", "breakout", "pullback"}:
+        merged["breakout_pullback_direction"] = "both"
     merged["ma_short_window"] = max(3, int(merged["ma_short_window"]))
     merged["ma_long_window"] = max(merged["ma_short_window"] + 1, int(merged["ma_long_window"]))
     merged["platform_lookback_days"] = max(10, int(merged["platform_lookback_days"]))
     merged["platform_setup_lookback_days"] = max(10, int(merged["platform_setup_lookback_days"]))
+    merged["trend_ema_fast_window"] = max(2, int(merged["trend_ema_fast_window"]))
+    merged["trend_ema_mid_window"] = max(merged["trend_ema_fast_window"] + 1, int(merged["trend_ema_mid_window"]))
+    merged["trend_ema_long_window"] = max(merged["trend_ema_mid_window"] + 1, int(merged["trend_ema_long_window"]))
+    merged["trend_macd_fast"] = max(2, int(merged["trend_macd_fast"]))
+    merged["trend_macd_slow"] = max(merged["trend_macd_fast"] + 1, int(merged["trend_macd_slow"]))
+    merged["trend_macd_signal"] = max(2, int(merged["trend_macd_signal"]))
+    merged["trend_stoch_window"] = max(5, int(merged["trend_stoch_window"]))
+    merged["trend_stoch_k_smooth"] = max(1, int(merged["trend_stoch_k_smooth"]))
+    merged["trend_stoch_d_smooth"] = max(1, int(merged["trend_stoch_d_smooth"]))
+    if merged.get("trend_entry_signal") not in {"any", "thunder", "follow", "stealth"}:
+        merged["trend_entry_signal"] = "any"
+    if merged.get("trend_macd_mode") not in {"off", "dif_above_dea", "dif_above_zero", "dif_dea_above_zero"}:
+        merged["trend_macd_mode"] = "dif_above_dea"
+    if merged.get("trend_stoch_mode") not in {"off", "k_above_d", "cross_up"}:
+        merged["trend_stoch_mode"] = "k_above_d"
     if merged.get("platform_range_basis") not in {"high_low", "close"}:
         merged["platform_range_basis"] = "high_low"
     if merged.get("platform_breakout_clearance_mode") not in {"must", "score", "off"}:
@@ -465,11 +531,10 @@ def _config_hash(config: Dict[str, Any]) -> str:
 def _strategy_summary(config: Dict[str, Any]) -> str:
     normalized = normalize_strategy_config(config)
     mode_labels = {
-        "breakout_or_pullback": "突破或回踩",
-        "breakout": "右侧突破",
-        "pullback": "左侧回踩",
+        "breakout_or_pullback": "突破回踩",
         "platform_breakout": "平台突破",
         "platform_setup": "平台临界",
+        "trend_resonance": "趋势共振",
     }
     mode = mode_labels.get(normalized.get("signal_mode"), "自定义")
     if normalized.get("signal_mode") == "platform_setup":
@@ -482,6 +547,13 @@ def _strategy_summary(config: Dict[str, Any]) -> str:
             f"{mode} · {normalized['platform_lookback_days']}日 · "
             f"区间≤{_pct(normalized['platform_max_range'])} · "
             f"量比≥{normalized['platform_breakout_volume_ratio']:g}x"
+        )
+    if normalized.get("signal_mode") == "trend_resonance":
+        return (
+            f"{mode} · EMA{normalized['trend_ema_fast_window']}/"
+            f"{normalized['trend_ema_mid_window']}/"
+            f"{normalized['trend_ema_long_window']} · "
+            f"MACD {normalized['trend_macd_fast']}-{normalized['trend_macd_slow']}-{normalized['trend_macd_signal']}"
         )
     return (
         f"{mode} · 成交额≥{_money(normalized['min_amount'])} · "

@@ -8,6 +8,7 @@ from backend.app.services.analysis_service import (
     compute_platform_breakout_metrics,
     compute_platform_setup_metrics,
     compute_rps_scores,
+    compute_trend_resonance_metrics,
 )
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG
 
@@ -196,6 +197,148 @@ def test_platform_setup_metrics_detect_near_upper_compression_before_breakout():
     assert metrics["platform_setup_recent_gain_5d"] <= 0.1
     assert metrics["platform_setup_volume_contraction"] <= 1.0
     assert metrics["platform_setup_ma_turning_up"] is True
+
+
+def test_trend_resonance_metrics_detect_article_indicator_stack():
+    bars = []
+    start = date(2026, 1, 1)
+    close = 10.0
+    for index in range(96):
+        close += 0.035
+        if index > 72:
+            close += 0.055
+        bars.append(
+            {
+                "code": "000001.SZ",
+                "date": (start + timedelta(days=index)).isoformat(),
+                "open": close - 0.05,
+                "high": close + 0.16,
+                "low": close - 0.14,
+                "close": close,
+                "prev_close": close - 0.04,
+                "volume": 1200 + index * 5,
+                "pct_chg": 0.6,
+            }
+        )
+
+    metrics = compute_trend_resonance_metrics(
+        pd.DataFrame(bars),
+        {**DEFAULT_STRATEGY_CONFIG, "signal_mode": "trend_resonance"},
+    )
+
+    assert metrics["trend_ready"] is True
+    assert metrics["trend_price_above_ema_long"] is True
+    assert metrics["trend_ema_fast_above_mid"] is True
+    assert metrics["trend_ema_long_rising"] is True
+    assert metrics["trend_macd_dif"] > metrics["trend_macd_dea"]
+    assert metrics["trend_stoch_k"] > metrics["trend_stoch_d"]
+    assert metrics["trend_signal_match"] is True
+
+
+def test_trend_resonance_filters_keep_multi_indicator_candidate():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "latest_price": 12.0,
+                "amount": 220_000_000,
+                "float_market_value": 80_000_000_000,
+                "ma_short": 11.8,
+                "ma_long": 10.7,
+                "rps20": 82.0,
+                "turnover_rate": 4.2,
+                "pct_chg": 2.8,
+                "amplitude": 0.06,
+                "volume_ratio": 1.4,
+                "ma_distance": 0.02,
+                "is_st": False,
+                "suspended": False,
+                "trend_ready": True,
+                "trend_price_above_ema_long": True,
+                "trend_ema_long_rising": True,
+                "trend_ema_fast_above_mid": True,
+                "trend_ema_fast_rising": True,
+                "trend_ema_mid_rising": True,
+                "trend_ema_fast": 11.8,
+                "trend_ema_mid": 11.4,
+                "trend_ema_long": 10.8,
+                "trend_ema_mid_distance": 0.04,
+                "trend_recent_gain_10d": 0.08,
+                "trend_macd_dif": 0.42,
+                "trend_macd_dea": 0.28,
+                "trend_macd_hist": 0.14,
+                "trend_macd_dif_above_zero": True,
+                "trend_macd_dif_above_dea": True,
+                "trend_stoch_k": 68.0,
+                "trend_stoch_d": 55.0,
+                "trend_stoch_k_above_d": True,
+                "trend_stoch_overheated": False,
+                "trend_signal_match": True,
+                "trend_signal_label": "雷霆共振",
+            },
+            {
+                "code": "000002.SZ",
+                "name": "弱趋势",
+                "latest_price": 8.0,
+                "amount": 220_000_000,
+                "float_market_value": 60_000_000_000,
+                "ma_short": 7.8,
+                "ma_long": 7.7,
+                "rps20": 80.0,
+                "turnover_rate": 3.0,
+                "pct_chg": 1.0,
+                "amplitude": 0.05,
+                "volume_ratio": 1.2,
+                "ma_distance": 0.02,
+                "is_st": False,
+                "suspended": False,
+                "trend_ready": True,
+                "trend_price_above_ema_long": True,
+                "trend_ema_long_rising": False,
+                "trend_ema_fast_above_mid": True,
+                "trend_ema_fast_rising": True,
+                "trend_ema_mid_rising": True,
+                "trend_ema_fast": 7.8,
+                "trend_ema_mid": 7.6,
+                "trend_ema_long": 7.4,
+                "trend_ema_mid_distance": 0.04,
+                "trend_recent_gain_10d": 0.08,
+                "trend_macd_dif": 0.2,
+                "trend_macd_dea": 0.1,
+                "trend_macd_dif_above_zero": True,
+                "trend_macd_dif_above_dea": True,
+                "trend_stoch_k": 60.0,
+                "trend_stoch_d": 50.0,
+                "trend_stoch_k_above_d": True,
+                "trend_stoch_overheated": False,
+                "trend_signal_match": True,
+                "trend_signal_label": "顺势而为",
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "signal_mode": "trend_resonance",
+        "min_price": 4,
+        "min_amount": 100_000_000,
+        "min_rps20": 70,
+        "min_turnover": None,
+        "max_turnover": None,
+        "max_amplitude": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+    }
+
+    candidates, funnel, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert [candidate["code"] for candidate in candidates] == ["000001.SZ"]
+    assert candidates[0]["signal_type"] == "雷霆共振"
+    assert any("EMA60" in reason for reason in candidates[0]["reasons"])
+    assert any(step["step_name"] == "EMA60 上升" for step in funnel)
 
 
 def test_platform_breakout_filters_keep_matching_shape():

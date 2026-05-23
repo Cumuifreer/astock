@@ -67,11 +67,10 @@ const navItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
 ];
 
 const signalModes: Array<{ id: string; label: string; sub: string }> = [
-  { id: 'breakout_or_pullback', label: '突破或回踩', sub: '双形态' },
-  { id: 'breakout', label: '右侧突破', sub: '放量上攻' },
-  { id: 'pullback', label: '左侧回踩', sub: '趋势低吸' },
+  { id: 'breakout_or_pullback', label: '突破回踩', sub: '双形态' },
   { id: 'platform_breakout', label: '平台突破', sub: '压缩放量' },
   { id: 'platform_setup', label: '平台临界', sub: '贴近上沿' },
+  { id: 'trend_resonance', label: '趋势共振', sub: 'EMA/MACD/KDJ' },
 ];
 
 const analysisModes: Array<{ id: string; label: string; sub: string }> = [
@@ -410,9 +409,18 @@ function App() {
 }
 
 function cleanPlatformBreakoutModes(config: StrategyConfig): StrategyConfig {
-  if (config.signal_mode !== 'platform_breakout') return config;
-  return {
+  const normalized = {
     ...config,
+    signal_mode: ['breakout', 'pullback'].includes(config.signal_mode) ? 'breakout_or_pullback' : config.signal_mode,
+    breakout_pullback_direction: config.signal_mode === 'breakout'
+      ? 'breakout'
+      : config.signal_mode === 'pullback'
+        ? 'pullback'
+        : config.breakout_pullback_direction || 'both',
+  };
+  if (normalized.signal_mode !== 'platform_breakout') return normalized;
+  return {
+    ...normalized,
     platform_breakout_clearance_mode: 'must',
     platform_breakout_max_clearance_mode: 'score',
     platform_breakout_first_mode: 'must',
@@ -756,6 +764,21 @@ function StrategyPanel(props: {
               </button>
             ))}
           </div>
+          {props.strategy.signal_mode === 'breakout_or_pullback' && (
+            <>
+              <div className="form-section wide">
+                <span>突破回踩</span>
+              </div>
+              <SelectField
+                label="形态方向"
+                value={props.strategy.breakout_pullback_direction || 'both'}
+                onChange={(value) => update('breakout_pullback_direction', value)}
+                options={[['both', '突破与回踩都看'], ['breakout', '只看右侧突破'], ['pullback', '只看左侧回踩']]}
+                description="旧的右侧突破、左侧回踩已合并到这里；策略名称可以继续区分不同用法。"
+              />
+              <NumberField label="回踩容忍" value={props.strategy.pullback_tolerance} onChange={(value) => update('pullback_tolerance', value)} description={`价格贴近短期均线 ${formatPercentRatio(props.strategy.pullback_tolerance)} 内会更像回踩信号。`} />
+            </>
+          )}
           <div className="form-section wide">
             <span>基础股票池</span>
           </div>
@@ -813,6 +836,41 @@ function StrategyPanel(props: {
               <label className="toggle">
                 <input type="checkbox" checked={props.strategy.platform_setup_require_ma_turning} onChange={(event) => update('platform_setup_require_ma_turning', event.target.checked)} />
                 <span>要求 MA5 拐头</span>
+              </label>
+            </>
+          )}
+
+          {props.strategy.signal_mode === 'trend_resonance' && (
+            <>
+              <div className="form-section wide">
+                <span>趋势共振</span>
+              </div>
+              <NumberField label="EMA 快线" value={props.strategy.trend_ema_fast_window} onChange={(value) => update('trend_ema_fast_window', value)} description="默认 13，观察短线趋势是否抬头。" />
+              <NumberField label="EMA 中线" value={props.strategy.trend_ema_mid_window} onChange={(value) => update('trend_ema_mid_window', value)} description="默认 21，用来控制买点是否离节奏线太远。" />
+              <NumberField label="EMA 长线" value={props.strategy.trend_ema_long_window} onChange={(value) => update('trend_ema_long_window', value)} description="默认 60，判断中期趋势方向。" />
+              <SelectField label="趋势信号" value={props.strategy.trend_entry_signal} onChange={(value) => update('trend_entry_signal', value)} options={[['any', '三类信号都看'], ['thunder', '只看雷霆共振'], ['follow', '只看顺势而为'], ['stealth', '只看暗度陈仓']]} description="雷霆偏强确认，顺势偏趋势延续，暗度陈仓偏早期转强。" />
+              <NumberField label="MACD 快线" value={props.strategy.trend_macd_fast} onChange={(value) => update('trend_macd_fast', value)} description="默认 4，来自文章参数 4-26-6。" />
+              <NumberField label="MACD 慢线" value={props.strategy.trend_macd_slow} onChange={(value) => update('trend_macd_slow', value)} />
+              <NumberField label="MACD 信号线" value={props.strategy.trend_macd_signal} onChange={(value) => update('trend_macd_signal', value)} />
+              <SelectField label="MACD 条件" value={props.strategy.trend_macd_mode} onChange={(value) => update('trend_macd_mode', value)} options={[['dif_above_dea', 'DIF 强于 DEA'], ['dif_above_zero', 'DIF 在 0 轴上方'], ['dif_dea_above_zero', 'DIF 与 DEA 均在 0 轴上方'], ['off', '不启用']]} />
+              <NumberField label="随机周期" value={props.strategy.trend_stoch_window} onChange={(value) => update('trend_stoch_window', value)} description="默认 27，对应慢速随机指标 27-9-3。" />
+              <NumberField label="随机 K 平滑" value={props.strategy.trend_stoch_k_smooth} onChange={(value) => update('trend_stoch_k_smooth', value)} />
+              <NumberField label="随机 D 平滑" value={props.strategy.trend_stoch_d_smooth} onChange={(value) => update('trend_stoch_d_smooth', value)} />
+              <SelectField label="随机条件" value={props.strategy.trend_stoch_mode} onChange={(value) => update('trend_stoch_mode', value)} options={[['k_above_d', 'K 在 D 上方'], ['cross_up', '要求 K 上穿 D'], ['off', '不启用']]} />
+              <NumberField label="距 EMA21 上限" value={props.strategy.trend_max_ema_mid_distance} onChange={(value) => update('trend_max_ema_mid_distance', value)} description={`超过 ${formatPercentRatio(props.strategy.trend_max_ema_mid_distance)} 通常说明追高风险变大。`} />
+              <NumberField label="近10日涨幅上限" value={props.strategy.trend_max_recent_gain_10d} onChange={(value) => update('trend_max_recent_gain_10d', value)} description={`超过 ${formatPercentRatio(props.strategy.trend_max_recent_gain_10d)} 会被过滤或扣分。`} />
+              <NumberField label="随机过热线" value={props.strategy.trend_stoch_overheat} onChange={(value) => update('trend_stoch_overheat', value)} description="K 值高于该水平会被视为偏热。" />
+              <label className="toggle">
+                <input type="checkbox" checked={props.strategy.trend_require_price_above_ema_long} onChange={(event) => update('trend_require_price_above_ema_long', event.target.checked)} />
+                <span>要求站上 EMA60</span>
+              </label>
+              <label className="toggle">
+                <input type="checkbox" checked={props.strategy.trend_require_ema_long_rising} onChange={(event) => update('trend_require_ema_long_rising', event.target.checked)} />
+                <span>要求 EMA60 上升</span>
+              </label>
+              <label className="toggle">
+                <input type="checkbox" checked={props.strategy.trend_require_ema_fast_above_mid} onChange={(event) => update('trend_require_ema_fast_above_mid', event.target.checked)} />
+                <span>要求 EMA13 高于 EMA21</span>
               </label>
             </>
           )}
@@ -2175,7 +2233,7 @@ function Funnel({
 }
 
 function groupFunnelSteps(funnel: FunnelStep[]) {
-  const groupOrder = ['股票池', '趋势强弱', '平台形态', '突破确认', '输出'];
+  const groupOrder = ['股票池', '趋势强弱', '趋势共振', '平台形态', '突破确认', '输出'];
   const groups = new Map<string, FunnelStep[]>();
   for (const step of funnel) {
     const group = funnelGroupName(step.step_name);
@@ -2187,6 +2245,7 @@ function groupFunnelSteps(funnel: FunnelStep[]) {
 }
 
 function funnelGroupName(stepName: string) {
+  if (stepName.includes('EMA') || stepName.includes('随机指标') || stepName.includes('趋势信号') || stepName === 'MACD 共振') return '趋势共振';
   if (stepName.includes('平台') || stepName.includes('阳线')) return '平台形态';
   if (stepName.includes('突破') || stepName.includes('实体') || stepName.includes('MACD')) return '突破确认';
   if (stepName.includes('候选')) return '输出';
@@ -2456,9 +2515,17 @@ function strategySummary(strategy: StrategyConfig) {
     const firstBreak = strategy.platform_breakout_first_mode === 'must' ? ' · 首次' : '';
     return `${mode} · ${strategy.platform_lookback_days}日 · 区间≤${formatPercentRatio(strategy.platform_max_range)}${clearance}${maxClearance}${firstBreak} · 量比≥${formatPrice(strategy.platform_breakout_volume_ratio)}x · 涨幅≥${formatPercent(strategy.platform_breakout_pct_chg_min)}`;
   }
+  if (strategy.signal_mode === 'trend_resonance') {
+    return `${mode} · EMA${strategy.trend_ema_fast_window}/${strategy.trend_ema_mid_window}/${strategy.trend_ema_long_window} · MACD ${strategy.trend_macd_fast}-${strategy.trend_macd_slow}-${strategy.trend_macd_signal} · 随机 ${strategy.trend_stoch_window}-${strategy.trend_stoch_k_smooth}-${strategy.trend_stoch_d_smooth}`;
+  }
   const rpsKey = `RPS${strategy.rps_window}`;
   const amount = formatMoneyCompact(strategy.min_amount || 0);
-  return `${mode} · 成交额≥${amount} · ${rpsKey} · MA${strategy.ma_short_window}/${strategy.ma_long_window}`;
+  const direction = strategy.breakout_pullback_direction === 'breakout'
+    ? '右侧'
+    : strategy.breakout_pullback_direction === 'pullback'
+      ? '左侧'
+      : '双形态';
+  return `${mode} · ${direction} · 成交额≥${amount} · ${rpsKey} · MA${strategy.ma_short_window}/${strategy.ma_long_window}`;
 }
 
 function suggestStrategyName(strategy: StrategyConfig) {
@@ -2470,11 +2537,14 @@ function suggestStrategyName(strategy: StrategyConfig) {
   if (strategy.signal_mode === 'platform_breakout') {
     return `${mode}-${analysis}-${strategy.platform_lookback_days}日-量比${formatPrice(strategy.platform_breakout_volume_ratio)}x`;
   }
-  if (strategy.signal_mode === 'pullback') {
-    return `${mode}-${analysis}-RPS${strategy.rps_window}-MA${strategy.ma_short_window}/${strategy.ma_long_window}`;
+  if (strategy.signal_mode === 'trend_resonance') {
+    return `${mode}-${analysis}-EMA${strategy.trend_ema_fast_window}/${strategy.trend_ema_mid_window}/${strategy.trend_ema_long_window}`;
   }
-  if (strategy.signal_mode === 'breakout') {
-    return `${mode}-${analysis}-放量${formatRatioX(strategy.volume_ratio_min)}-RPS${strategy.rps_window}`;
+  if (strategy.breakout_pullback_direction === 'pullback') {
+    return `${mode}-${analysis}-左侧-RPS${strategy.rps_window}`;
+  }
+  if (strategy.breakout_pullback_direction === 'breakout') {
+    return `${mode}-${analysis}-右侧-放量${formatRatioX(strategy.volume_ratio_min)}`;
   }
   return `${mode}-${analysis}-MA${strategy.ma_short_window}/${strategy.ma_long_window}`;
 }
