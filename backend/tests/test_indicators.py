@@ -235,6 +235,36 @@ def test_trend_resonance_metrics_detect_article_indicator_stack():
     assert metrics["trend_signal_match"] is True
 
 
+def test_trend_resonance_metrics_handles_flat_stochastic_window():
+    bars = []
+    start = date(2026, 1, 1)
+    for index in range(96):
+        bars.append(
+            {
+                "code": "000001.SZ",
+                "date": (start + timedelta(days=index)).isoformat(),
+                "open": 10.0,
+                "high": 10.0,
+                "low": 10.0,
+                "close": 10.0,
+                "prev_close": 10.0,
+                "volume": 1200,
+                "pct_chg": 0.0,
+            }
+        )
+
+    metrics = compute_trend_resonance_metrics(
+        pd.DataFrame(bars),
+        {**DEFAULT_STRATEGY_CONFIG, "signal_mode": "trend_resonance"},
+    )
+
+    assert metrics["trend_ready"] is True
+    assert metrics["trend_stoch_k"] is None
+    assert metrics["trend_stoch_d"] is None
+    assert metrics["trend_stoch_k_above_d"] is False
+    assert metrics["trend_signal_match"] is False
+
+
 def test_trend_resonance_filters_keep_multi_indicator_candidate():
     rows = pd.DataFrame(
         [

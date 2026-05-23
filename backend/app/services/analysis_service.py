@@ -448,7 +448,8 @@ def _slow_stochastic_values(
     lowest = low.rolling(window=window, min_periods=window).min()
     highest = high.rolling(window=window, min_periods=window).max()
     spread = highest - lowest
-    raw_k = ((close - lowest) / spread.replace(0, pd.NA)) * 100
+    safe_spread = spread.mask(spread == 0, float("nan"))
+    raw_k = pd.to_numeric(((close - lowest) / safe_spread) * 100, errors="coerce")
     slow_k = raw_k.rolling(window=k_smooth, min_periods=k_smooth).mean()
     slow_d = slow_k.rolling(window=d_smooth, min_periods=d_smooth).mean()
     valid = pd.DataFrame({"k": slow_k, "d": slow_d}).dropna()
