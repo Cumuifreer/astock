@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
 
 from backend.app.db import Database
-from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG, SYSTEM_PRESETS
+from backend.app.services.strategy_service import (
+    DEFAULT_STRATEGY_CONFIG,
+    SYSTEM_PRESETS,
+    _config_hash,
+    _strategy_summary,
+    normalize_strategy_config,
+)
 
 
 SCHEMA_VERSION = 9
@@ -405,6 +412,7 @@ def migrate(db: Database) -> None:
         ["version"],
     )
     seed_strategy_presets(db)
+    backfill_strategy_versions(db)
 
 
 def seed_strategy_presets(db: Database) -> None:
@@ -447,3 +455,34 @@ def seed_strategy_presets(db: Database) -> None:
             [SYSTEM_PRESETS[0]["id"]],
             write=True,
         )
+
+
+def backfill_strategy_versions(db: Database) -> None:
+    rows = db.query(
+        """
+        SELECT p.id, p.name, p.config_json, p.updated_at
+        FROM strategy_presets p
+        LEFT JOIN strategy_versions v ON v.preset_id = p.id
+        WHERE p.is_system = FALSE
+          AND p.deleted_at IS NULL
+          AND v.id IS NULL
+        """
+    )
+    if not rows:
+        return
+    version_rows = []
+    for row in rows:
+        config = normalize_strategy_config(json.loads(row["config_json"] or "{}"))
+        version_rows.append(
+            {
+                "id": f"version-{uuid.uuid4().hex[:12]}",
+                "preset_id": row["id"],
+                "strategy_name": row["name"] or "未命名策略",
+                "version_number": 1,
+                "config_hash": _config_hash(config),
+                "config_json": json.dumps(config, ensure_ascii=False),
+                "summary": _strategy_summary(config),
+                "created_at": row.get("updated_at") or datetime.utcnow(),
+            }
+        )
+    db.upsert("strategy_versions", version_rows, ["id"])

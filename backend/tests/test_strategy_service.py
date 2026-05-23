@@ -166,3 +166,31 @@ def test_save_preset_recreates_missing_version_table_and_records_version(tmp_pat
     assert preset["name"] == "临时策略"
     assert preset["latest_version_number"] == 1
     assert [version["version_number"] for version in versions] == [1]
+
+
+def test_migrate_backfills_initial_version_for_existing_custom_presets(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "strategy_presets",
+        [
+            {
+                "id": "custom-existing",
+                "name": "已有策略",
+                "config_json": json.dumps({"signal_mode": "platform_breakout"}, ensure_ascii=False),
+                "is_system": False,
+                "is_default": False,
+                "created_at": "2026-01-01T00:00:00",
+                "updated_at": "2026-01-02T00:00:00",
+                "deleted_at": None,
+            }
+        ],
+        ["id"],
+    )
+
+    migrate(db)
+    preset = StrategyService(db).get_preset("custom-existing")
+    versions = StrategyService(db).list_versions("custom-existing")
+
+    assert preset["latest_version_number"] == 1
+    assert versions[0]["strategy_name"] == "已有策略"
