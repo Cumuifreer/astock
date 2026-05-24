@@ -658,7 +658,6 @@ function Warehouse() {
     { label: '主板', value: 'main' },
     { label: '创业板', value: 'gem' },
     { label: '科创板', value: 'star' },
-    { label: '北交所', value: 'bj' },
   ];
 
   async function load() {
