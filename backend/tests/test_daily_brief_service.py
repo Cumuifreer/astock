@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -76,6 +77,71 @@ def test_daily_brief_service_condenses_source_failures_for_ui(tmp_path, monkeypa
     assert "2 个资讯源暂不可用" in latest["error_message"]
     assert "Network is unreachable" not in latest["error_message"]
     assert "Network is unreachable" in latest["payload"]["warnings"][0]
+
+
+def test_daily_brief_service_accepts_textual_importance_from_llm(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = DailyBriefService(
+        db,
+        sources=[{"id": "mock", "name": "Mock Feed", "type": "rss", "category": "tech", "enabled": True}],
+        api_key="configured",
+    )
+
+    monkeypatch.setattr(
+        service,
+        "_fetch_source",
+        lambda source: [
+            {
+                "source_id": "mock",
+                "source": "Mock Feed",
+                "category": "tech",
+                "title": "AI agents enter developer workflow",
+                "url": "https://example.com/agent-workflow",
+                "excerpt": "Developer tools are adding AI agents.",
+                "published_at": datetime(2026, 5, 24, 8, 0),
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "_post_llm",
+        lambda client, payload: {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "hero_headline": "AI 工具继续进入开发流程",
+                                "daily_overview": "多家技术来源显示，AI agent 正在进入开发者工具链。",
+                                "tech_briefs": [
+                                    {
+                                        "title": "AI agent 进入开发流程",
+                                        "url": "https://example.com/agent-workflow",
+                                        "source": "Mock Feed",
+                                        "summary": "开发者工具继续加入 agent 能力。",
+                                        "importance": "high",
+                                    }
+                                ],
+                                "finance_briefs": [],
+                                "politics_briefs": [],
+                                "editor_note": "关注工具链变化。",
+                                "keywords": ["AI", "开发工具"],
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                }
+            ]
+        },
+    )
+
+    summary = service.generate(report_date=datetime(2026, 5, 24).date())
+    latest = service.latest()
+
+    assert summary["llm_used"] is True
+    assert latest["llm_model"] == "deepseek-v4-flash"
+    assert latest["tech_briefs"][0]["importance"] == 8
 
 
 def test_update_service_retries_fallback_brief_after_llm_is_configured(tmp_path, monkeypatch):

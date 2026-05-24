@@ -541,10 +541,37 @@ def _normalize_briefs(value: Any) -> List[Dict[str, Any]]:
                 "url": str(item.get("url") or ""),
                 "source": str(item.get("source") or ""),
                 "summary": str(item.get("summary") or "")[:240],
-                "importance": int(item.get("importance") or 5),
+                "importance": _normalize_importance(item.get("importance")),
             }
         )
     return briefs
+
+
+def _normalize_importance(value: Any) -> int:
+    if value is None:
+        return 5
+    if isinstance(value, (int, float)):
+        return max(1, min(10, int(round(value))))
+    text = str(value).strip().lower()
+    aliases = {
+        "high": 8,
+        "important": 8,
+        "高": 8,
+        "高重要度": 8,
+        "medium": 5,
+        "mid": 5,
+        "中": 5,
+        "中等": 5,
+        "low": 3,
+        "低": 3,
+        "低重要度": 3,
+    }
+    if text in aliases:
+        return aliases[text]
+    try:
+        return max(1, min(10, int(float(text))))
+    except Exception:
+        return 5
 
 
 def _brief_from_article(item: Dict[str, Any]) -> Dict[str, Any]:
