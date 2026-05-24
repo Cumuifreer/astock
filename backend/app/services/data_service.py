@@ -45,6 +45,24 @@ def _is_blocked_brief_source(item: Dict[str, Any]) -> bool:
     )
 
 
+def _brief_article_sort_key(item: Dict[str, Any]) -> datetime:
+    value = item.get("published_at")
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        return datetime.min
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        return datetime.min
+
+
+def _format_brief_published(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="seconds")
+    return str(value or "")
+
+
 CAPABILITY_DEFINITIONS = {
     "历史 K 线": {
         "fallback_sources": ["Baostock", "AData", "本地缓存"],
@@ -329,8 +347,7 @@ class DataService:
             for category in flow:
                 values = existing_flow.get(category) or []
                 flow[category] = [item for item in values if isinstance(item, dict) and not _is_blocked_brief_source(item)] if isinstance(values, list) else []
-        if row.get("llm_model") and row.get("llm_model") != "fallback" and any(flow.values()):
-            return flow
+        has_llm_flow = bool(row.get("llm_model") and row.get("llm_model") != "fallback" and any(flow.values()))
         for category in flow:
             seen = {str(item.get("url") or item.get("title") or "") for item in flow[category] if isinstance(item, dict)}
             rows = self.db.query(
@@ -347,6 +364,21 @@ class DataService:
                 """,
                 [category, brief_date, brief_date],
             )
+            by_url = {str(item.get("url") or ""): item for item in rows if item.get("url")}
+            enriched = []
+            for item in flow[category]:
+                if _is_blocked_brief_source(item):
+                    continue
+                row_item = dict(item)
+                metadata = by_url.get(str(row_item.get("url") or ""))
+                if metadata:
+                    row_item["published_at"] = row_item.get("published_at") or _format_brief_published(metadata.get("published_at"))
+                    row_item["source"] = row_item.get("source") or metadata.get("source") or ""
+                    row_item["category"] = row_item.get("category") or metadata.get("category") or category
+                enriched.append(row_item)
+            flow[category] = sorted(enriched, key=_brief_article_sort_key, reverse=True)
+            if has_llm_flow:
+                continue
             for item in rows:
                 if _is_blocked_brief_source(item):
                     continue
@@ -361,11 +393,12 @@ class DataService:
                         "source": item.get("source") or "",
                         "category": item.get("category") or category,
                         "summary": (item.get("excerpt") or "")[:260],
-                        "published_at": item.get("published_at"),
+                        "published_at": _format_brief_published(item.get("published_at")),
                     }
                 )
                 if len(flow[category]) >= 80:
                     break
+            flow[category] = sorted(flow[category], key=_brief_article_sort_key, reverse=True)[:80]
         return flow
 
     def _intraday_rank_count(self, sample_at: datetime, mode: str) -> int:

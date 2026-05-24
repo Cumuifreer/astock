@@ -216,8 +216,9 @@ def test_daily_brief_api_backfills_article_flow_for_legacy_briefs(tmp_path):
 
     assert latest is not None
     assert len(latest["article_flow"]["tech"]) == 8
-    assert latest["article_flow"]["tech"][0]["title"] == "Existing translated item"
-    assert latest["article_flow"]["tech"][1]["title"] == "AI infrastructure update 7"
+    assert latest["article_flow"]["tech"][0]["title"] == "AI infrastructure update 7"
+    assert latest["article_flow"]["tech"][-1]["title"] == "Existing translated item"
+    assert latest["article_flow"]["tech"][-1]["published_at"] == "2026-05-24T08:00:00"
     assert "GitHub Trending" not in json.dumps(latest, ensure_ascii=False, default=str)
 
 
@@ -311,11 +312,116 @@ def test_daily_brief_uses_llm_translated_article_flow_without_raw_append(tmp_pat
             "source": "Mock Feed",
             "category": "tech",
             "summary": "新的推理集群面向低延迟任务。",
-            "published_at": "",
+            "published_at": "2026-05-24T08:00:00",
         }
     ]
     assert "AI infra company releases" not in json.dumps(latest, ensure_ascii=False, default=str)
     assert "36氪" not in json.dumps(latest, ensure_ascii=False, default=str)
+
+
+def test_daily_brief_article_flow_sorts_by_published_time_not_importance(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = DailyBriefService(
+        db,
+        sources=[{"id": "mock", "name": "Mock Feed", "type": "rss", "category": "finance", "enabled": True}],
+        api_key="configured",
+    )
+
+    monkeypatch.setattr(
+        service,
+        "_fetch_source",
+        lambda source: [
+            {
+                "source_id": "mock",
+                "source": "Mock Feed",
+                "category": "finance",
+                "title": "Older high importance market story",
+                "url": "https://example.com/old-important",
+                "excerpt": "Older but important.",
+                "published_at": datetime(2026, 5, 24, 8, 0),
+            },
+            {
+                "source_id": "mock",
+                "source": "Mock Feed",
+                "category": "finance",
+                "title": "Newer normal market story",
+                "url": "https://example.com/newer-normal",
+                "excerpt": "Newer but normal priority.",
+                "published_at": datetime(2026, 5, 24, 18, 0),
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "_post_llm",
+        lambda client, payload: {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "hero_headline": "市场资讯更新",
+                                "daily_overview": "市场资讯按时间整理。",
+                                "tech_briefs": [],
+                                "finance_briefs": [
+                                    {
+                                        "title": "旧重点",
+                                        "url": "https://example.com/old-important",
+                                        "source": "Mock Feed",
+                                        "summary": "旧重点摘要。",
+                                        "importance": 10,
+                                    },
+                                    {
+                                        "title": "新普通",
+                                        "url": "https://example.com/newer-normal",
+                                        "source": "Mock Feed",
+                                        "summary": "新普通摘要。",
+                                        "importance": 3,
+                                    },
+                                ],
+                                "politics_briefs": [],
+                                "article_flow": {
+                                    "tech": [],
+                                    "finance": [
+                                        {
+                                            "title": "旧重点",
+                                            "url": "https://example.com/old-important",
+                                            "source": "Mock Feed",
+                                            "summary": "旧重点摘要。",
+                                            "importance": 10,
+                                        },
+                                        {
+                                            "title": "新普通",
+                                            "url": "https://example.com/newer-normal",
+                                            "source": "Mock Feed",
+                                            "summary": "新普通摘要。",
+                                            "importance": 3,
+                                        },
+                                    ],
+                                    "politics": [],
+                                },
+                                "editor_note": "按发布时间阅读。",
+                                "keywords": ["市场"],
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                }
+            ]
+        },
+    )
+
+    service.generate(report_date=datetime(2026, 5, 24).date())
+    latest = DataService(db).latest_daily_brief()
+
+    assert latest is not None
+    finance_rows = latest["article_flow"]["finance"]
+    assert [row["url"] for row in finance_rows[:2]] == [
+        "https://example.com/newer-normal",
+        "https://example.com/old-important",
+    ]
+    assert finance_rows[0]["published_at"] == "2026-05-24T18:00:00"
 
 
 def test_daily_brief_service_condenses_source_failures_for_ui(tmp_path, monkeypatch):

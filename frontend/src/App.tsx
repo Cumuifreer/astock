@@ -582,16 +582,15 @@ function DailyBriefPanel({ brief, task }: { brief: DailyBrief | null; task: Task
 }
 
 function getBriefArticleRows(brief: DailyBrief, category: 'tech' | 'finance' | 'politics'): BriefArticle[] {
+  const flowRows = [...(brief.article_flow?.[category] || [])].sort(compareBriefArticlesByTime);
+  if (flowRows.length) return flowRows;
   const selectedMap: Record<typeof category, BriefItem[]> = {
     tech: brief.tech_briefs,
     finance: brief.finance_briefs,
     politics: brief.politics_briefs,
   };
   const rows: BriefArticle[] = [];
-  const seen = new Set<string>();
   for (const item of selectedMap[category] || []) {
-    const key = item.url || item.title;
-    seen.add(key);
     rows.push({
       title: item.title,
       url: item.url,
@@ -601,13 +600,18 @@ function getBriefArticleRows(brief: DailyBrief, category: 'tech' | 'finance' | '
       published_at: '',
     });
   }
-  for (const item of brief.article_flow?.[category] || []) {
-    const key = item.url || item.title;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rows.push(item);
-  }
-  return rows;
+  return rows.sort(compareBriefArticlesByTime);
+}
+
+function compareBriefArticlesByTime(a: BriefArticle, b: BriefArticle) {
+  return briefArticleTimeValue(b.published_at) - briefArticleTimeValue(a.published_at);
+}
+
+function briefArticleTimeValue(value: string | null | undefined) {
+  if (!value) return 0;
+  const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+  const timestamp = Date.parse(normalized);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
 function BriefDetailItem({ item }: { item: BriefArticle }) {

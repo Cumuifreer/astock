@@ -62,10 +62,10 @@ daily_overview: 150-220 字总览，覆盖科技、财经、时政；
 tech_briefs: 3-5 条；
 finance_briefs: 3-5 条；
 politics_briefs: 2-3 条；
-article_flow: 对象，包含 tech、finance、politics 三个数组。每个数组尽量覆盖输入候选中该类别所有有价值条目，不要只挑少数精编；每条包含 title、url、source、summary、importance；
+article_flow: 对象，包含 tech、finance、politics 三个数组。每个数组尽量覆盖输入候选中该类别所有有价值条目，不要只挑少数精编；每条包含 title、url、source、summary、published_at、importance；
 editor_note: 30-60 字中性短评；
 keywords: 5-8 个关键词。
-每条 brief 与 article_flow 条目都包含 title、url、source、summary、importance。url 必须从输入原样复制，不能编造。相同主题合并，英文内容必须翻译成中文，中文内容也要整理成克制清楚的中文标题和摘要，摘要只写事实，不要 markdown，不要代码围栏。
+每条 brief 与 article_flow 条目都包含 title、url、source、summary、published_at、importance。url 必须从输入原样复制，published_at 必须从候选条目的 published 原样复制，不能编造。相同主题合并，英文内容必须翻译成中文，中文内容也要整理成克制清楚的中文标题和摘要，摘要只写事实，不要 markdown，不要代码围栏。
 严禁选择娱乐、影视、体育、明星、票房、社会猎奇新闻，除非它与上市公司、重大资本市场事件或政策事件直接相关。"""
 
 
@@ -150,6 +150,7 @@ class DailyBriefService:
         translated_flow = report.get("article_flow")
         has_translated_flow = bool(isinstance(translated_flow, dict) and any(translated_flow.values()))
         article_flow = translated_flow if has_translated_flow else self._article_flow(articles)
+        article_flow = _enrich_and_sort_article_flow(article_flow, articles)
         row = {
             "id": brief_id,
             "brief_date": brief_date,
@@ -623,6 +624,38 @@ def _normalize_article_flow(value: Any) -> Dict[str, List[Dict[str, Any]]]:
             if len(flow[category]) >= ARTICLE_FLOW_CATEGORY_LIMIT:
                 break
     return flow
+
+
+def _enrich_and_sort_article_flow(
+    flow: Dict[str, List[Dict[str, Any]]],
+    articles: List[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    article_by_url = {
+        str(article.get("url") or ""): article
+        for article in articles
+        if article.get("url")
+    }
+    sorted_flow: Dict[str, List[Dict[str, Any]]] = {"tech": [], "finance": [], "politics": []}
+    for category in sorted_flow:
+        rows: List[Dict[str, Any]] = []
+        for item in flow.get(category) or []:
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            article = article_by_url.get(str(row.get("url") or ""))
+            if article:
+                row["published_at"] = row.get("published_at") or _iso_or_empty(article.get("published_at"))
+                row["source"] = row.get("source") or str(article.get("source") or "")
+                row["category"] = category
+            rows.append(row)
+        rows.sort(key=lambda item: _article_flow_sort_key(item), reverse=True)
+        sorted_flow[category] = rows[:ARTICLE_FLOW_CATEGORY_LIMIT]
+    return sorted_flow
+
+
+def _article_flow_sort_key(item: Dict[str, Any]) -> datetime:
+    published = _parse_datetime(item.get("published_at"))
+    return published or datetime.min
 
 
 def _normalize_importance(value: Any) -> int:
