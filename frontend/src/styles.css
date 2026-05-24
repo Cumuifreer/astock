@@ -347,7 +347,7 @@ h1 {
 
 .runtime-panel {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .runtime-head {
@@ -361,46 +361,133 @@ h1 {
   margin-bottom: 0;
 }
 
-.runtime-grid {
+.runtime-console {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(260px, 1.05fr) minmax(190px, 0.58fr) minmax(360px, 1.5fr);
   gap: 10px;
+  align-items: stretch;
 }
 
-.runtime-grid > div {
-  min-height: 84px;
+.runtime-primary,
+.runtime-queue,
+.runtime-data-strip {
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.025);
+  min-height: 104px;
+}
+
+.runtime-primary,
+.runtime-queue {
+  padding: 15px 16px;
+  display: grid;
+  align-content: space-between;
+  gap: 8px;
+  background: linear-gradient(135deg, rgba(59, 240, 193, 0.07), rgba(255, 255, 255, 0.018));
+}
+
+.runtime-primary span,
+.runtime-queue span,
+.runtime-primary small,
+.runtime-queue small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.runtime-primary strong {
+  color: var(--text);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.runtime-queue strong {
+  color: var(--text);
+  font-family: "SFMono-Regular", "Roboto Mono", monospace;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.runtime-data-strip {
   padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.runtime-data-strip span {
+  min-width: 0;
+  border: 1px solid rgba(157, 196, 187, 0.12);
+  background: rgba(0, 16, 14, 0.42);
+  padding: 9px 10px;
   display: grid;
   align-content: space-between;
   gap: 6px;
 }
 
-.runtime-grid span,
-.runtime-grid small {
+.runtime-data-strip em {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
+  font-style: normal;
 }
 
-.runtime-grid strong {
+.runtime-data-strip b {
   color: var(--text);
-  font-size: 16px;
+  font-family: "SFMono-Regular", "Roboto Mono", monospace;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .slot-grid {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(10, minmax(74px, 1fr));
-  gap: 6px;
+  gap: 8px;
+  padding-top: 14px;
+}
+
+.slot-grid::before {
+  content: "";
+  position: absolute;
+  top: 23px;
+  left: 14px;
+  right: 14px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(59, 240, 193, 0.32), rgba(182, 255, 95, 0.16), rgba(157, 196, 187, 0.08));
+  pointer-events: none;
 }
 
 .slot-card {
-  min-height: 70px;
+  position: relative;
+  min-height: 78px;
   border: 1px solid rgba(157, 196, 187, 0.14);
   background: rgba(255, 255, 255, 0.018);
-  padding: 8px;
+  padding: 18px 9px 9px;
   display: grid;
-  gap: 3px;
+  align-content: start;
+  gap: 4px;
+}
+
+.slot-card i {
+  position: absolute;
+  top: -2px;
+  left: 9px;
+  z-index: 1;
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(157, 196, 187, 0.36);
+  background: var(--bg);
+  transform: rotate(45deg);
+}
+
+.slot-card.next {
+  border-color: rgba(182, 255, 95, 0.48);
+  box-shadow: inset 0 0 0 1px rgba(182, 255, 95, 0.1);
+}
+
+.slot-card.next i {
+  border-color: rgba(182, 255, 95, 0.9);
+  background: var(--lime);
 }
 
 .slot-card b {
@@ -422,16 +509,34 @@ h1 {
   background: rgba(59, 240, 193, 0.08);
 }
 
+.slot-card.running i,
+.slot-card.due i {
+  border-color: rgba(59, 240, 193, 0.8);
+  background: var(--teal);
+}
+
 .slot-card.completed_full,
 .slot-card.completed_partial {
   border-color: rgba(182, 255, 95, 0.34);
   background: rgba(182, 255, 95, 0.055);
 }
 
+.slot-card.completed_full i,
+.slot-card.completed_partial i {
+  border-color: rgba(182, 255, 95, 0.78);
+  background: var(--lime);
+}
+
 .slot-card.failed,
 .slot-card.missed {
   border-color: rgba(255, 92, 122, 0.34);
   background: rgba(255, 92, 122, 0.045);
+}
+
+.slot-card.failed i,
+.slot-card.missed i {
+  border-color: rgba(255, 92, 122, 0.72);
+  background: var(--red);
 }
 
 .wide-panel {
@@ -1949,7 +2054,7 @@ a {
 
   nav,
   .metric-grid,
-  .runtime-grid,
+  .runtime-console,
   .backtest-summary-grid,
   .split,
   .strategy-layout,
@@ -1973,6 +2078,9 @@ a {
     grid-template-columns: 1fr 1fr;
   }
 
+  .runtime-data-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 
   .diagnostic-summary {
     grid-template-columns: 1fr;
@@ -1992,7 +2100,7 @@ a {
   .form-grid,
   .backtest-form,
   .backtest-summary-grid,
-  .runtime-grid,
+  .runtime-console,
   .metric-grid {
     grid-template-columns: 1fr;
   }
@@ -2021,6 +2129,10 @@ a {
   .slot-grid,
   .report-strip {
     grid-template-columns: 1fr;
+  }
+
+  .runtime-data-strip {
+    grid-template-columns: 1fr 1fr;
   }
 
   .strategy-readout {

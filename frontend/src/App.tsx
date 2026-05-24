@@ -2238,13 +2238,17 @@ function StatusBoard({
 }
 
 function RuntimeHealthPanel({ runtime }: { runtime: RuntimeHealth }) {
-  const latestDates = [
-    `历史 ${runtime.data.latest_history_date || '-'}`,
-    `快照 ${runtime.data.latest_snapshot_date || '-'}`,
-    `盘中 ${formatChinaLocalDateTime(runtime.data.latest_intraday_sample)}`,
-    `简报 ${runtime.data.latest_brief_date || '-'}`,
-  ].join(' · ');
+  const dataTokens = [
+    { label: '历史', value: runtime.data.latest_history_date || '-' },
+    { label: '快照', value: runtime.data.latest_snapshot_date || '-' },
+    { label: '盘中', value: formatChinaLocalDateTime(runtime.data.latest_intraday_sample) },
+    { label: '简报', value: runtime.data.latest_brief_date || '-' },
+  ];
   const nextSlot = runtime.scheduler.next_slot?.time || (runtime.scheduler.is_weekend ? '非交易日' : '-');
+  const activeStage = runtime.tasks.latest_intraday?.stage || runtime.tasks.latest_update?.stage || runtime.tasks.latest_analyze?.stage || runtime.tasks.latest_brief?.stage;
+  const queueState = runtime.tasks.running > 0 ? '任务运行中' : runtime.tasks.queued > 0 ? '任务排队中' : '队列空闲';
+  const schedulerState = !runtime.scheduler.enabled ? '定时关闭' : runtime.scheduler.is_weekend ? '周末休眠' : '系统待命';
+  const nextAction = runtime.scheduler.enabled ? `下一次盘中采样 ${nextSlot}` : '定时任务未启用';
   return (
     <section className="panel runtime-panel">
       <div className="runtime-head">
@@ -2253,30 +2257,38 @@ function RuntimeHealthPanel({ runtime }: { runtime: RuntimeHealth }) {
           {runtime.scheduler.enabled ? `北京时间 · 下次 ${nextSlot}` : '定时未启用'}
         </span>
       </div>
-      <div className="runtime-grid">
-        <div>
-          <span>本地数据</span>
-          <strong>{latestDates}</strong>
-          <small>{formatInt(runtime.data.stock_count)} 只股票</small>
+      <div className="runtime-console">
+        <div className="runtime-primary">
+          <span>运行中枢</span>
+          <strong>{schedulerState}</strong>
+          <small>{nextAction}</small>
         </div>
-        <div>
-          <span>任务队列</span>
-          <strong>{formatInt(runtime.tasks.running)} 运行 · {formatInt(runtime.tasks.queued)} 排队</strong>
-          <small>{runtime.tasks.latest_intraday?.stage || runtime.tasks.latest_update?.stage || '暂无活跃阶段'}</small>
+        <div className="runtime-queue">
+          <span>{queueState}</span>
+          <strong>{formatInt(runtime.tasks.running)} / {formatInt(runtime.tasks.queued)}</strong>
+          <small>{activeStage || `补触发窗口 ${formatInt(runtime.scheduler.catchup_minutes)} 分钟`}</small>
         </div>
-        <div>
-          <span>调度器</span>
-          <strong>{runtime.scheduler.is_weekend ? '周末休眠' : runtime.scheduler.enabled ? '等待交易时段' : '关闭'}</strong>
-          <small>补触发窗口 {formatInt(runtime.scheduler.catchup_minutes)} 分钟</small>
+        <div className="runtime-data-strip">
+          {dataTokens.map((item) => (
+            <span key={item.label}>
+              <em>{item.label}</em>
+              <b>{item.value}</b>
+            </span>
+          ))}
+          <span>
+            <em>股票池</em>
+            <b>{formatInt(runtime.data.stock_count)}</b>
+          </span>
         </div>
       </div>
       <div className="slot-grid">
         {runtime.scheduler.slots.map((slot) => (
-          <span key={slot.time} className={`slot-card ${slot.status}`}>
+          <span key={slot.time} className={`slot-card ${slot.status} ${runtime.scheduler.next_slot?.time === slot.time ? 'next' : ''}`}>
+            <i />
             <b>{slot.time}</b>
             <em>{slotStatusLabel(slot.status)}</em>
             <small>{slot.sample_count ? `${formatInt(slot.sample_count)} 样本` : slot.task_status ? statusLabel(slot.task_status) : '-'}</small>
-            <small>{slot.strict_count || slot.score_count ? `${formatInt(slot.strict_count)} / ${formatInt(slot.score_count)}` : ''}</small>
+            {(slot.strict_count || slot.score_count) ? <small>{formatInt(slot.strict_count)} / {formatInt(slot.score_count)}</small> : null}
           </span>
         ))}
       </div>
