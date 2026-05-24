@@ -23,8 +23,13 @@ export const api = {
   dataOverview: () => request('/api/data/overview'),
   capabilities: () => request('/api/data/capabilities'),
   probeSources: () => request('/api/data/probe', { method: 'POST', body: JSON.stringify({}) }),
-  stocks: (limit: number, offset: number, search: string) =>
-    request(`/api/data/stocks?limit=${limit}&offset=${offset}&search=${encodeURIComponent(search)}`),
+  stocks: (limit: number, offset: number, search: string, filters: Record<string, string> = {}) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset), search });
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+    });
+    return request(`/api/data/stocks?${params.toString()}`);
+  },
   startUpdate: (payload: Record<string, unknown>) =>
     request('/api/tasks/update', { method: 'POST', body: JSON.stringify(payload) }),
   startAnalyze: (config: StrategyConfig) =>

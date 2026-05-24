@@ -639,12 +639,27 @@ function Warehouse() {
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState('');
+  const [exchange, setExchange] = useState('');
+  const [board, setBoard] = useState('');
   const [error, setError] = useState<string | null>(null);
   const limit = 40;
+  const exchangeOptions = [
+    { label: '全部市场', value: '' },
+    { label: '上交所', value: 'SH' },
+    { label: '深交所', value: 'SZ' },
+    { label: '北交所', value: 'BJ' },
+  ];
+  const boardOptions = [
+    { label: '全部板块', value: '' },
+    { label: '主板', value: 'main' },
+    { label: '创业板', value: 'gem' },
+    { label: '科创板', value: 'star' },
+    { label: '北交所', value: 'bj' },
+  ];
 
   async function load() {
     try {
-      const data = (await api.stocks(limit, offset, search)) as { rows: Array<Record<string, unknown>>; total: number };
+      const data = (await api.stocks(limit, offset, search, { exchange, board })) as { rows: Array<Record<string, unknown>>; total: number };
       setRows(data.rows);
       setTotal(data.total);
       setError(null);
@@ -655,7 +670,7 @@ function Warehouse() {
 
   useEffect(() => {
     void load();
-  }, [offset, search]);
+  }, [offset, search, exchange, board]);
 
   return (
     <div className="page-stack">
@@ -663,6 +678,30 @@ function Warehouse() {
         <div className="table-toolbar">
           <PanelTitle icon={<Database size={18} />} title="本地股票仓" />
           <input className="search" placeholder="代码 / 名称" value={search} onChange={(event) => { setOffset(0); setSearch(event.target.value); }} />
+        </div>
+        <div className="warehouse-filters" aria-label="股票筛选">
+          <div className="filter-group">
+            {exchangeOptions.map((option) => (
+              <button
+                key={option.value || 'all-exchange'}
+                className={exchange === option.value ? 'filter-chip active' : 'filter-chip'}
+                onClick={() => { setOffset(0); setExchange(option.value); }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="filter-group">
+            {boardOptions.map((option) => (
+              <button
+                key={option.value || 'all-board'}
+                className={board === option.value ? 'filter-chip active' : 'filter-chip'}
+                onClick={() => { setOffset(0); setBoard(option.value); }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
         {error && <InlineError text={error} />}
         <div className="table-wrap">
@@ -672,6 +711,7 @@ function Warehouse() {
                 <th>代码</th>
                 <th>名称</th>
                 <th>交易所</th>
+                <th>板块</th>
                 <th>最新价</th>
                 <th>涨跌幅</th>
                 <th>成交额</th>
@@ -682,12 +722,13 @@ function Warehouse() {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={9} className="empty-cell">暂无本地股票数据</td></tr>
+                <tr><td colSpan={10} className="empty-cell">暂无本地股票数据</td></tr>
               ) : rows.map((row) => (
                 <tr key={String(row.code)}>
                   <td className="mono">{String(row.code || '')}</td>
                   <td>{String(row.name || '')}</td>
                   <td>{String(row.exchange || '')}</td>
+                  <td>{boardLabel(row.board)}</td>
                   <td>{formatPrice(row.latest_price)}</td>
                   <td className={toneClass(Number(row.pct_chg || 0))}>{formatPercent(row.pct_chg)}</td>
                   <td>{formatMoney(row.amount)}</td>
@@ -2748,6 +2789,15 @@ function formatPrice(value: unknown) {
   const number = Number(value);
   if (!Number.isFinite(number)) return '-';
   return number.toFixed(2);
+}
+
+function boardLabel(value: unknown) {
+  const key = String(value || '');
+  if (key === 'main') return '主板';
+  if (key === 'gem') return '创业板';
+  if (key === 'star') return '科创板';
+  if (key === 'bj') return '北交所';
+  return '-';
 }
 
 function formatPercent(value: unknown) {

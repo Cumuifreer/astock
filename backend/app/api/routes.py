@@ -89,8 +89,10 @@ def data_stocks(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     search: str = "",
+    exchange: str = "",
+    board: str = "",
 ) -> Dict[str, Any]:
-    return data_service.list_stocks(limit=limit, offset=offset, search=search)
+    return data_service.list_stocks(limit=limit, offset=offset, search=search, exchange=exchange, board=board)
 
 
 @router.post("/tasks/update")

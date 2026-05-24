@@ -23,6 +23,18 @@ DEFAULT_INTRADAY_SLOTS = (
 )
 
 
+STOCK_BOARD_CASE = """
+CASE
+    WHEN b.exchange = 'BJ' OR b.code ILIKE '%.BJ' THEN 'bj'
+    WHEN b.exchange = 'SH' AND (b.code LIKE '688%' OR b.code LIKE '689%') THEN 'star'
+    WHEN b.exchange = 'SZ' AND (b.code LIKE '300%' OR b.code LIKE '301%') THEN 'gem'
+    WHEN b.exchange = 'SH' AND b.code LIKE '60%' THEN 'main'
+    WHEN b.exchange = 'SZ' AND b.code LIKE '00%' THEN 'main'
+    ELSE 'other'
+END
+"""
+
+
 def _is_blocked_brief_source(item: Dict[str, Any]) -> bool:
     source_text = f"{item.get('source_id') or ''} {item.get('source') or ''}".lower()
     return (
@@ -220,16 +232,34 @@ class DataService:
             },
         }
 
-    def list_stocks(self, limit: int = 50, offset: int = 0, search: str = "") -> Dict[str, Any]:
+    def list_stocks(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        search: str = "",
+        exchange: str = "",
+        board: str = "",
+    ) -> Dict[str, Any]:
         params: List[Any] = []
-        where = ""
+        clauses: List[str] = []
         if search:
-            where = "WHERE code ILIKE ? OR name ILIKE ?"
-            params.extend([f"%{search}%", f"%{search}%"])
-        total = self.db.scalar(f"SELECT COUNT(*) FROM stock_basic {where}", params) or 0
+            text = search.strip()
+            clauses.append("(b.code ILIKE ? OR b.name ILIKE ?)")
+            params.extend([f"%{text}%", f"%{text}%"])
+        exchange = exchange.upper().strip()
+        if exchange in {"SH", "SZ", "BJ"}:
+            clauses.append("b.exchange = ?")
+            params.append(exchange)
+        board = board.lower().strip()
+        if board in {"main", "gem", "star", "bj"}:
+            clauses.append(f"{STOCK_BOARD_CASE} = ?")
+            params.append(board)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        total = self.db.scalar(f"SELECT COUNT(*) FROM stock_basic b {where}", params) or 0
         rows = self.db.query(
             f"""
             SELECT b.code, b.name, b.exchange, b.list_date, b.source, b.is_st, b.suspended,
+                   {STOCK_BOARD_CASE} AS board,
                    s.latest_price, s.pct_chg, s.amount, s.volume, s.turnover_rate,
                    f.float_market_value,
                    (SELECT COUNT(*) FROM historical_bars h WHERE h.code = b.code) AS history_days,
