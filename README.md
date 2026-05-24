@@ -82,7 +82,7 @@ LLM 默认使用 DeepSeek 兼容接口，密钥只从环境变量读取，不要
 
 ```bash
 export DEEPSEEK_API_KEY=your-api-key
-export ASHARE_DAILY_BRIEF_MODEL=v4-flash
+export ASHARE_DAILY_BRIEF_MODEL=deepseek-v4-flash
 ```
 
 可选配置：
@@ -156,7 +156,7 @@ Wants=network-online.target
 WorkingDirectory=/opt/ashare-signal
 Environment="ASHARE_DB_PATH=/opt/ashare-signal/data/ashare_signal.duckdb"
 Environment="DEEPSEEK_API_KEY=replace-with-your-key"
-Environment="ASHARE_DAILY_BRIEF_MODEL=v4-flash"
+Environment="ASHARE_DAILY_BRIEF_MODEL=deepseek-v4-flash"
 ExecStart=/opt/ashare-signal/.venv/bin/python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5

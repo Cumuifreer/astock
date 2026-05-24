@@ -8,6 +8,14 @@ from backend.app.services.daily_brief_service import DailyBriefService
 from backend.app.services.update_service import UpdateService
 
 
+def test_daily_brief_service_normalizes_deepseek_model_alias(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = DailyBriefService(db, api_key="", model="v4-flash")
+
+    assert service.model == "deepseek-v4-flash"
+
+
 def test_daily_brief_service_generates_fallback_report_from_articles(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

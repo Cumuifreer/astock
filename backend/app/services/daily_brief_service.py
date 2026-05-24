@@ -72,7 +72,7 @@ class DailyBriefService:
         self.db = db
         self.sources = sources or DEFAULT_DAILY_BRIEF_SOURCES
         self.api_key = settings.daily_brief_api_key if api_key is None else api_key
-        self.model = model or settings.daily_brief_model
+        self.model = _normalize_model_id(model or settings.daily_brief_model)
         self.llm_url = llm_url or settings.daily_brief_llm_url
 
     def latest(self) -> Optional[Dict[str, Any]]:
@@ -299,19 +299,33 @@ class DailyBriefService:
             "temperature": 0.2,
             "response_format": {"type": "json_object"},
         }
+        data: Dict[str, Any]
         with httpx.Client(timeout=120) as client:
-            response = client.post(
-                self.llm_url,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
+            try:
+                data = self._post_llm(client, payload)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 400:
+                    raise RuntimeError(_http_error_message(exc)) from exc
+                relaxed_payload = dict(payload)
+                relaxed_payload.pop("response_format", None)
+                try:
+                    data = self._post_llm(client, relaxed_payload)
+                except httpx.HTTPStatusError as retry_exc:
+                    raise RuntimeError(_http_error_message(retry_exc)) from retry_exc
         content = data["choices"][0]["message"]["content"]
         return self._normalize_report(json.loads(_extract_json(content)))
+
+    def _post_llm(self, client: httpx.Client, payload: Dict[str, Any]) -> Dict[str, Any]:
+        response = client.post(
+            self.llm_url,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        response.raise_for_status()
+        return response.json()
 
     def _fallback_report(self, articles: List[Dict[str, Any]]) -> Dict[str, Any]:
         grouped = self._selected_by_category(articles)
@@ -473,6 +487,23 @@ def _headers() -> Dict[str, str]:
         "User-Agent": "A-Share-Signal-DailyBrief/1.0 (+private research dashboard)",
         "Accept": "application/rss+xml, application/atom+xml, application/json, text/html;q=0.8, */*;q=0.5",
     }
+
+
+def _normalize_model_id(model: str) -> str:
+    aliases = {
+        "v4-flash": "deepseek-v4-flash",
+        "v4-pro": "deepseek-v4-pro",
+    }
+    clean = str(model or "").strip()
+    return aliases.get(clean, clean)
+
+
+def _http_error_message(exc: httpx.HTTPStatusError) -> str:
+    response = exc.response
+    detail = (response.text or "").strip()
+    if len(detail) > 500:
+        detail = f"{detail[:500]}..."
+    return f"{response.status_code} {response.reason_phrase}: {detail or response.url}"
 
 
 def _round_robin(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
