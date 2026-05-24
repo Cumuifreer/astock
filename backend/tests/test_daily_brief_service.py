@@ -40,7 +40,75 @@ def test_daily_brief_service_generates_fallback_report_from_articles(tmp_path, m
     assert latest is not None
     assert latest["hero_headline"]
     assert latest["tech_briefs"][0]["url"] == "https://example.com/open-model"
+    assert "科技资讯" in latest["tech_briefs"][0]["title"]
+    assert "来自 Mock Feed" in latest["tech_briefs"][0]["summary"]
     assert db.scalar("SELECT COUNT(*) FROM news_articles") == 1
+
+
+def test_daily_brief_service_condenses_source_failures_for_ui(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = DailyBriefService(
+        db,
+        sources=[
+            {"id": "mock-a", "name": "Mock A", "type": "rss", "category": "tech", "enabled": True},
+            {"id": "mock-b", "name": "Mock B", "type": "rss", "category": "finance", "enabled": True},
+        ],
+        api_key="",
+    )
+
+    def fail_source(source):
+        raise OSError("Network is unreachable")
+
+    monkeypatch.setattr(service, "_fetch_source", fail_source)
+    service.generate(report_date=datetime(2026, 5, 23).date())
+    latest = service.latest()
+
+    assert latest is not None
+    assert "2 个资讯源暂不可用" in latest["error_message"]
+    assert "Network is unreachable" not in latest["error_message"]
+    assert "Network is unreachable" in latest["payload"]["warnings"][0]
+
+
+def test_update_service_retries_fallback_brief_after_llm_is_configured(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "daily_briefs",
+        [
+            {
+                "id": "brief-20260523",
+                "brief_date": datetime(2026, 5, 23).date(),
+                "status": "completed_partial",
+                "hero_headline": "fallback",
+                "daily_overview": "fallback",
+                "tech_briefs_json": [],
+                "finance_briefs_json": [],
+                "politics_briefs_json": [],
+                "editor_note": "",
+                "keywords_json": [],
+                "article_count": 1,
+                "source_count": 1,
+                "llm_model": "fallback",
+                "generated_at": datetime(2026, 5, 23, 8, 0),
+                "error_message": "未配置 LLM API",
+                "payload_json": {},
+            }
+        ],
+        ["id"],
+    )
+    service = UpdateService(db)
+    service.daily_brief_service.api_key = "configured"
+
+    class NoopExecutor:
+        def submit(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(service, "executor", NoopExecutor())
+    task_id = service.ensure_daily_brief()
+
+    assert task_id is not None
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 1
 
 
 def test_update_service_enqueues_brief_when_empty(tmp_path, monkeypatch):

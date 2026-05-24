@@ -688,6 +688,23 @@ h1 {
   padding: 4px 7px;
 }
 
+.brief-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  border: 1px solid rgba(182, 255, 95, 0.16);
+  background: rgba(182, 255, 95, 0.035);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.brief-warning svg {
+  color: var(--lime);
+  flex: 0 0 auto;
+}
+
 .capability-row {
   color: var(--soft);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);

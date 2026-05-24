@@ -551,7 +551,12 @@ function DailyBriefPanel({ brief, task }: { brief: DailyBrief | null; task: Task
           {brief.keywords.slice(0, 8).map((keyword) => <b key={keyword}>{keyword}</b>)}
         </div>
       </div>
-      {brief.error_message && <InlineError text={brief.error_message} />}
+      {brief.error_message && (
+        <div className="brief-warning">
+          <ShieldAlert size={16} />
+          <span>{brief.error_message}</span>
+        </div>
+      )}
     </section>
   );
 }

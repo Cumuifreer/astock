@@ -196,9 +196,11 @@ class UpdateService:
         )
         if existing:
             return str(existing)
-        if self.daily_brief_service.latest():
+        latest = self.daily_brief_service.latest()
+        if latest and not self.daily_brief_service.should_regenerate(latest):
             return None
-        return self.start_daily_brief({"reason": "empty"})
+        reason = "llm_configured_retry" if latest else "empty"
+        return self.start_daily_brief({"reason": reason})
 
     def start_daily_brief(self, options: Optional[Dict[str, Any]] = None) -> str:
         task_id = f"brief-{uuid.uuid4().hex[:12]}"
@@ -622,7 +624,7 @@ class UpdateService:
                 source="多源资讯",
                 success=1 if summary.get("article_count") else 0,
                 failed=0,
-                warning=(summary.get("warnings") or [None])[-1],
+                warning=summary.get("visible_warning"),
                 summary=summary,
                 finished_at=datetime.utcnow(),
             )

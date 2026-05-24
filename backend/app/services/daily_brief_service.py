@@ -82,12 +82,24 @@ class DailyBriefService:
         return self._decode_brief(rows[0])
 
     def has_brief_for_date(self, brief_date: date) -> bool:
-        return bool(
-            self.db.scalar(
-                "SELECT COUNT(*) FROM daily_briefs WHERE brief_date = ? AND status IN ('completed_full', 'completed_partial')",
-                [brief_date],
-            )
+        rows = self.db.query(
+            """
+            SELECT *
+            FROM daily_briefs
+            WHERE brief_date = ? AND status IN ('completed_full', 'completed_partial')
+            ORDER BY generated_at DESC
+            LIMIT 1
+            """,
+            [brief_date],
         )
+        if not rows:
+            return False
+        return not self.should_regenerate(rows[0])
+
+    def should_regenerate(self, brief: Optional[Dict[str, Any]]) -> bool:
+        if not brief or not self.api_key:
+            return False
+        return brief.get("llm_model") == "fallback" and "未配置 LLM API" in str(brief.get("error_message") or "")
 
     def generate(
         self,
@@ -116,6 +128,7 @@ class DailyBriefService:
         report, llm_used, error_message = self._build_report(articles)
         if error_message:
             warnings.append(error_message)
+        visible_error = _visible_error_message(warnings)
         brief_id = f"brief-{brief_date:%Y%m%d}"
         status = "completed_full" if articles and llm_used and not warnings else "completed_partial"
         if not articles:
@@ -136,7 +149,7 @@ class DailyBriefService:
             "source_count": len({article["source_id"] for article in articles}),
             "llm_model": self.model if llm_used else "fallback",
             "generated_at": generated_at,
-            "error_message": "; ".join(warnings) if warnings else None,
+            "error_message": visible_error,
             "payload_json": {
                 "warnings": warnings,
                 "llm_used": llm_used,
@@ -152,6 +165,7 @@ class DailyBriefService:
             "source_count": row["source_count"],
             "llm_used": llm_used,
             "warnings": warnings,
+            "visible_warning": visible_error,
         }
 
     def _fetch_source(self, source: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -263,7 +277,7 @@ class DailyBriefService:
             except Exception as exc:
                 return self._fallback_report(articles), False, f"LLM 简报降级：{exc}"
         if articles:
-            return self._fallback_report(articles), False, "未配置 LLM API，已展示原始资讯摘要。"
+            return self._fallback_report(articles), False, "未配置 LLM API，已展示中文降级摘要。"
         return self._fallback_report([]), False, "资讯源暂时没有返回可用内容。"
 
     def _call_llm(self, articles: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -500,13 +514,29 @@ def _normalize_briefs(value: Any) -> List[Dict[str, Any]]:
 
 
 def _brief_from_article(item: Dict[str, Any]) -> Dict[str, Any]:
+    category = CATEGORY_NAMES.get(str(item.get("category") or ""), "资讯")
+    title = item["title"][:60]
+    excerpt = (item.get("excerpt") or item["title"])[:140]
     return {
-        "title": item["title"][:60],
+        "title": f"{category}资讯：{title}",
         "url": item["url"],
         "source": item["source"],
-        "summary": (item.get("excerpt") or item["title"])[:120],
+        "summary": f"来自 {item['source']}：{excerpt}",
         "importance": 5,
     }
+
+
+def _visible_error_message(warnings: List[str]) -> Optional[str]:
+    if not warnings:
+        return None
+    source_failures = [warning for warning in warnings if "：" in warning and not warning.startswith(("LLM", "未配置", "资讯源"))]
+    other_warnings = [warning for warning in warnings if warning not in source_failures]
+    parts = []
+    if source_failures:
+        parts.append(f"{len(source_failures)} 个资讯源暂不可用")
+    for warning in other_warnings:
+        parts.append(warning)
+    return "；".join(parts)
 
 
 def _child_text(element: ET.Element, name: str) -> str:

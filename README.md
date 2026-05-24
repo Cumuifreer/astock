@@ -154,9 +154,9 @@ Wants=network-online.target
 
 [Service]
 WorkingDirectory=/opt/ashare-signal
-Environment=ASHARE_DB_PATH=/opt/ashare-signal/data/ashare_signal.duckdb
-Environment=DEEPSEEK_API_KEY=replace-with-your-key
-Environment=ASHARE_DAILY_BRIEF_MODEL=v4-flash
+Environment="ASHARE_DB_PATH=/opt/ashare-signal/data/ashare_signal.duckdb"
+Environment="DEEPSEEK_API_KEY=replace-with-your-key"
+Environment="ASHARE_DAILY_BRIEF_MODEL=v4-flash"
 ExecStart=/opt/ashare-signal/.venv/bin/python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
