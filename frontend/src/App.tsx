@@ -538,7 +538,7 @@ function DailyBriefPanel({ brief, task }: { brief: DailyBrief | null; task: Task
         </div>
         <div className="brief-meta">
           <span>{brief.status === 'completed_full' ? '精编完成' : '部分完成'}</span>
-          <span>{formatChinaLocalDateTime(brief.generated_at)}</span>
+          <span>{formatShortDateTime(brief.generated_at)}</span>
           <span>{formatInt(totalRows || brief.article_count)} 条</span>
         </div>
       </div>
@@ -2739,7 +2739,7 @@ function dataHealthHints(bootstrap: Bootstrap) {
     hints.push(`盘中雷达最近采样 ${formatChinaLocalDateTime(bootstrap.intraday.sample_at)}。`);
   }
   if (bootstrap.daily_brief?.generated_at) {
-    hints.push(`资讯简报最近生成 ${formatChinaLocalDateTime(bootstrap.daily_brief.generated_at)}。`);
+    hints.push(`资讯简报最近生成 ${formatShortDateTime(bootstrap.daily_brief.generated_at)}。`);
   }
   if (Number(overview.turnover_coverage?.percent || 0) < 95) {
     hints.push(`换手率覆盖 ${overview.turnover_coverage.percent}%，缺失股票会按当前策略设置处理。`);
