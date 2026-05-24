@@ -24,27 +24,19 @@ CATEGORY_NAMES = {"tech": "科技", "finance": "财经", "politics": "时政"}
 
 DEFAULT_DAILY_BRIEF_SOURCES: List[Dict[str, Any]] = [
     {"id": "github-trending", "name": "GitHub Trending", "type": "scrape", "url": "https://github.com/trending", "category": "tech", "enabled": True},
-    {"id": "v2ex-hot", "name": "V2EX", "type": "api", "url": "https://www.v2ex.com/api/topics/show.json", "category": "tech", "enabled": True},
-    {"id": "linuxdo", "name": "LinuxDo", "type": "rss", "url": "https://linux.do/top.rss?period=daily", "category": "tech", "enabled": True},
+    {"id": "36kr-article", "name": "36氪文章", "type": "rss", "url": "https://36kr.com/feed-article", "category": "tech", "enabled": True},
+    {"id": "36kr-newsflash", "name": "36氪快讯", "type": "rss", "url": "https://36kr.com/feed-newsflash", "category": "finance", "enabled": True},
+    {"id": "infoq-cn", "name": "InfoQ 中文", "type": "rss", "url": "https://www.infoq.cn/feed", "category": "tech", "enabled": True},
     {"id": "openai-news", "name": "OpenAI News", "type": "rss", "url": "https://openai.com/news/rss.xml", "category": "tech", "enabled": True},
-    {"id": "deepmind-blog", "name": "DeepMind Blog", "type": "rss", "url": "https://deepmind.google/blog/rss.xml", "category": "tech", "enabled": True},
-    {"id": "huggingface-blog", "name": "Hugging Face Blog", "type": "rss", "url": "https://huggingface.co/blog/feed.xml", "category": "tech", "enabled": True},
     {"id": "tldr-ai", "name": "TLDR AI", "type": "rss", "url": "https://tldr.tech/api/rss/ai", "category": "tech", "enabled": True},
     {"id": "smol-ai-news", "name": "Smol AI News", "type": "rss", "url": "https://news.smol.ai/rss.xml", "category": "tech", "enabled": True},
     {"id": "latent-space", "name": "Latent Space", "type": "rss", "url": "https://www.latent.space/feed", "category": "tech", "enabled": True},
     {"id": "mit-tech-review-ai", "name": "MIT Tech Review AI", "type": "rss", "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed", "category": "tech", "enabled": True},
-    {"id": "bloomberg-markets", "name": "Bloomberg Markets", "type": "rss", "url": "https://feeds.bloomberg.com/markets/news.rss", "category": "finance", "enabled": True},
     {"id": "wsj-markets", "name": "WSJ Markets", "type": "rss", "url": "https://feeds.a.dj.com/rss/RSSMarketsMain.xml", "category": "finance", "enabled": True},
-    {"id": "ft-companies", "name": "Financial Times", "type": "rss", "url": "https://www.ft.com/companies?format=rss", "category": "finance", "enabled": True},
-    {"id": "bbc-business", "name": "BBC Business", "type": "rss", "url": "https://feeds.bbci.co.uk/news/business/rss.xml", "category": "finance", "enabled": True},
-    {"id": "economist-finance", "name": "The Economist Finance", "type": "rss", "url": "https://www.economist.com/finance-and-economics/rss.xml", "category": "finance", "enabled": True},
-    {"id": "bbc-world", "name": "BBC World", "type": "rss", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "category": "politics", "enabled": True},
-    {"id": "guardian-world", "name": "The Guardian", "type": "rss", "url": "https://www.theguardian.com/world/rss", "category": "politics", "enabled": True},
-    {"id": "nyt-world", "name": "NYT World", "type": "rss", "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", "category": "politics", "enabled": True},
+    {"id": "chinadaily-bizchina", "name": "China Daily Bizchina", "type": "rss", "url": "http://www.chinadaily.com.cn/rss/bizchina_rss.xml", "category": "finance", "enabled": True},
+    {"id": "chinadaily-world", "name": "China Daily World", "type": "rss", "url": "http://www.chinadaily.com.cn/rss/world_rss.xml", "category": "politics", "enabled": True},
+    {"id": "chinadaily-china", "name": "China Daily China", "type": "rss", "url": "http://www.chinadaily.com.cn/rss/china_rss.xml", "category": "politics", "enabled": True},
     {"id": "npr-world", "name": "NPR World", "type": "rss", "url": "https://feeds.npr.org/1004/rss.xml", "category": "politics", "enabled": True},
-    {"id": "dw-chinese", "name": "DW 中文", "type": "rss", "url": "https://rss.dw.com/rdf/rss-chi-all", "category": "politics", "enabled": True},
-    {"id": "aljazeera", "name": "Al Jazeera", "type": "rss", "url": "https://www.aljazeera.com/xml/rss/all.xml", "category": "politics", "enabled": True},
-    {"id": "the-diplomat", "name": "The Diplomat", "type": "rss", "url": "https://thediplomat.com/feed/", "category": "politics", "enabled": True},
 ]
 
 

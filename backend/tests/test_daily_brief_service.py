@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from backend.app.db import Database
 from backend.app.schema import migrate
 from backend.app.services.daily_brief_scheduler import DailyBriefScheduler
+from backend.app.services.daily_brief_service import DEFAULT_DAILY_BRIEF_SOURCES
 from backend.app.services.daily_brief_service import DailyBriefService
 from backend.app.services.update_service import UpdateService
 
@@ -15,6 +16,38 @@ def test_daily_brief_service_normalizes_deepseek_model_alias(tmp_path):
     service = DailyBriefService(db, api_key="", model="v4-flash")
 
     assert service.model == "deepseek-v4-flash"
+
+
+def test_default_daily_brief_sources_prefer_shanghai_reachable_feeds():
+    source_ids = {source["id"] for source in DEFAULT_DAILY_BRIEF_SOURCES}
+
+    removed_ids = {
+        "v2ex-hot",
+        "linuxdo",
+        "deepmind-blog",
+        "huggingface-blog",
+        "bloomberg-markets",
+        "ft-companies",
+        "bbc-business",
+        "economist-finance",
+        "bbc-world",
+        "guardian-world",
+        "nyt-world",
+        "dw-chinese",
+        "aljazeera",
+        "the-diplomat",
+    }
+    added_ids = {
+        "36kr-article",
+        "36kr-newsflash",
+        "infoq-cn",
+        "chinadaily-bizchina",
+        "chinadaily-world",
+        "chinadaily-china",
+    }
+
+    assert source_ids.isdisjoint(removed_ids)
+    assert added_ids.issubset(source_ids)
 
 
 def test_daily_brief_service_generates_fallback_report_from_articles(tmp_path, monkeypatch):
