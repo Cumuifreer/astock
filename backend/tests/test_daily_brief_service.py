@@ -37,10 +37,10 @@ def test_default_daily_brief_sources_prefer_shanghai_reachable_feeds():
         "dw-chinese",
         "aljazeera",
         "the-diplomat",
-    }
-    added_ids = {
         "36kr-article",
         "36kr-newsflash",
+    }
+    added_ids = {
         "infoq-cn",
         "chinadaily-bizchina",
         "chinadaily-world",
@@ -199,6 +199,103 @@ def test_daily_brief_api_backfills_article_flow_for_legacy_briefs(tmp_path):
     assert latest["article_flow"]["tech"][1]["title"] == "AI infrastructure update 7"
 
 
+def test_daily_brief_uses_llm_translated_article_flow_without_raw_append(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = DailyBriefService(
+        db,
+        sources=[{"id": "mock", "name": "Mock Feed", "type": "rss", "category": "tech", "enabled": True}],
+        api_key="configured",
+    )
+
+    monkeypatch.setattr(
+        service,
+        "_fetch_source",
+        lambda source: [
+            {
+                "source_id": "mock",
+                "source": "Mock Feed",
+                "category": "tech",
+                "title": "AI infra company releases new inference cluster",
+                "url": "https://example.com/inference-cluster",
+                "excerpt": "A new inference cluster targets low-latency workloads.",
+                "published_at": datetime(2026, 5, 24, 8, 0),
+            },
+            {
+                "source_id": "36kr-newsflash",
+                "source": "36氪快讯",
+                "category": "tech",
+                "title": "营销快讯应该被隐藏",
+                "url": "https://example.com/36kr-noise",
+                "excerpt": "这条来自 36 氪，不应出现在展示列表。",
+                "published_at": datetime(2026, 5, 24, 8, 1),
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        service,
+        "_post_llm",
+        lambda client, payload: {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "hero_headline": "AI 基础设施继续演进",
+                                "daily_overview": "AI 推理基础设施继续演进，低延迟集群成为重点。",
+                                "tech_briefs": [
+                                    {
+                                        "title": "AI 推理集群发布",
+                                        "url": "https://example.com/inference-cluster",
+                                        "source": "Mock Feed",
+                                        "summary": "新的推理集群面向低延迟任务。",
+                                        "importance": 8,
+                                    }
+                                ],
+                                "finance_briefs": [],
+                                "politics_briefs": [],
+                                "article_flow": {
+                                    "tech": [
+                                        {
+                                            "title": "AI 推理集群发布",
+                                            "url": "https://example.com/inference-cluster",
+                                            "source": "Mock Feed",
+                                            "summary": "新的推理集群面向低延迟任务。",
+                                            "importance": 8,
+                                        }
+                                    ],
+                                    "finance": [],
+                                    "politics": [],
+                                },
+                                "editor_note": "关注 AI 基础设施的真实进展。",
+                                "keywords": ["AI", "推理集群"],
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                }
+            ]
+        },
+    )
+
+    service.generate(report_date=datetime(2026, 5, 24).date())
+    latest = DataService(db).latest_daily_brief()
+
+    assert latest is not None
+    assert latest["article_flow"]["tech"] == [
+        {
+            "title": "AI 推理集群发布",
+            "url": "https://example.com/inference-cluster",
+            "source": "Mock Feed",
+            "category": "tech",
+            "summary": "新的推理集群面向低延迟任务。",
+            "published_at": "",
+        }
+    ]
+    assert "AI infra company releases" not in json.dumps(latest, ensure_ascii=False, default=str)
+    assert "36氪" not in json.dumps(latest, ensure_ascii=False, default=str)
+
+
 def test_daily_brief_service_condenses_source_failures_for_ui(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -353,6 +450,46 @@ def test_update_service_retries_legacy_llm_400_fallback_once(tmp_path, monkeypat
                 "generated_at": datetime(2026, 5, 24, 4, 18),
                 "error_message": "14 个资讯源暂不可用；LLM 简报降级：Client error '400 Bad Request' for url",
                 "payload_json": {},
+            }
+        ],
+        ["id"],
+    )
+    service = UpdateService(db)
+    service.daily_brief_service.api_key = "configured"
+
+    class NoopExecutor:
+        def submit(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(service, "executor", NoopExecutor())
+    task_id = service.ensure_daily_brief()
+
+    assert task_id is not None
+
+
+def test_update_service_retries_llm_brief_without_translated_article_flow(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "daily_briefs",
+        [
+            {
+                "id": "brief-20260524",
+                "brief_date": datetime(2026, 5, 24).date(),
+                "status": "completed_partial",
+                "hero_headline": "old llm",
+                "daily_overview": "old llm",
+                "tech_briefs_json": [],
+                "finance_briefs_json": [],
+                "politics_briefs_json": [],
+                "editor_note": "",
+                "keywords_json": [],
+                "article_count": 88,
+                "source_count": 7,
+                "llm_model": "deepseek-v4-flash",
+                "generated_at": datetime(2026, 5, 24, 6, 13),
+                "error_message": None,
+                "payload_json": {"llm_used": True, "article_flow": {"tech": [], "finance": [], "politics": []}},
             }
         ],
         ["id"],

@@ -23,6 +23,11 @@ DEFAULT_INTRADAY_SLOTS = (
 )
 
 
+def _is_blocked_brief_source(item: Dict[str, Any]) -> bool:
+    source_text = f"{item.get('source_id') or ''} {item.get('source') or ''}".lower()
+    return "36kr" in source_text or "36氪" in source_text
+
+
 CAPABILITY_DEFINITIONS = {
     "历史 K 线": {
         "fallback_sources": ["Baostock", "AData", "本地缓存"],
@@ -288,7 +293,9 @@ class DataService:
         if isinstance(existing_flow, dict):
             for category in flow:
                 values = existing_flow.get(category) or []
-                flow[category] = values if isinstance(values, list) else []
+                flow[category] = [item for item in values if isinstance(item, dict) and not _is_blocked_brief_source(item)] if isinstance(values, list) else []
+        if row.get("llm_model") and row.get("llm_model") != "fallback" and any(flow.values()):
+            return flow
         for category in flow:
             seen = {str(item.get("url") or item.get("title") or "") for item in flow[category] if isinstance(item, dict)}
             rows = self.db.query(
@@ -306,6 +313,8 @@ class DataService:
                 [category, brief_date, brief_date],
             )
             for item in rows:
+                if _is_blocked_brief_source(item):
+                    continue
                 key = str(item.get("url") or item.get("title") or "")
                 if key in seen:
                     continue

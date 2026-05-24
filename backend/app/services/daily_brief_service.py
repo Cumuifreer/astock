@@ -18,7 +18,7 @@ from backend.app.db import Database
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 MAX_AGE_DAYS = 14
-PROMPT_CATEGORY_LIMIT = {"tech": 25, "finance": 20, "politics": 15}
+PROMPT_CATEGORY_LIMIT = {"tech": 80, "finance": 80, "politics": 80}
 ARTICLE_FLOW_CATEGORY_LIMIT = 80
 CATEGORY_NAMES = {"tech": "科技", "finance": "财经", "politics": "时政"}
 ENTERTAINMENT_KEYWORDS = (
@@ -40,38 +40,8 @@ ENTERTAINMENT_KEYWORDS = (
     "体育",
     "赛事",
 )
-FINANCE_NEWSFLASH_KEYWORDS = (
-    "ai",
-    "ipo",
-    "上市",
-    "融资",
-    "并购",
-    "财报",
-    "营收",
-    "利润",
-    "估值",
-    "基金",
-    "美元",
-    "人民币",
-    "订单",
-    "投资",
-    "股权",
-    "监管",
-    "券商",
-    "银行",
-    "能源",
-    "出口",
-    "消费",
-    "芯片",
-    "大模型",
-    "算力",
-)
-
-
 DEFAULT_DAILY_BRIEF_SOURCES: List[Dict[str, Any]] = [
     {"id": "github-trending", "name": "GitHub Trending", "type": "scrape", "url": "https://github.com/trending", "category": "tech", "enabled": True},
-    {"id": "36kr-article", "name": "36氪文章", "type": "rss", "url": "https://36kr.com/feed-article", "category": "tech", "enabled": True},
-    {"id": "36kr-newsflash", "name": "36氪快讯", "type": "rss", "url": "https://36kr.com/feed-newsflash", "category": "finance", "enabled": True},
     {"id": "infoq-cn", "name": "InfoQ 中文", "type": "rss", "url": "https://www.infoq.cn/feed", "category": "tech", "enabled": True},
     {"id": "openai-news", "name": "OpenAI News", "type": "rss", "url": "https://openai.com/news/rss.xml", "category": "tech", "enabled": True},
     {"id": "tldr-ai", "name": "TLDR AI", "type": "rss", "url": "https://tldr.tech/api/rss/ai", "category": "tech", "enabled": True},
@@ -93,9 +63,10 @@ daily_overview: 150-220 字总览，覆盖科技、财经、时政；
 tech_briefs: 3-5 条；
 finance_briefs: 3-5 条；
 politics_briefs: 2-3 条；
+article_flow: 对象，包含 tech、finance、politics 三个数组。每个数组尽量覆盖输入候选中该类别所有有价值条目，不要只挑少数精编；每条包含 title、url、source、summary、importance；
 editor_note: 30-60 字中性短评；
 keywords: 5-8 个关键词。
-每条 brief 包含 title、url、source、summary、importance。url 必须从输入原样复制，不能编造。相同主题合并，英文内容翻译成中文，标题克制、摘要只写事实，不要 markdown，不要代码围栏。
+每条 brief 与 article_flow 条目都包含 title、url、source、summary、importance。url 必须从输入原样复制，不能编造。相同主题合并，英文内容必须翻译成中文，中文内容也要整理成克制清楚的中文标题和摘要，摘要只写事实，不要 markdown，不要代码围栏。
 严禁选择娱乐、影视、体育、明星、票房、社会猎奇新闻，除非它与上市公司、重大资本市场事件或政策事件直接相关。"""
 
 
@@ -138,8 +109,9 @@ class DailyBriefService:
     def should_regenerate(self, brief: Optional[Dict[str, Any]]) -> bool:
         if not brief or not self.api_key:
             return False
+        payload = _brief_payload(brief)
         if brief.get("llm_model") != "fallback":
-            return False
+            return payload.get("article_flow_source") != "llm"
         error_message = str(brief.get("error_message") or "")
         return "未配置 LLM API" in error_message or "Client error '400 Bad Request'" in error_message
 
@@ -176,6 +148,9 @@ class DailyBriefService:
         if not articles:
             status = "completed_partial"
         generated_at = datetime.utcnow()
+        translated_flow = report.get("article_flow")
+        has_translated_flow = bool(isinstance(translated_flow, dict) and any(translated_flow.values()))
+        article_flow = translated_flow if has_translated_flow else self._article_flow(articles)
         row = {
             "id": brief_id,
             "brief_date": brief_date,
@@ -196,7 +171,8 @@ class DailyBriefService:
                 "warnings": warnings,
                 "llm_used": llm_used,
                 "source_count": len(enabled_sources),
-                "article_flow": self._article_flow(articles),
+                "article_flow": article_flow,
+                "article_flow_source": "llm" if llm_used and has_translated_flow else "raw",
             },
         }
         self.db.upsert("daily_briefs", [row], ["id"])
@@ -439,6 +415,7 @@ class DailyBriefService:
             "tech_briefs": _normalize_briefs(raw.get("tech_briefs")),
             "finance_briefs": _normalize_briefs(raw.get("finance_briefs")),
             "politics_briefs": _normalize_briefs(raw.get("politics_briefs")),
+            "article_flow": _normalize_article_flow(raw.get("article_flow")),
             "editor_note": str(raw.get("editor_note") or ""),
             "keywords": [str(item) for item in (raw.get("keywords") or [])][:8],
         }
@@ -567,6 +544,20 @@ def _http_error_message(exc: httpx.HTTPStatusError) -> str:
     return f"{response.status_code} {response.reason_phrase}: {detail or response.url}"
 
 
+def _brief_payload(brief: Dict[str, Any]) -> Dict[str, Any]:
+    payload = brief.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    raw = brief.get("payload_json")
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _round_robin(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
     buckets: Dict[str, List[Dict[str, Any]]] = {}
     for item in items:
@@ -603,6 +594,36 @@ def _normalize_briefs(value: Any) -> List[Dict[str, Any]]:
             }
         )
     return briefs
+
+
+def _normalize_article_flow(value: Any) -> Dict[str, List[Dict[str, Any]]]:
+    flow: Dict[str, List[Dict[str, Any]]] = {"tech": [], "finance": [], "politics": []}
+    if not isinstance(value, dict):
+        return flow
+    for category in flow:
+        items = value.get(category) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            url = str(item.get("url") or "").strip()
+            if not title or not url:
+                continue
+            flow[category].append(
+                {
+                    "title": title[:120],
+                    "url": url,
+                    "source": str(item.get("source") or "").strip(),
+                    "category": category,
+                    "summary": str(item.get("summary") or item.get("excerpt") or "").strip()[:260],
+                    "published_at": str(item.get("published_at") or ""),
+                }
+            )
+            if len(flow[category]) >= ARTICLE_FLOW_CATEGORY_LIMIT:
+                break
+    return flow
 
 
 def _normalize_importance(value: Any) -> int:
@@ -646,11 +667,12 @@ def _brief_from_article(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _is_brief_article(item: Dict[str, Any]) -> bool:
+    source_text = f"{item.get('source_id') or ''} {item.get('source') or ''}".lower()
+    if "36kr" in source_text or "36氪" in source_text:
+        return False
     text = f"{item.get('title') or ''} {item.get('excerpt') or ''}".lower()
     if any(keyword.lower() in text for keyword in ENTERTAINMENT_KEYWORDS):
         return _has_market_context(text)
-    if item.get("source_id") == "36kr-newsflash":
-        return any(keyword.lower() in text for keyword in FINANCE_NEWSFLASH_KEYWORDS)
     return True
 
 
