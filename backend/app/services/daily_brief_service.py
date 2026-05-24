@@ -41,7 +41,6 @@ ENTERTAINMENT_KEYWORDS = (
     "赛事",
 )
 DEFAULT_DAILY_BRIEF_SOURCES: List[Dict[str, Any]] = [
-    {"id": "github-trending", "name": "GitHub Trending", "type": "scrape", "url": "https://github.com/trending", "category": "tech", "enabled": True},
     {"id": "infoq-cn", "name": "InfoQ 中文", "type": "rss", "url": "https://www.infoq.cn/feed", "category": "tech", "enabled": True},
     {"id": "openai-news", "name": "OpenAI News", "type": "rss", "url": "https://openai.com/news/rss.xml", "category": "tech", "enabled": True},
     {"id": "tldr-ai", "name": "TLDR AI", "type": "rss", "url": "https://tldr.tech/api/rss/ai", "category": "tech", "enabled": True},
@@ -668,7 +667,7 @@ def _brief_from_article(item: Dict[str, Any]) -> Dict[str, Any]:
 
 def _is_brief_article(item: Dict[str, Any]) -> bool:
     source_text = f"{item.get('source_id') or ''} {item.get('source') or ''}".lower()
-    if "36kr" in source_text or "36氪" in source_text:
+    if "36kr" in source_text or "36氪" in source_text or "github-trending" in source_text or "github trending" in source_text:
         return False
     text = f"{item.get('title') or ''} {item.get('excerpt') or ''}".lower()
     if any(keyword.lower() in text for keyword in ENTERTAINMENT_KEYWORDS):

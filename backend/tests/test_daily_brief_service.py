@@ -23,6 +23,7 @@ def test_default_daily_brief_sources_prefer_shanghai_reachable_feeds():
     source_ids = {source["id"] for source in DEFAULT_DAILY_BRIEF_SOURCES}
 
     removed_ids = {
+        "github-trending",
         "v2ex-hot",
         "linuxdo",
         "deepmind-blog",
@@ -150,6 +151,18 @@ def test_daily_brief_api_backfills_article_flow_for_legacy_briefs(tmp_path):
         }
         for index in range(8)
     ]
+    articles.append(
+        {
+            "source_id": "github-trending",
+            "source": "GitHub Trending",
+            "category": "tech",
+            "title": "Repository trend should be hidden",
+            "url": "https://github.com/example/hidden",
+            "excerpt": "GitHub Trending should no longer appear in the brief.",
+            "published_at": datetime(2026, 5, 24, 8, 30),
+            "fetched_at": generated_at,
+        }
+    )
     db.upsert("news_articles", articles, ["source_id", "url"])
     db.upsert(
         "daily_briefs",
@@ -180,6 +193,14 @@ def test_daily_brief_api_backfills_article_flow_for_legacy_briefs(tmp_path):
                                 "category": "tech",
                                 "summary": "LLM translated summary",
                                 "published_at": "",
+                            },
+                            {
+                                "title": "Cached GitHub item",
+                                "url": "https://github.com/example/cached",
+                                "source": "GitHub Trending",
+                                "category": "tech",
+                                "summary": "This cached item should be hidden.",
+                                "published_at": "",
                             }
                         ],
                         "finance": [],
@@ -197,6 +218,7 @@ def test_daily_brief_api_backfills_article_flow_for_legacy_briefs(tmp_path):
     assert len(latest["article_flow"]["tech"]) == 8
     assert latest["article_flow"]["tech"][0]["title"] == "Existing translated item"
     assert latest["article_flow"]["tech"][1]["title"] == "AI infrastructure update 7"
+    assert "GitHub Trending" not in json.dumps(latest, ensure_ascii=False, default=str)
 
 
 def test_daily_brief_uses_llm_translated_article_flow_without_raw_append(tmp_path, monkeypatch):

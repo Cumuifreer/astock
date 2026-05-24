@@ -25,7 +25,12 @@ DEFAULT_INTRADAY_SLOTS = (
 
 def _is_blocked_brief_source(item: Dict[str, Any]) -> bool:
     source_text = f"{item.get('source_id') or ''} {item.get('source') or ''}".lower()
-    return "36kr" in source_text or "36氪" in source_text
+    return (
+        "36kr" in source_text
+        or "36氪" in source_text
+        or "github-trending" in source_text
+        or "github trending" in source_text
+    )
 
 
 CAPABILITY_DEFINITIONS = {
