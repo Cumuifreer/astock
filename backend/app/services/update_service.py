@@ -14,6 +14,7 @@ import pandas as pd
 from backend.app.config import settings
 from backend.app.db import Database
 from backend.app.services.data_service import DataService
+from backend.app.services.daily_brief_service import DailyBriefService
 from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.market_utils import safe_float
 from backend.app.services.strategy_service import normalize_strategy_config
@@ -36,6 +37,7 @@ class UpdateService:
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.data_service = DataService(db)
         self.intraday_service = IntradayRadarService(db)
+        self.daily_brief_service = DailyBriefService(db)
         self.analysis_runner: Any = None
         self.backtest_runner: Any = None
         self._queue_lock = threading.Lock()
@@ -181,6 +183,56 @@ class UpdateService:
         )
         return task_id
 
+    def ensure_daily_brief(self) -> Optional[str]:
+        existing = self.db.scalar(
+            """
+            SELECT id
+            FROM task_runs
+            WHERE kind = 'brief'
+              AND status IN ('queued', 'running')
+            ORDER BY started_at
+            LIMIT 1
+            """
+        )
+        if existing:
+            return str(existing)
+        if self.daily_brief_service.latest():
+            return None
+        return self.start_daily_brief({"reason": "empty"})
+
+    def start_daily_brief(self, options: Optional[Dict[str, Any]] = None) -> str:
+        task_id = f"brief-{uuid.uuid4().hex[:12]}"
+        self._enqueue_task(
+            task_id,
+            kind="brief",
+            stage="准备资讯简报",
+            source="多源资讯",
+            summary={},
+            payload=options or {},
+        )
+        return task_id
+
+    def start_scheduled_daily_brief(self, scheduled_at: datetime) -> Optional[str]:
+        brief_date = scheduled_at.date()
+        task_id = f"brief-auto-{brief_date:%Y%m%d}"
+        if self.db.scalar("SELECT id FROM task_runs WHERE id = ?", [task_id]):
+            return None
+        if self.daily_brief_service.has_brief_for_date(brief_date):
+            return None
+        self._enqueue_task(
+            task_id,
+            kind="brief",
+            stage="准备资讯简报",
+            source="多源资讯",
+            summary={"scheduled": True, "schedule_key": scheduled_at.strftime("%Y-%m-%d %H:%M")},
+            payload={
+                "scheduled": True,
+                "report_date": brief_date.isoformat(),
+                "schedule_key": scheduled_at.strftime("%Y-%m-%d %H:%M"),
+            },
+        )
+        return task_id
+
     def _enqueue_task(
         self,
         task_id: str,
@@ -281,6 +333,9 @@ class UpdateService:
             if self.backtest_runner is None:
                 raise RuntimeError("回测服务尚未就绪。")
             self.backtest_runner.run(payload, run_id=payload.get("run_id"), task_id=task_id)
+            return
+        if kind == "brief":
+            self._run_daily_brief(task_id, payload)
             return
         raise RuntimeError(f"未知任务类型：{kind}")
 
@@ -539,6 +594,43 @@ class UpdateService:
                 task_id,
                 status="failed",
                 stage="盘中雷达失败",
+                failed=1,
+                error_message=str(exc),
+                warning=str(exc),
+                finished_at=datetime.utcnow(),
+            )
+
+    def _run_daily_brief(self, task_id: str, options: Dict[str, Any]) -> None:
+        report_date = None
+        if options.get("report_date"):
+            report_date = date.fromisoformat(str(options["report_date"])[:10])
+        try:
+            def progress(stage: str, processed: int, total: int) -> None:
+                self._patch_task(
+                    task_id,
+                    stage=stage,
+                    source="多源资讯",
+                    processed=processed,
+                    total=total,
+                )
+
+            summary = self.daily_brief_service.generate(report_date=report_date, progress=progress)
+            self._patch_task(
+                task_id,
+                status=summary.get("status") or "completed_partial",
+                stage="资讯简报完成",
+                source="多源资讯",
+                success=1 if summary.get("article_count") else 0,
+                failed=0,
+                warning=(summary.get("warnings") or [None])[-1],
+                summary=summary,
+                finished_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            self._patch_task(
+                task_id,
+                status="failed",
+                stage="资讯简报失败",
                 failed=1,
                 error_message=str(exc),
                 warning=str(exc),

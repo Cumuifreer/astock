@@ -104,6 +104,7 @@ class DataService:
     def overview(self) -> Dict[str, Any]:
         latest_run = self.latest_analysis_run()
         latest_task = self.latest_task("update")
+        latest_brief = self.latest_daily_brief()
         return {
             "stock_count": self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0,
             "history_rows": self.db.scalar("SELECT COUNT(*) FROM historical_bars") or 0,
@@ -124,6 +125,7 @@ class DataService:
             ),
             "latest_analysis": latest_run,
             "latest_update": latest_task,
+            "latest_brief": latest_brief,
             "warnings": self.db.query(
                 "SELECT * FROM warnings ORDER BY created_at DESC LIMIT 8"
             ),
@@ -185,6 +187,7 @@ class DataService:
                 "latest_history_date": self.db.scalar("SELECT MAX(date) FROM historical_bars"),
                 "latest_snapshot_date": self.db.scalar("SELECT MAX(date) FROM daily_snapshots"),
                 "latest_intraday_sample": latest_sample,
+                "latest_brief_date": self.db.scalar("SELECT MAX(brief_date) FROM daily_briefs"),
                 "stock_count": self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0,
             },
             "tasks": {
@@ -193,6 +196,7 @@ class DataService:
                 "latest_update": self.latest_task("update"),
                 "latest_analyze": self.latest_task("analyze"),
                 "latest_intraday": self.latest_task("intraday"),
+                "latest_brief": self.latest_task("brief"),
             },
             "scheduler": {
                 "enabled": scheduler_enabled,
@@ -247,6 +251,29 @@ class DataService:
         row.pop("payload_json", None)
         row.pop("queue_order", None)
         return row
+
+    def latest_daily_brief(self) -> Optional[Dict[str, Any]]:
+        rows = self.db.query("SELECT * FROM daily_briefs ORDER BY generated_at DESC LIMIT 1")
+        if not rows:
+            return None
+        row = rows[0]
+        return {
+            "id": row["id"],
+            "brief_date": row.get("brief_date"),
+            "status": row.get("status"),
+            "hero_headline": row.get("hero_headline") or "",
+            "daily_overview": row.get("daily_overview") or "",
+            "tech_briefs": json.loads(row.get("tech_briefs_json") or "[]"),
+            "finance_briefs": json.loads(row.get("finance_briefs_json") or "[]"),
+            "politics_briefs": json.loads(row.get("politics_briefs_json") or "[]"),
+            "editor_note": row.get("editor_note") or "",
+            "keywords": json.loads(row.get("keywords_json") or "[]"),
+            "article_count": row.get("article_count") or 0,
+            "source_count": row.get("source_count") or 0,
+            "llm_model": row.get("llm_model"),
+            "generated_at": row.get("generated_at"),
+            "error_message": row.get("error_message"),
+        }
 
     def _intraday_rank_count(self, sample_at: datetime, mode: str) -> int:
         return int(

@@ -2,7 +2,7 @@ export type TaskStatus = 'queued' | 'running' | 'completed_full' | 'completed_pa
 
 export interface TaskRun {
   id: string;
-  kind: 'update' | 'analyze' | 'backtest' | 'intraday';
+  kind: 'update' | 'analyze' | 'backtest' | 'intraday' | 'brief';
   status: TaskStatus;
   stage: string | null;
   source: string | null;
@@ -155,7 +155,34 @@ export interface Overview {
   turnover_coverage: { count: number; total: number; percent: number };
   latest_analysis: AnalysisRun | null;
   latest_update: TaskRun | null;
+  latest_brief: DailyBrief | null;
   warnings: Array<Record<string, unknown>>;
+}
+
+export interface BriefItem {
+  title: string;
+  url: string;
+  source: string;
+  summary: string;
+  importance: number;
+}
+
+export interface DailyBrief {
+  id: string;
+  brief_date: string;
+  status: string;
+  hero_headline: string;
+  daily_overview: string;
+  tech_briefs: BriefItem[];
+  finance_briefs: BriefItem[];
+  politics_briefs: BriefItem[];
+  editor_note: string;
+  keywords: string[];
+  article_count: number;
+  source_count: number;
+  llm_model: string | null;
+  generated_at: string | null;
+  error_message: string | null;
 }
 
 export interface FunnelStep {
@@ -433,6 +460,7 @@ export interface RuntimeHealth {
     latest_history_date: string | null;
     latest_snapshot_date: string | null;
     latest_intraday_sample: string | null;
+    latest_brief_date: string | null;
     stock_count: number;
   };
   tasks: {
@@ -441,6 +469,7 @@ export interface RuntimeHealth {
     latest_update: TaskRun | null;
     latest_analyze: TaskRun | null;
     latest_intraday: TaskRun | null;
+    latest_brief: TaskRun | null;
   };
   scheduler: {
     enabled: boolean;
@@ -486,12 +515,14 @@ export interface Bootstrap {
   analyze_status: TaskRun | null;
   backtest_status: TaskRun | null;
   intraday_status: TaskRun | null;
+  brief_status: TaskRun | null;
   latest_analysis: AnalysisRun | null;
   latest_backtest: BacktestRun | null;
   backtest_reports?: BacktestRun[];
   candidates: CandidateBundle;
   backtest: BacktestResult;
   intraday: IntradayRadarResult;
+  daily_brief: DailyBrief | null;
   watchlist: WatchlistResult;
   runtime_health: RuntimeHealth;
 }

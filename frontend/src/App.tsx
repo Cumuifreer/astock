@@ -33,6 +33,8 @@ import type {
   Candidate,
   CandidateBundle,
   Capability,
+  BriefItem,
+  DailyBrief,
   IntradayRadarCandidate,
   IntradayRadarConfig,
   IntradayRadarResult,
@@ -144,12 +146,13 @@ function App() {
   const analyzeRunning = isTaskActive(bootstrap?.analyze_status);
   const backtestRunning = isTaskActive(bootstrap?.backtest_status);
   const intradayRunning = isTaskActive(bootstrap?.intraday_status);
+  const briefRunning = isTaskActive(bootstrap?.brief_status);
 
   useEffect(() => {
-    if (!updateRunning && !analyzeRunning && !backtestRunning && !intradayRunning) return;
+    if (!updateRunning && !analyzeRunning && !backtestRunning && !intradayRunning && !briefRunning) return;
     const timer = window.setInterval(() => void load(true), 2200);
     return () => window.clearInterval(timer);
-  }, [updateRunning, analyzeRunning, backtestRunning, intradayRunning]);
+  }, [updateRunning, analyzeRunning, backtestRunning, intradayRunning, briefRunning]);
 
   async function startUpdate(force = false, mode: UpdateMode = 'full') {
     try {
@@ -339,7 +342,7 @@ function App() {
     if (tab === 'map') {
       return <DataMap capabilities={bootstrap.capabilities} afterProbe={() => load(true)} />;
     }
-    return <StatusBoard runtime={bootstrap.runtime_health} update={bootstrap.update_status} analyze={bootstrap.analyze_status} backtest={bootstrap.backtest_status} intraday={bootstrap.intraday_status} latestAnalysis={bootstrap.latest_analysis} />;
+    return <StatusBoard runtime={bootstrap.runtime_health} update={bootstrap.update_status} analyze={bootstrap.analyze_status} backtest={bootstrap.backtest_status} intraday={bootstrap.intraday_status} brief={bootstrap.brief_status} latestAnalysis={bootstrap.latest_analysis} />;
   }, [bootstrap, tab, strategy, strategyName, selectedPresetId]);
 
   return (
@@ -370,6 +373,7 @@ function App() {
           <StatusDot task={bootstrap?.analyze_status} label="分析" />
           <StatusDot task={bootstrap?.backtest_status} label="回测" />
           <StatusDot task={bootstrap?.intraday_status} label="雷达" />
+          <StatusDot task={bootstrap?.brief_status} label="简报" />
         </div>
       </aside>
 
@@ -498,8 +502,67 @@ function Overview({
         </div>
       </section>
 
-      <Results candidates={bootstrap.candidates.rows.slice(0, 8)} funnel={bootstrap.candidates.funnel} zeroReason={bootstrap.candidates.zero_reason} compact />
+      <DailyBriefPanel brief={bootstrap.daily_brief || overview.latest_brief} task={bootstrap.brief_status} />
     </div>
+  );
+}
+
+function DailyBriefPanel({ brief, task }: { brief: DailyBrief | null; task: TaskRun | null }) {
+  const running = isTaskActive(task);
+  if (!brief) {
+    return (
+      <section className="panel daily-brief-panel">
+        <div className="daily-brief-head">
+          <PanelTitle icon={<Layers3 size={18} />} title="今日资讯简报" />
+          {running && <span className="pill good">自动生成中</span>}
+        </div>
+        {running ? <TaskStrip task={task} fallback="资讯简报正在后台生成" /> : <EmptyState text="资讯简报会在后台自动生成。" />}
+      </section>
+    );
+  }
+  const sections: Array<[string, BriefItem[]]> = [
+    ['科技', brief.tech_briefs],
+    ['财经', brief.finance_briefs],
+    ['时政', brief.politics_briefs],
+  ];
+  return (
+    <section className="panel daily-brief-panel">
+      <div className="daily-brief-head">
+        <PanelTitle icon={<Layers3 size={18} />} title="今日资讯简报" />
+        <span className="pill">{formatChinaLocalDateTime(brief.generated_at)} · {formatInt(brief.article_count)} 条</span>
+      </div>
+      {running && <TaskStrip task={task} fallback="资讯简报正在后台生成" />}
+      <div className="brief-hero">
+        <span>{brief.status === 'completed_full' ? '精编完成' : '部分完成'}</span>
+        <strong>{brief.hero_headline}</strong>
+        <p>{brief.daily_overview}</p>
+      </div>
+      <div className="brief-section-grid">
+        {sections.map(([title, items]) => (
+          <div className="brief-section" key={title}>
+            <h3>{title}</h3>
+            {items.length ? items.slice(0, 5).map((item) => <BriefCard key={`${item.url}-${item.title}`} item={item} />) : <small>暂无可用条目</small>}
+          </div>
+        ))}
+      </div>
+      <div className="brief-footer">
+        <span>{brief.editor_note || '后台自动整理，多源失败时会保留降级摘要。'}</span>
+        <div>
+          {brief.keywords.slice(0, 8).map((keyword) => <b key={keyword}>{keyword}</b>)}
+        </div>
+      </div>
+      {brief.error_message && <InlineError text={brief.error_message} />}
+    </section>
+  );
+}
+
+function BriefCard({ item }: { item: BriefItem }) {
+  return (
+    <a className="brief-card" href={item.url} target="_blank" rel="noreferrer">
+      <strong>{item.title}</strong>
+      <p>{item.summary}</p>
+      <span>{item.source} · 重要度 {formatInt(item.importance)}</span>
+    </a>
   );
 }
 
@@ -2029,6 +2092,7 @@ function StatusBoard({
   analyze,
   backtest,
   intraday,
+  brief,
   latestAnalysis,
 }: {
   runtime: RuntimeHealth;
@@ -2036,6 +2100,7 @@ function StatusBoard({
   analyze: TaskRun | null;
   backtest: TaskRun | null;
   intraday: TaskRun | null;
+  brief: TaskRun | null;
   latestAnalysis: unknown;
 }) {
   return (
@@ -2058,6 +2123,10 @@ function StatusBoard({
           <PanelTitle icon={<Activity size={18} />} title="盘中雷达" />
           <TaskDetail task={intraday} />
         </section>
+        <section className="panel">
+          <PanelTitle icon={<Layers3 size={18} />} title="资讯简报" />
+          <TaskDetail task={brief} />
+        </section>
         <section className="panel wide-panel">
           <PanelTitle icon={<BarChart3 size={18} />} title="最近分析" />
           <pre className="json-readout">{JSON.stringify(latestAnalysis || {}, null, 2)}</pre>
@@ -2072,6 +2141,7 @@ function RuntimeHealthPanel({ runtime }: { runtime: RuntimeHealth }) {
     `历史 ${runtime.data.latest_history_date || '-'}`,
     `快照 ${runtime.data.latest_snapshot_date || '-'}`,
     `盘中 ${formatChinaLocalDateTime(runtime.data.latest_intraday_sample)}`,
+    `简报 ${runtime.data.latest_brief_date || '-'}`,
   ].join(' · ');
   const nextSlot = runtime.scheduler.next_slot?.time || (runtime.scheduler.is_weekend ? '非交易日' : '-');
   return (
@@ -2566,6 +2636,9 @@ function dataHealthHints(bootstrap: Bootstrap) {
   }
   if (bootstrap.intraday?.sample_at) {
     hints.push(`盘中雷达最近采样 ${formatChinaLocalDateTime(bootstrap.intraday.sample_at)}。`);
+  }
+  if (bootstrap.daily_brief?.generated_at) {
+    hints.push(`资讯简报最近生成 ${formatChinaLocalDateTime(bootstrap.daily_brief.generated_at)}。`);
   }
   if (Number(overview.turnover_coverage?.percent || 0) < 95) {
     hints.push(`换手率覆盖 ${overview.turnover_coverage.percent}%，缺失股票会按当前策略设置处理。`);

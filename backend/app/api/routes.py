@@ -43,6 +43,7 @@ def health() -> Dict[str, Any]:
 
 @router.get("/bootstrap")
 def bootstrap() -> Dict[str, Any]:
+    update_service.ensure_daily_brief()
     return {
         "overview": data_service.overview(),
         "capabilities": data_service.capabilities(),
@@ -52,8 +53,10 @@ def bootstrap() -> Dict[str, Any]:
         "analyze_status": data_service.latest_task("analyze"),
         "backtest_status": data_service.latest_task("backtest"),
         "intraday_status": data_service.latest_task("intraday"),
+        "brief_status": data_service.latest_task("brief"),
         "latest_analysis": data_service.latest_analysis_run(),
         "latest_backtest": data_service.latest_backtest_run(),
+        "daily_brief": data_service.latest_daily_brief(),
         "intraday": intraday_service.latest(limit=200),
         "candidates": data_service.candidates(limit=50),
         "backtest": data_service.backtest_result(limit=200),
@@ -141,6 +144,12 @@ def runtime_health() -> Dict[str, Any]:
         poll_seconds=settings.intraday_scheduler_poll_seconds,
         catchup_minutes=settings.intraday_scheduler_catchup_minutes,
     )
+
+
+@router.get("/daily-brief")
+def daily_brief() -> Dict[str, Any]:
+    update_service.ensure_daily_brief()
+    return {"brief": data_service.latest_daily_brief(), "task": data_service.latest_task("brief")}
 
 
 @router.get("/watchlist")

@@ -30,6 +30,13 @@ class Settings:
     intraday_scheduler_enabled: bool = os.getenv("ASHARE_INTRADAY_SCHEDULER", "1") == "1"
     intraday_scheduler_poll_seconds: int = int(os.getenv("ASHARE_INTRADAY_SCHEDULER_POLL_SECONDS", "30"))
     intraday_scheduler_catchup_minutes: int = int(os.getenv("ASHARE_INTRADAY_SCHEDULER_CATCHUP_MINUTES", "8"))
+    daily_brief_scheduler_enabled: bool = os.getenv("ASHARE_DAILY_BRIEF_SCHEDULER", "1") == "1"
+    daily_brief_scheduler_poll_seconds: int = int(os.getenv("ASHARE_DAILY_BRIEF_POLL_SECONDS", "60"))
+    daily_brief_schedule_time: str = os.getenv("ASHARE_DAILY_BRIEF_TIME", "08:20")
+    daily_brief_source_timeout_seconds: int = int(os.getenv("ASHARE_DAILY_BRIEF_SOURCE_TIMEOUT", "12"))
+    daily_brief_api_key: str = os.getenv("ASHARE_DAILY_BRIEF_API_KEY") or os.getenv("DEEPSEEK_API_KEY", "")
+    daily_brief_model: str = os.getenv("ASHARE_DAILY_BRIEF_MODEL", "v4-flash")
+    daily_brief_llm_url: str = os.getenv("ASHARE_DAILY_BRIEF_LLM_URL", "https://api.deepseek.com/chat/completions")
 
 
 settings = Settings()

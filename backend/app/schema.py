@@ -15,7 +15,7 @@ from backend.app.services.strategy_service import (
 )
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 MIGRATIONS = [
@@ -400,6 +400,39 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE watchlist_items ADD COLUMN IF NOT EXISTS review_status TEXT
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS news_articles (
+        source_id TEXT,
+        source TEXT,
+        category TEXT,
+        title TEXT,
+        url TEXT,
+        excerpt TEXT,
+        published_at TIMESTAMP,
+        fetched_at TIMESTAMP,
+        PRIMARY KEY (source_id, url)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS daily_briefs (
+        id TEXT PRIMARY KEY,
+        brief_date DATE,
+        status TEXT,
+        hero_headline TEXT,
+        daily_overview TEXT,
+        tech_briefs_json TEXT,
+        finance_briefs_json TEXT,
+        politics_briefs_json TEXT,
+        editor_note TEXT,
+        keywords_json TEXT,
+        article_count INTEGER,
+        source_count INTEGER,
+        llm_model TEXT,
+        generated_at TIMESTAMP,
+        error_message TEXT,
+        payload_json TEXT
+    )
     """,
 ]
 

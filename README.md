@@ -9,6 +9,7 @@ A-Share Signal 是一个私人使用的 A 股技术分析 Web 应用。它只做
 - 前端：Vite + React + TypeScript，构建产物由后端托管。
 - 任务：数据更新和分析分开运行；点击后立即返回，前端轮询真实进度。
 - 盘中雷达：可手动或用定时器触发全市场快照采样，采样入库后自动生成独立观察榜，不覆盖正式分析报告。
+- 资讯简报：后台定时抓取多源资讯并用 LLM 生成中文摘要，首页会自动显示最近一份；没有简报时服务启动后会自动补一份。
 
 ## 数据源
 
@@ -73,6 +74,27 @@ Persistent=false
 WantedBy=timers.target
 ```
 
+## 资讯简报
+
+资讯简报会自动抓取国际科技、财经、时政等公开资讯源，保存原始条目和生成后的摘要到 DuckDB。默认每天北京时间 08:20 运行一次；如果数据库里还没有任何简报，服务启动或打开首页时会自动排队生成第一份。
+
+LLM 默认使用 DeepSeek 兼容接口，密钥只从环境变量读取，不要写进仓库：
+
+```bash
+export DEEPSEEK_API_KEY=your-api-key
+export ASHARE_DAILY_BRIEF_MODEL=v4-flash
+```
+
+可选配置：
+
+```bash
+export ASHARE_DAILY_BRIEF_TIME=08:20
+export ASHARE_DAILY_BRIEF_SCHEDULER=1
+export ASHARE_DAILY_BRIEF_SOURCE_TIMEOUT=12
+```
+
+如果没有配置 LLM 密钥，系统仍会保存资讯条目并生成降级摘要。
+
 ## 本地启动
 
 ```bash
@@ -133,6 +155,8 @@ Wants=network-online.target
 [Service]
 WorkingDirectory=/opt/ashare-signal
 Environment=ASHARE_DB_PATH=/opt/ashare-signal/data/ashare_signal.duckdb
+Environment=DEEPSEEK_API_KEY=replace-with-your-key
+Environment=ASHARE_DAILY_BRIEF_MODEL=v4-flash
 ExecStart=/opt/ashare-signal/.venv/bin/python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
@@ -157,6 +181,7 @@ curl http://127.0.0.1:8000/api/bootstrap
 curl http://127.0.0.1:8000/api/status/update
 curl http://127.0.0.1:8000/api/status/analyze
 curl http://127.0.0.1:8000/api/status/intraday
+curl http://127.0.0.1:8000/api/daily-brief
 curl http://127.0.0.1:8000/api/candidates
 curl http://127.0.0.1:8000/api/data/overview
 curl http://127.0.0.1:8000/api/data/capabilities

@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.app.api.routes import router, update_service
 from backend.app.config import settings
+from backend.app.services.daily_brief_scheduler import DailyBriefScheduler
 from backend.app.services.intraday_scheduler import IntradayScheduler
 
 
@@ -18,17 +19,26 @@ intraday_scheduler = IntradayScheduler(
     poll_seconds=settings.intraday_scheduler_poll_seconds,
     catchup_minutes=settings.intraday_scheduler_catchup_minutes,
 )
+daily_brief_scheduler = DailyBriefScheduler(
+    update_service,
+    poll_seconds=settings.daily_brief_scheduler_poll_seconds,
+    schedule_time=settings.daily_brief_schedule_time,
+)
 
 
 @app.on_event("startup")
-def start_intraday_scheduler() -> None:
+def start_schedulers() -> None:
+    update_service.ensure_daily_brief()
     if settings.intraday_scheduler_enabled:
         intraday_scheduler.start()
+    if settings.daily_brief_scheduler_enabled:
+        daily_brief_scheduler.start()
 
 
 @app.on_event("shutdown")
-def stop_intraday_scheduler() -> None:
+def stop_schedulers() -> None:
     intraday_scheduler.stop()
+    daily_brief_scheduler.stop()
 
 
 @app.get("/")
