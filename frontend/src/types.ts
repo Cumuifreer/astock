@@ -167,6 +167,15 @@ export interface BriefItem {
   importance: number;
 }
 
+export interface BriefArticle {
+  title: string;
+  url: string;
+  source: string;
+  category: string;
+  summary: string;
+  published_at: string;
+}
+
 export interface DailyBrief {
   id: string;
   brief_date: string;
@@ -183,6 +192,11 @@ export interface DailyBrief {
   llm_model: string | null;
   generated_at: string | null;
   error_message: string | null;
+  article_flow: {
+    tech: BriefArticle[];
+    finance: BriefArticle[];
+    politics: BriefArticle[];
+  };
 }
 
 export interface FunnelStep {

@@ -667,6 +667,100 @@ h1 {
   color: var(--teal);
 }
 
+.brief-detail-shell {
+  border: 1px solid rgba(157, 196, 187, 0.16);
+  background: rgba(255, 255, 255, 0.014);
+}
+
+.brief-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid rgba(157, 196, 187, 0.14);
+}
+
+.brief-tab {
+  border: 0;
+  border-right: 1px solid rgba(157, 196, 187, 0.12);
+  background: rgba(255, 255, 255, 0.012);
+  color: var(--muted);
+  padding: 12px 14px;
+  text-align: left;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.brief-tab:last-child {
+  border-right: 0;
+}
+
+.brief-tab span {
+  font-weight: 800;
+  color: var(--soft);
+}
+
+.brief-tab b {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.brief-tab.active {
+  background: rgba(59, 240, 193, 0.07);
+  box-shadow: inset 0 -2px 0 var(--teal);
+}
+
+.brief-tab.active span,
+.brief-tab.active b {
+  color: var(--text);
+}
+
+.brief-detail-list {
+  display: grid;
+  padding: 2px 14px 10px;
+}
+
+.brief-detail-list small {
+  color: var(--muted);
+  padding: 14px 0;
+}
+
+.brief-detail-item {
+  display: grid;
+  gap: 6px;
+  padding: 14px 0;
+  color: inherit;
+  text-decoration: none;
+  border-top: 1px solid rgba(157, 196, 187, 0.09);
+}
+
+.brief-detail-item:first-child {
+  border-top: 0;
+}
+
+.brief-detail-item strong {
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.brief-detail-item span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.brief-detail-item p {
+  margin: 0;
+  color: var(--soft);
+  font-size: 13px;
+  line-height: 1.65;
+  max-width: 980px;
+}
+
+.brief-detail-item:hover strong {
+  color: var(--teal);
+}
+
 .brief-footer {
   display: flex;
   justify-content: space-between;
@@ -1940,6 +2034,7 @@ a {
   .report-mode-tabs,
   .report-run-list,
   .intraday-clockline,
+  .brief-tabs,
   .brief-section-grid,
   .slot-grid,
   .report-strip {

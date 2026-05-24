@@ -257,6 +257,7 @@ class DataService:
         if not rows:
             return None
         row = rows[0]
+        payload = json.loads(row.get("payload_json") or "{}")
         return {
             "id": row["id"],
             "brief_date": row.get("brief_date"),
@@ -273,6 +274,7 @@ class DataService:
             "llm_model": row.get("llm_model"),
             "generated_at": row.get("generated_at"),
             "error_message": row.get("error_message"),
+            "article_flow": payload.get("article_flow") or {"tech": [], "finance": [], "politics": []},
         }
 
     def _intraday_rank_count(self, sample_at: datetime, mode: str) -> int:

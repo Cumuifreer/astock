@@ -30,6 +30,7 @@ import type {
   BacktestResult,
   BacktestRun,
   BacktestSignal,
+  BriefArticle,
   Candidate,
   CandidateBundle,
   Capability,
@@ -509,6 +510,7 @@ function Overview({
 
 function DailyBriefPanel({ brief, task }: { brief: DailyBrief | null; task: TaskRun | null }) {
   const running = isTaskActive(task);
+  const [activeCategory, setActiveCategory] = useState<'tech' | 'finance' | 'politics'>('tech');
   if (!brief) {
     return (
       <section className="panel daily-brief-panel">
@@ -525,6 +527,12 @@ function DailyBriefPanel({ brief, task }: { brief: DailyBrief | null; task: Task
     ['财经', brief.finance_briefs],
     ['时政', brief.politics_briefs],
   ];
+  const categoryTabs: Array<{ id: 'tech' | 'finance' | 'politics'; label: string; items: BriefArticle[] }> = [
+    { id: 'tech', label: '技术动态', items: getBriefArticleRows(brief, 'tech') },
+    { id: 'finance', label: '财经要点', items: getBriefArticleRows(brief, 'finance') },
+    { id: 'politics', label: '时政观察', items: getBriefArticleRows(brief, 'politics') },
+  ];
+  const activeRows = categoryTabs.find((item) => item.id === activeCategory)?.items || [];
   return (
     <section className="panel daily-brief-panel">
       <div className="daily-brief-head">
@@ -545,6 +553,28 @@ function DailyBriefPanel({ brief, task }: { brief: DailyBrief | null; task: Task
           </div>
         ))}
       </div>
+      <div className="brief-detail-shell">
+        <div className="brief-tabs">
+          {categoryTabs.map((item) => (
+            <button
+              key={item.id}
+              className={`brief-tab ${activeCategory === item.id ? 'active' : ''}`}
+              type="button"
+              onClick={() => setActiveCategory(item.id)}
+            >
+              <span>{item.label}</span>
+              <b>{formatInt(item.items.length)}</b>
+            </button>
+          ))}
+        </div>
+        <div className="brief-detail-list">
+          {activeRows.length ? (
+            activeRows.slice(0, 18).map((item) => <BriefDetailItem key={`${activeCategory}-${item.url}-${item.title}`} item={item} />)
+          ) : (
+            <small>暂无可用条目</small>
+          )}
+        </div>
+      </div>
       <div className="brief-footer">
         <span>{brief.editor_note || '后台自动整理，多源失败时会保留降级摘要。'}</span>
         <div>
@@ -558,6 +588,45 @@ function DailyBriefPanel({ brief, task }: { brief: DailyBrief | null; task: Task
         </div>
       )}
     </section>
+  );
+}
+
+function getBriefArticleRows(brief: DailyBrief, category: 'tech' | 'finance' | 'politics'): BriefArticle[] {
+  const selectedMap: Record<typeof category, BriefItem[]> = {
+    tech: brief.tech_briefs,
+    finance: brief.finance_briefs,
+    politics: brief.politics_briefs,
+  };
+  const rows: BriefArticle[] = [];
+  const seen = new Set<string>();
+  for (const item of selectedMap[category] || []) {
+    const key = item.url || item.title;
+    seen.add(key);
+    rows.push({
+      title: item.title,
+      url: item.url,
+      source: item.source,
+      category,
+      summary: item.summary,
+      published_at: '',
+    });
+  }
+  for (const item of brief.article_flow?.[category] || []) {
+    const key = item.url || item.title;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(item);
+  }
+  return rows;
+}
+
+function BriefDetailItem({ item }: { item: BriefArticle }) {
+  return (
+    <a className="brief-detail-item" href={item.url} target="_blank" rel="noreferrer">
+      <strong>{item.title}</strong>
+      <span>{item.source}{item.published_at ? ` · ${formatChinaLocalDateTime(item.published_at)}` : ''}</span>
+      {item.summary && <p>{item.summary}</p>}
+    </a>
   );
 }
 

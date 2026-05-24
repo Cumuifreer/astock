@@ -20,6 +20,51 @@ CHINA_TZ = ZoneInfo("Asia/Shanghai")
 MAX_AGE_DAYS = 14
 PER_CATEGORY_LIMIT = {"tech": 25, "finance": 20, "politics": 15}
 CATEGORY_NAMES = {"tech": "科技", "finance": "财经", "politics": "时政"}
+ENTERTAINMENT_KEYWORDS = (
+    "电影",
+    "票房",
+    "院线",
+    "导演",
+    "主演",
+    "演员",
+    "艺人",
+    "明星",
+    "综艺",
+    "剧集",
+    "上映",
+    "演唱会",
+    "音乐节",
+    "奥斯卡",
+    "金棕榈",
+    "体育",
+    "赛事",
+)
+FINANCE_NEWSFLASH_KEYWORDS = (
+    "ai",
+    "ipo",
+    "上市",
+    "融资",
+    "并购",
+    "财报",
+    "营收",
+    "利润",
+    "估值",
+    "基金",
+    "美元",
+    "人民币",
+    "订单",
+    "投资",
+    "股权",
+    "监管",
+    "券商",
+    "银行",
+    "能源",
+    "出口",
+    "消费",
+    "芯片",
+    "大模型",
+    "算力",
+)
 
 
 DEFAULT_DAILY_BRIEF_SOURCES: List[Dict[str, Any]] = [
@@ -49,7 +94,8 @@ finance_briefs: 3-5 条；
 politics_briefs: 2-3 条；
 editor_note: 30-60 字中性短评；
 keywords: 5-8 个关键词。
-每条 brief 包含 title、url、source、summary、importance。url 必须从输入原样复制，不能编造。相同主题合并，英文内容翻译成中文，标题克制、摘要只写事实，不要 markdown，不要代码围栏。"""
+每条 brief 包含 title、url、source、summary、importance。url 必须从输入原样复制，不能编造。相同主题合并，英文内容翻译成中文，标题克制、摘要只写事实，不要 markdown，不要代码围栏。
+严禁选择娱乐、影视、体育、明星、票房、社会猎奇新闻，除非它与上市公司、重大资本市场事件或政策事件直接相关。"""
 
 
 class DailyBriefService:
@@ -116,7 +162,7 @@ class DailyBriefService:
                 logging.warning("Daily brief source failed: %s", exc)
             progress("抓取资讯源", index, len(enabled_sources) + 2)
 
-        articles = self._dedupe_articles(articles)
+        articles = self._filter_articles(self._dedupe_articles(articles))
         self._save_articles(articles)
         progress("生成简报", len(enabled_sources) + 1, len(enabled_sources) + 2)
 
@@ -149,6 +195,7 @@ class DailyBriefService:
                 "warnings": warnings,
                 "llm_used": llm_used,
                 "source_count": len(enabled_sources),
+                "article_flow": self._article_flow(articles),
             },
         }
         self.db.upsert("daily_briefs", [row], ["id"])
@@ -368,6 +415,16 @@ class DailyBriefService:
             for category, limit in PER_CATEGORY_LIMIT.items()
         }
 
+    def _filter_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [article for article in articles if _is_brief_article(article)]
+
+    def _article_flow(self, articles: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        grouped = self._selected_by_category(articles)
+        return {
+            category: [_article_flow_item(item) for item in items[:20]]
+            for category, items in grouped.items()
+        }
+
     def _normalize_report(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "hero_headline": str(raw.get("hero_headline") or "今日资讯简报"),
@@ -457,6 +514,7 @@ class DailyBriefService:
         )
 
     def _decode_brief(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        payload = json.loads(row.get("payload_json") or "{}")
         return {
             "id": row["id"],
             "brief_date": row.get("brief_date"),
@@ -473,7 +531,8 @@ class DailyBriefService:
             "llm_model": row.get("llm_model"),
             "generated_at": row.get("generated_at"),
             "error_message": row.get("error_message"),
-            "payload": json.loads(row.get("payload_json") or "{}"),
+            "article_flow": payload.get("article_flow") or {"tech": [], "finance": [], "politics": []},
+            "payload": payload,
         }
 
 
@@ -576,6 +635,44 @@ def _brief_from_article(item: Dict[str, Any]) -> Dict[str, Any]:
         "source": item["source"],
         "summary": f"来自 {item['source']}：{excerpt}",
         "importance": 5,
+    }
+
+
+def _is_brief_article(item: Dict[str, Any]) -> bool:
+    text = f"{item.get('title') or ''} {item.get('excerpt') or ''}".lower()
+    if any(keyword.lower() in text for keyword in ENTERTAINMENT_KEYWORDS):
+        return _has_market_context(text)
+    if item.get("source_id") == "36kr-newsflash":
+        return any(keyword.lower() in text for keyword in FINANCE_NEWSFLASH_KEYWORDS)
+    return True
+
+
+def _has_market_context(text: str) -> bool:
+    return any(
+        keyword in text
+        for keyword in (
+            "上市",
+            "ipo",
+            "财报",
+            "营收",
+            "利润",
+            "并购",
+            "融资",
+            "股价",
+            "市值",
+            "监管",
+        )
+    )
+
+
+def _article_flow_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "title": str(item.get("title") or "")[:120],
+        "url": str(item.get("url") or ""),
+        "source": str(item.get("source") or ""),
+        "category": str(item.get("category") or ""),
+        "summary": str(item.get("excerpt") or "")[:260],
+        "published_at": _iso_or_empty(item.get("published_at")),
     }
 
 

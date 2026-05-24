@@ -7,6 +7,7 @@ from backend.app.schema import migrate
 from backend.app.services.daily_brief_scheduler import DailyBriefScheduler
 from backend.app.services.daily_brief_service import DEFAULT_DAILY_BRIEF_SOURCES
 from backend.app.services.daily_brief_service import DailyBriefService
+from backend.app.services.data_service import DataService
 from backend.app.services.update_service import UpdateService
 
 
@@ -85,6 +86,51 @@ def test_daily_brief_service_generates_fallback_report_from_articles(tmp_path, m
     assert "科技资讯" in latest["tech_briefs"][0]["title"]
     assert "来自 Mock Feed" in latest["tech_briefs"][0]["summary"]
     assert db.scalar("SELECT COUNT(*) FROM news_articles") == 1
+
+
+def test_daily_brief_service_filters_entertainment_from_brief_pool(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = DailyBriefService(
+        db,
+        sources=[{"id": "mock", "name": "Mock Feed", "type": "rss", "category": "finance", "enabled": True}],
+        api_key="",
+    )
+
+    monkeypatch.setattr(
+        service,
+        "_fetch_source",
+        lambda source: [
+            {
+                "source_id": "mock",
+                "source": "Mock Feed",
+                "category": "finance",
+                "title": "电影《给阿嬷的情书》票房突破十亿",
+                "url": "https://example.com/movie-box-office",
+                "excerpt": "影片上映后票房继续增长。",
+                "published_at": datetime(2026, 5, 24, 8, 0),
+            },
+            {
+                "source_id": "mock",
+                "source": "Mock Feed",
+                "category": "finance",
+                "title": "AI 基础设施公司完成 3 亿美元融资",
+                "url": "https://example.com/ai-funding",
+                "excerpt": "融资将用于扩建 GPU 集群。",
+                "published_at": datetime(2026, 5, 24, 8, 5),
+            },
+        ],
+    )
+
+    summary = service.generate(report_date=datetime(2026, 5, 24).date())
+    latest = DataService(db).latest_daily_brief()
+
+    assert summary["article_count"] == 1
+    assert db.scalar("SELECT COUNT(*) FROM news_articles") == 1
+    assert latest is not None
+    assert latest["finance_briefs"][0]["url"] == "https://example.com/ai-funding"
+    assert latest["article_flow"]["finance"][0]["url"] == "https://example.com/ai-funding"
+    assert "票房" not in json.dumps(latest, ensure_ascii=False, default=str)
 
 
 def test_daily_brief_service_condenses_source_failures_for_ui(tmp_path, monkeypatch):
