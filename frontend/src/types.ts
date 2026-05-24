@@ -290,11 +290,16 @@ export interface IntradayRadarConfig {
   near_upper_distance: number;
   breakout_min_clearance: number;
   breakout_max_clearance: number;
+  min_pct_chg: number;
   max_pct_chg: number;
   min_amount: number;
   min_intraday_amount_ratio: number;
   platform_min_bullish_ratio: number;
   platform_bull_amount_advantage: number;
+  first_breakout_lookback_days: number;
+  first_breakout_max_clearance: number;
+  near_upper_recent_days: number;
+  near_upper_recent_distance: number;
   max_recent_gain_5d: number;
   candidate_limit: number;
   require_ma_bullish: boolean;

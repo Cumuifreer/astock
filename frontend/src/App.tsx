@@ -1859,11 +1859,13 @@ function IntradayRadarPage({
 }) {
   const [config, setConfig] = useState<IntradayRadarConfig>(result.config);
   const [radarMode, setRadarMode] = useState<'strict' | 'score'>('strict');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const running = isTaskActive(task);
   const strictRows = result.strict_rows || result.rows || [];
   const scoreRows = result.score_rows || [];
   const activeRows = radarMode === 'score' ? scoreRows : strictRows;
   const candidateCount = activeRows.length;
+  const configSummary = useMemo(() => intradayConfigSummary(config), [config]);
 
   useEffect(() => {
     setConfig(result.config);
@@ -1889,12 +1891,8 @@ function IntradayRadarPage({
             </button>
           </div>
         </div>
-        <div className="intraday-clockline">
-          {['09:35', '10:00', '10:30', '11:00', '11:25', '13:00', '13:30', '14:00', '14:30', '14:55'].map((item) => (
-            <span key={item}>{item}</span>
-          ))}
-        </div>
-        <TaskStrip task={task} fallback="盘中采样尚未启动" />
+        <IntradaySlotTimeline sampleAt={result.sample_at} task={task} />
+        <IntradayRunStrip task={task} />
       </section>
 
       <section className="metric-grid">
@@ -1905,33 +1903,49 @@ function IntradayRadarPage({
       </section>
 
       <section className="panel radar-config-panel">
-        <PanelTitle icon={<Settings2 size={18} />} title="雷达设置" />
-        <div className="form-grid radar-form">
-          <NumberField label="平台观察天数" value={config.platform_lookback_days} onChange={(value) => update('platform_lookback_days', value || 20)} description="从最近历史 K 线向前取样，不包含盘中快照。" />
-          <NumberField label="平台最大振幅" value={config.platform_max_range} onChange={(value) => update('platform_max_range', value || 0)} description={`平台高低区间不超过 ${formatPercentRatio(config.platform_max_range)}。`} />
-          <NumberField label="接近上沿距离" value={config.near_upper_distance} onChange={(value) => update('near_upper_distance', value || 0)} description={`未突破时，距离上沿小于 ${formatPercentRatio(config.near_upper_distance)} 会进入观察。`} />
-          <NumberField label="突破上沿下限" value={config.breakout_min_clearance} onChange={(value) => update('breakout_min_clearance', value || 0)} description="0 表示刚越过平台上沿即可触发。" />
-          <NumberField label="突破上沿上限" value={config.breakout_max_clearance} onChange={(value) => update('breakout_max_clearance', value || 0)} description={`超过 ${formatPercentRatio(config.breakout_max_clearance)} 视为买点偏后。`} />
-          <NumberField label="最大当日涨幅" value={config.max_pct_chg} onChange={(value) => update('max_pct_chg', value || 0)} description={`快照涨幅高于 ${formatPercent(config.max_pct_chg)} 会跳过。`} />
-          <MoneyField label="最小成交额" value={config.min_amount} onChange={(value) => update('min_amount', value || 0)} />
-          <NumberField label="时段量能强度" value={config.min_intraday_amount_ratio} onChange={(value) => update('min_intraday_amount_ratio', value || 0)} description={`1.0 表示符合当前时间点正常成交进度，当前阈值 ${formatRatioX(config.min_intraday_amount_ratio)}。`} />
-          <NumberField label="平台阳线占比" value={config.platform_min_bullish_ratio} onChange={(value) => update('platform_min_bullish_ratio', value || 0)} description={`平台内阳线占比目标 ${formatPercentRatio(config.platform_min_bullish_ratio)}。`} />
-          <NumberField label="阳线均额优势" value={config.platform_bull_amount_advantage} onChange={(value) => update('platform_bull_amount_advantage', value || 0)} description={config.platform_bull_amount_advantage ? `阳线日均成交额至少为阴线的 ${formatRatioX(config.platform_bull_amount_advantage)}。` : '0 表示不作为严格门槛。'} />
-          <NumberField label="近5日涨幅上限" value={config.max_recent_gain_5d} onChange={(value) => update('max_recent_gain_5d', value || 0)} description={`最近 5 个历史交易日涨幅高于 ${formatPercentRatio(config.max_recent_gain_5d)} 会视为偏后。`} />
-          <NumberField label="观察上限" value={config.candidate_limit} onChange={(value) => update('candidate_limit', value || 80)} />
-          <label className="toggle">
-            <input type="checkbox" checked={config.require_ma_bullish} onChange={(event) => update('require_ma_bullish', event.target.checked)} />
-            <span>要求 MA5/10/20 多头</span>
-          </label>
-          <label className="toggle">
-            <input type="checkbox" checked={config.require_macd_strong} onChange={(event) => update('require_macd_strong', event.target.checked)} />
-            <span>要求 MACD 强势</span>
-          </label>
-          <label className="toggle">
-            <input type="checkbox" checked={config.exclude_star_board} onChange={(event) => update('exclude_star_board', event.target.checked)} />
-            <span>排除科创板</span>
-          </label>
+        <div className="radar-config-head">
+          <PanelTitle icon={<Settings2 size={18} />} title="雷达设置" />
+          <button className="ghost small-action" onClick={() => setSettingsOpen(!settingsOpen)}>
+            {settingsOpen ? '收起参数' : '展开参数'}
+          </button>
         </div>
+        <div className="radar-config-summary">
+          <strong>{configSummary.title}</strong>
+          <span>{configSummary.detail}</span>
+        </div>
+        {settingsOpen && (
+          <div className="form-grid radar-form">
+            <NumberField label="平台观察天数" value={config.platform_lookback_days} onChange={(value) => update('platform_lookback_days', value || 20)} description="从最近历史 K 线向前取样，不包含盘中快照。" />
+            <NumberField label="平台最大振幅" value={config.platform_max_range} onChange={(value) => update('platform_max_range', value || 0)} description={`平台高低区间不超过 ${formatPercentRatio(config.platform_max_range)}。`} />
+            <NumberField label="接近上沿距离" value={config.near_upper_distance} onChange={(value) => update('near_upper_distance', value || 0)} description={`未突破时，距离上沿小于 ${formatPercentRatio(config.near_upper_distance)} 会进入观察。`} />
+            <NumberField label="突破上沿下限" value={config.breakout_min_clearance} onChange={(value) => update('breakout_min_clearance', value || 0)} description="0 表示刚越过平台上沿即可触发。" />
+            <NumberField label="突破上沿上限" value={config.breakout_max_clearance} onChange={(value) => update('breakout_max_clearance', value || 0)} description={`超过 ${formatPercentRatio(config.breakout_max_clearance)} 视为买点偏后。`} />
+            <NumberField label="最小当日涨幅" value={config.min_pct_chg} onChange={(value) => update('min_pct_chg', value || 0)} description={`快照涨幅低于 ${formatPercent(config.min_pct_chg)} 会跳过。`} />
+            <NumberField label="最大当日涨幅" value={config.max_pct_chg} onChange={(value) => update('max_pct_chg', value || 0)} description={`快照涨幅高于 ${formatPercent(config.max_pct_chg)} 会跳过。`} />
+            <MoneyField label="当前累计成交额" value={config.min_amount} onChange={(value) => update('min_amount', value || 0)} />
+            <NumberField label="时段量能强度" value={config.min_intraday_amount_ratio} onChange={(value) => update('min_intraday_amount_ratio', value || 0)} description={`1.0 表示符合当前时间点正常成交进度，当前阈值 ${formatRatioX(config.min_intraday_amount_ratio)}。`} />
+            <NumberField label="近几日首次突破" value={config.first_breakout_lookback_days} onChange={(value) => update('first_breakout_lookback_days', value || 0)} description="向前检查最近几天，避免已经脱离平台后才入榜。" />
+            <NumberField label="前置突破容忍" value={config.first_breakout_max_clearance} onChange={(value) => update('first_breakout_max_clearance', value || 0)} description={`最近几日已高出平台上沿超过 ${formatPercentRatio(config.first_breakout_max_clearance)} 会跳过。`} />
+            <NumberField label="贴沿检查天数" value={config.near_upper_recent_days} onChange={(value) => update('near_upper_recent_days', value || 0)} description="确认最近价格一直贴近平台上沿，不是突然从平台底部抽上来。" />
+            <NumberField label="贴沿最大距离" value={config.near_upper_recent_distance} onChange={(value) => update('near_upper_recent_distance', value || 0)} description={`最近高点距离平台上沿不超过 ${formatPercentRatio(config.near_upper_recent_distance)}。`} />
+            <NumberField label="平台阳线占比" value={config.platform_min_bullish_ratio} onChange={(value) => update('platform_min_bullish_ratio', value || 0)} description={`平台内阳线占比目标 ${formatPercentRatio(config.platform_min_bullish_ratio)}。`} />
+            <NumberField label="阳线均额优势" value={config.platform_bull_amount_advantage} onChange={(value) => update('platform_bull_amount_advantage', value || 0)} description={config.platform_bull_amount_advantage ? `阳线日均成交额至少为阴线的 ${formatRatioX(config.platform_bull_amount_advantage)}。` : '0 表示不作为严格门槛。'} />
+            <NumberField label="近5日涨幅上限" value={config.max_recent_gain_5d} onChange={(value) => update('max_recent_gain_5d', value || 0)} description={`最近 5 个历史交易日涨幅高于 ${formatPercentRatio(config.max_recent_gain_5d)} 会视为偏后。`} />
+            <NumberField label="观察上限" value={config.candidate_limit} onChange={(value) => update('candidate_limit', value || 80)} />
+            <label className="toggle">
+              <input type="checkbox" checked={config.require_ma_bullish} onChange={(event) => update('require_ma_bullish', event.target.checked)} />
+              <span>要求 MA5/10/20 多头</span>
+            </label>
+            <label className="toggle">
+              <input type="checkbox" checked={config.require_macd_strong} onChange={(event) => update('require_macd_strong', event.target.checked)} />
+              <span>要求 MACD 强势</span>
+            </label>
+            <label className="toggle">
+              <input type="checkbox" checked={config.exclude_star_board} onChange={(event) => update('exclude_star_board', event.target.checked)} />
+              <span>排除科创板</span>
+            </label>
+          </div>
+        )}
       </section>
 
       <IntradayRadarTable
@@ -1954,6 +1968,55 @@ function IntradayRadarPage({
       />
     </div>
   );
+}
+
+const INTRADAY_RADAR_SLOTS = ['09:35', '10:00', '10:30', '11:00', '11:25', '13:00', '13:30', '14:00', '14:30', '14:55'];
+
+function IntradaySlotTimeline({ sampleAt, task }: { sampleAt: string | null; task: TaskRun | null }) {
+  const sampleTime = sampleAt ? String(sampleAt).slice(11, 16) : null;
+  const latestIndex = sampleTime
+    ? INTRADAY_RADAR_SLOTS.reduce((last, slot, index) => (slot <= sampleTime ? index : last), -1)
+    : -1;
+  const active = isTaskActive(task);
+  const activeIndex = active ? Math.min(latestIndex + 1, INTRADAY_RADAR_SLOTS.length - 1) : -1;
+  return (
+    <div className="slot-grid intraday-slot-grid" aria-label="盘中雷达时间轴">
+      {INTRADAY_RADAR_SLOTS.map((slot, index) => {
+        const status = index <= latestIndex ? 'completed_full' : active && index === activeIndex ? task?.status || 'running' : 'idle';
+        const label = index <= latestIndex ? '已采样' : active && index === activeIndex ? '运行中' : '等待';
+        const detail = index === latestIndex && sampleTime ? `最近 ${sampleTime}` : '-';
+        return (
+          <span key={slot} className={`slot-card ${status}`}>
+            <i />
+            <b>{slot}</b>
+            <em>{label}</em>
+            <small>{detail}</small>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function IntradayRunStrip({ task }: { task: TaskRun | null }) {
+  if (!task) return <div className="task-strip idle compact-task-strip">盘中采样尚未启动</div>;
+  if (task.status === 'queued' || task.status === 'running' || task.status === 'failed') {
+    return <TaskStrip task={task} fallback="盘中采样尚未启动" />;
+  }
+  return (
+    <div className="compact-task-strip">
+      <span className={`status-badge ${task.status}`}>{statusLabel(task.status)}</span>
+      <strong>{task.stage}</strong>
+      <small>{task.source || '本地仓库'}</small>
+    </div>
+  );
+}
+
+function intradayConfigSummary(config: IntradayRadarConfig) {
+  return {
+    title: `${config.platform_lookback_days}日平台 · 区间≤${formatPercentRatio(config.platform_max_range)} · 量能≥${formatRatioX(config.min_intraday_amount_ratio)}`,
+    detail: `贴沿${config.near_upper_recent_days}日≤${formatPercentRatio(config.near_upper_recent_distance)} · 首突${config.first_breakout_lookback_days}日≤${formatPercentRatio(config.first_breakout_max_clearance)} · 涨幅 ${formatPercent(config.min_pct_chg)}~${formatPercent(config.max_pct_chg)} · 成交额≥${formatMoney(config.min_amount)} · 阳线均额≥${formatRatioX(config.platform_bull_amount_advantage)}`,
+  };
 }
 
 function IntradayRadarTable({

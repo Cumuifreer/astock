@@ -1100,22 +1100,13 @@ h1 {
   gap: 12px;
 }
 
-.intraday-clockline {
-  display: grid;
-  grid-template-columns: repeat(10, minmax(58px, 1fr));
-  gap: 6px;
+.intraday-slot-grid {
+  padding-top: 12px;
 }
 
-.intraday-clockline span {
-  min-height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(59, 240, 193, 0.16);
-  background: rgba(59, 240, 193, 0.035);
-  color: var(--muted);
-  font-size: 12px;
-  font-family: "SFMono-Regular", "Roboto Mono", monospace;
+.intraday-slot-grid .slot-card {
+  min-height: 68px;
+  padding-top: 16px;
 }
 
 .radar-config-panel {
@@ -1123,8 +1114,57 @@ h1 {
   gap: 10px;
 }
 
-.radar-config-panel .panel-title {
+.radar-config-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.radar-config-head .panel-title {
   margin-bottom: 0;
+}
+
+.radar-config-head .small-action {
+  margin-left: auto;
+}
+
+.radar-config-summary {
+  border: 1px solid rgba(59, 240, 193, 0.16);
+  background: linear-gradient(135deg, rgba(59, 240, 193, 0.065), rgba(255, 255, 255, 0.012));
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.radar-config-summary strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.radar-config-summary span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.compact-task-strip {
+  min-height: 42px;
+  border: 1px solid rgba(157, 196, 187, 0.12);
+  background: rgba(255, 255, 255, 0.014);
+  padding: 9px 11px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--soft);
+}
+
+.compact-task-strip strong {
+  color: var(--text);
+}
+
+.compact-task-strip small {
+  margin-left: auto;
+  color: var(--muted);
 }
 
 .radar-form {
@@ -2072,7 +2112,6 @@ a {
 
   .report-mode-tabs,
   .report-run-list,
-  .intraday-clockline,
   .slot-grid,
   .report-strip {
     grid-template-columns: 1fr 1fr;
@@ -2125,7 +2164,6 @@ a {
 
   .report-mode-tabs,
   .report-run-list,
-  .intraday-clockline,
   .slot-grid,
   .report-strip {
     grid-template-columns: 1fr;

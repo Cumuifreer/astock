@@ -51,6 +51,26 @@ def _bearish_bar(code: str, day: int, close: float = 10.0) -> dict:
     return row
 
 
+def _dated_bar(code: str, day: int, close: float, high: float, low: float, amount: float = 10_000_000.0) -> dict:
+    return {
+        "code": code,
+        "date": f"2026-04-{day:02d}",
+        "open": close - 0.03,
+        "high": high,
+        "low": low,
+        "close": close,
+        "prev_close": close - 0.02,
+        "volume": 1_000_000.0 + day * 1000,
+        "amount": amount + day * 10_000,
+        "turn": 2.0,
+        "pct_chg": 0.2,
+        "tradestatus": "1",
+        "is_st": False,
+        "source": "Baostock",
+        "updated_at": "2026-05-21T09:00:00",
+    }
+
+
 def test_intraday_radar_scores_latest_snapshot_against_platform(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -89,6 +109,7 @@ def test_intraday_radar_scores_latest_snapshot_against_platform(tmp_path):
             "breakout_max_clearance": 0.08,
             "max_pct_chg": 8.0,
             "min_amount": 20_000_000,
+            "platform_bull_amount_advantage": 0,
             "candidate_limit": 10,
         },
     )
@@ -234,7 +255,7 @@ def test_intraday_radar_uses_previous_snapshot_deltas(tmp_path):
         trade_date="2026-05-21",
     )
 
-    service.run_radar(sample_at=second, config={"min_amount": 0, "candidate_limit": 10})
+    service.run_radar(sample_at=second, config={"min_amount": 0, "platform_bull_amount_advantage": 0, "candidate_limit": 10})
     row = service.latest(limit=10)["rows"][0]
 
     assert row["metrics"]["amount_delta"] == 8_500_000.0
@@ -271,7 +292,7 @@ def test_intraday_timeline_tracks_candidate_across_samples(tmp_path):
             sample_at=sample_at,
             trade_date="2026-05-21",
         )
-        service.run_radar(sample_at=sample_at, config={"min_amount": 0, "candidate_limit": 10})
+        service.run_radar(sample_at=sample_at, config={"min_amount": 0, "platform_bull_amount_advantage": 0, "candidate_limit": 10})
 
     timeline = service.timeline("000001.SZ", trade_date="2026-05-21")
 
@@ -364,6 +385,7 @@ def test_intraday_radar_normalizes_amount_ratio_by_sample_time(tmp_path):
             "max_pct_chg": 8.0,
             "min_amount": 0,
             "min_intraday_amount_ratio": 1.0,
+            "platform_bull_amount_advantage": 0,
             "candidate_limit": 10,
         },
     )
@@ -374,11 +396,178 @@ def test_intraday_radar_normalizes_amount_ratio_by_sample_time(tmp_path):
     assert row["metrics"]["intraday_time_progress"] == pytest.approx(0.2)
 
 
+def test_intraday_radar_strict_rejects_candidates_that_already_broke_platform(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "前高已破")], ["code"])
+    base_platform = [
+        _dated_bar("000001.SZ", day, close=10.0 + (0.01 if day % 2 else -0.01), high=10.35, low=9.75)
+        for day in range(1, 21)
+    ]
+    prior_breakout = [
+        _dated_bar("000001.SZ", day, close=10.72, high=10.82, low=10.35, amount=18_000_000.0)
+        for day in range(21, 26)
+    ]
+    db.upsert("historical_bars", base_platform + prior_breakout, ["code", "date"])
+
+    service = IntradayRadarService(db)
+    sample_at = datetime(2026, 5, 21, 10, 30)
+    service.record_snapshots(
+        pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "前高已破",
+                    "latest_price": 10.9,
+                    "pct_chg": 4.0,
+                    "high": 10.95,
+                    "low": 10.3,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "AkShare 新浪",
+                }
+            ]
+        ),
+        sample_at=sample_at,
+        trade_date="2026-05-21",
+    )
+
+    service.run_radar(
+        sample_at=sample_at,
+        config={
+            "platform_lookback_days": 20,
+            "platform_max_range": 0.12,
+            "first_breakout_lookback_days": 5,
+            "first_breakout_max_clearance": 0.02,
+            "near_upper_recent_days": 3,
+            "near_upper_recent_distance": 0.03,
+            "min_amount": 0,
+            "min_intraday_amount_ratio": 0,
+            "candidate_limit": 10,
+        },
+    )
+    result = service.latest(limit=10)
+
+    assert result["summary"]["strict_count"] == 0
+    assert result["summary"]["score_count"] == 1
+    assert result["score_rows"][0]["metrics"]["recent_prior_breakout_clearance"] > 0.02
+
+
+def test_intraday_radar_strict_requires_recent_prices_near_platform_upper(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "远离平台")], ["code"])
+    bars = [_bar("000001.SZ", day) for day in range(1, 19)]
+    bars.extend(
+        [
+            _dated_bar("000001.SZ", 19, close=9.80, high=9.88, low=9.72),
+            _dated_bar("000001.SZ", 20, close=9.82, high=9.90, low=9.74),
+            _dated_bar("000001.SZ", 21, close=9.84, high=9.92, low=9.76),
+        ]
+    )
+    db.upsert("historical_bars", bars, ["code", "date"])
+
+    service = IntradayRadarService(db)
+    sample_at = datetime(2026, 5, 21, 10, 30)
+    service.record_snapshots(
+        pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "远离平台",
+                    "latest_price": 10.20,
+                    "pct_chg": 2.0,
+                    "high": 10.25,
+                    "low": 9.8,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "AkShare 新浪",
+                }
+            ]
+        ),
+        sample_at=sample_at,
+        trade_date="2026-05-21",
+    )
+
+    service.run_radar(
+        sample_at=sample_at,
+        config={
+            "platform_lookback_days": 20,
+            "platform_max_range": 0.12,
+            "near_upper_distance": 0.03,
+            "near_upper_recent_days": 3,
+            "near_upper_recent_distance": 0.03,
+            "first_breakout_lookback_days": 0,
+            "min_amount": 0,
+            "min_intraday_amount_ratio": 0,
+            "candidate_limit": 10,
+        },
+    )
+    result = service.latest(limit=10)
+
+    assert result["summary"]["strict_count"] == 0
+    assert result["summary"]["score_count"] == 1
+    assert result["score_rows"][0]["metrics"]["recent_near_upper_distance"] > 0.03
+
+
+def test_intraday_radar_strict_applies_intraday_pct_change_floor(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "涨幅不足")], ["code"])
+    db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+
+    service = IntradayRadarService(db)
+    sample_at = datetime(2026, 5, 21, 10, 0)
+    service.record_snapshots(
+        pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "涨幅不足",
+                    "latest_price": 10.55,
+                    "pct_chg": -0.4,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "AkShare 新浪",
+                }
+            ]
+        ),
+        sample_at=sample_at,
+        trade_date="2026-05-21",
+    )
+
+    service.run_radar(
+        sample_at=sample_at,
+        config={
+            "platform_lookback_days": 20,
+            "platform_max_range": 0.08,
+            "min_pct_chg": 0.0,
+            "max_pct_chg": 6.0,
+            "min_amount": 0,
+            "min_intraday_amount_ratio": 0,
+            "candidate_limit": 10,
+        },
+    )
+    result = service.latest(limit=10)
+
+    assert result["summary"]["strict_count"] == 0
+    assert result["summary"]["score_count"] == 1
+
+
 def test_intraday_task_records_snapshot_and_runs_radar(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
     db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+    IntradayRadarService(db).save_config(
+        {
+            "min_amount": 0,
+            "platform_bull_amount_advantage": 0,
+            "candidate_limit": 10,
+        }
+    )
 
     service = UpdateService(db)
 

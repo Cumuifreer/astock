@@ -21,11 +21,16 @@ DEFAULT_INTRADAY_RADAR_CONFIG: Dict[str, Any] = {
     "near_upper_distance": 0.03,
     "breakout_min_clearance": 0.0,
     "breakout_max_clearance": 0.08,
-    "max_pct_chg": 8.0,
+    "min_pct_chg": 0.0,
+    "max_pct_chg": 6.0,
     "min_amount": 50_000_000,
-    "min_intraday_amount_ratio": 1.0,
+    "min_intraday_amount_ratio": 1.2,
     "platform_min_bullish_ratio": 0.5,
-    "platform_bull_amount_advantage": 0.0,
+    "platform_bull_amount_advantage": 1.1,
+    "first_breakout_lookback_days": 5,
+    "first_breakout_max_clearance": 0.02,
+    "near_upper_recent_days": 3,
+    "near_upper_recent_distance": 0.03,
     "max_recent_gain_5d": 0.10,
     "candidate_limit": 80,
     "require_ma_bullish": False,
@@ -416,7 +421,11 @@ class IntradayRadarService:
         platform_days = config["platform_lookback_days"]
         if len(history) < platform_days:
             return None
-        platform = history[-platform_days:]
+        platform, recent_prior = _split_platform_history(
+            history,
+            platform_days,
+            config["first_breakout_lookback_days"],
+        )
         platform_high = _max_number(platform, "high")
         platform_low = _min_number(platform, "low")
         latest = safe_float(snapshot.get("latest_price"))
@@ -447,6 +456,8 @@ class IntradayRadarService:
         if not strict and not near_enough_for_score and not breakout_enough_for_score:
             return None
         pct_chg = safe_float(snapshot.get("pct_chg"))
+        if strict and pct_chg is not None and pct_chg < config["min_pct_chg"]:
+            return None
         if strict and pct_chg is not None and config["max_pct_chg"] and pct_chg > config["max_pct_chg"]:
             return None
         if (
@@ -481,6 +492,26 @@ class IntradayRadarService:
         bullish_ratio = _bullish_ratio(platform)
         bull_amount_advantage = _bull_amount_advantage(platform)
         recent_gain_5d = _recent_gain(history, 5)
+        first_breakout_clearance = _prior_breakout_clearance(recent_prior, platform_high)
+        if (
+            strict
+            and first_breakout_clearance is not None
+            and config["first_breakout_max_clearance"] >= 0
+            and first_breakout_clearance > config["first_breakout_max_clearance"]
+        ):
+            return None
+        recent_near_upper_distance = _recent_near_upper_distance(
+            history,
+            platform_high,
+            config["near_upper_recent_days"],
+        )
+        if (
+            strict
+            and recent_near_upper_distance is not None
+            and config["near_upper_recent_distance"] > 0
+            and recent_near_upper_distance > config["near_upper_recent_distance"]
+        ):
+            return None
         if strict and bullish_ratio is not None and bullish_ratio < config["platform_min_bullish_ratio"]:
             return None
         if strict and bull_amount_advantage is not None and bull_amount_advantage < config["platform_bull_amount_advantage"]:
@@ -529,6 +560,10 @@ class IntradayRadarService:
             reasons.append(f"阳线占比 {bullish_ratio * 100:.0f}%")
         if bull_amount_advantage is not None:
             reasons.append(f"阳线均额 {bull_amount_advantage:.2f}x")
+        if first_breakout_clearance is not None and first_breakout_clearance > config["first_breakout_max_clearance"]:
+            reasons.append(f"近{config['first_breakout_lookback_days']}日已突破 {first_breakout_clearance * 100:.2f}%")
+        if recent_near_upper_distance is not None:
+            reasons.append(f"近{config['near_upper_recent_days']}日贴沿 {recent_near_upper_distance * 100:.2f}%")
         if amount_delta is not None:
             reasons.append(f"本段成交额 {amount_delta / 10000:.0f}万")
         if overheated and strict:
@@ -544,6 +579,12 @@ class IntradayRadarService:
             bull_amount_advantage=bull_amount_advantage,
             recent_gain_5d=recent_gain_5d,
             max_recent_gain_5d=config["max_recent_gain_5d"],
+            first_breakout_clearance=first_breakout_clearance,
+            first_breakout_max_clearance=config["first_breakout_max_clearance"],
+            recent_near_upper_distance=recent_near_upper_distance,
+            near_upper_recent_distance=config["near_upper_recent_distance"],
+            pct_chg=pct_chg,
+            min_pct_chg=config["min_pct_chg"],
             ma_bullish=ma_bullish,
             macd_strong=macd_strong,
         )
@@ -577,6 +618,9 @@ class IntradayRadarService:
                     "platform_bullish_ratio": _round_optional(bullish_ratio, 6),
                     "platform_bull_amount_advantage": _round_optional(bull_amount_advantage, 6),
                     "recent_gain_5d": _round_optional(recent_gain_5d, 6),
+                    "recent_prior_breakout_clearance": _round_optional(first_breakout_clearance, 6),
+                    "recent_near_upper_distance": _round_optional(recent_near_upper_distance, 6),
+                    "recent_near_upper_days": config["near_upper_recent_days"],
                     "intraday_time_progress": _round_optional(intraday_time_progress, 6),
                     "platform_avg_amount": _round_optional(platform_avg_amount, 2),
                     "amount_delta": _round_optional(amount_delta, 2),
@@ -596,16 +640,21 @@ def normalize_intraday_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     merged = {**DEFAULT_INTRADAY_RADAR_CONFIG, **(config or {})}
     merged["enabled"] = bool(merged.get("enabled", True))
     merged["platform_lookback_days"] = max(10, min(80, int(merged.get("platform_lookback_days") or 20)))
+    merged["first_breakout_lookback_days"] = max(0, min(20, int(merged.get("first_breakout_lookback_days") or 0)))
+    merged["near_upper_recent_days"] = max(0, min(20, int(merged.get("near_upper_recent_days") or 0)))
     for key in [
         "platform_max_range",
         "near_upper_distance",
         "breakout_min_clearance",
         "breakout_max_clearance",
+        "min_pct_chg",
         "max_pct_chg",
         "min_amount",
         "min_intraday_amount_ratio",
         "platform_min_bullish_ratio",
         "platform_bull_amount_advantage",
+        "first_breakout_max_clearance",
+        "near_upper_recent_distance",
         "max_recent_gain_5d",
     ]:
         value = safe_float(merged.get(key))
@@ -629,6 +678,12 @@ def _radar_score(
     bull_amount_advantage: Optional[float],
     recent_gain_5d: Optional[float],
     max_recent_gain_5d: float,
+    first_breakout_clearance: Optional[float],
+    first_breakout_max_clearance: float,
+    recent_near_upper_distance: Optional[float],
+    near_upper_recent_distance: float,
+    pct_chg: Optional[float],
+    min_pct_chg: float,
     ma_bullish: bool,
     macd_strong: bool,
 ) -> float:
@@ -647,6 +702,12 @@ def _radar_score(
         score += min(8.0, max(0.0, bull_amount_advantage - 1.0) * 24)
     if recent_gain_5d is not None and max_recent_gain_5d > 0:
         score -= max(0.0, recent_gain_5d - max_recent_gain_5d) * 90
+    if first_breakout_clearance is not None and first_breakout_max_clearance >= 0:
+        score -= max(0.0, first_breakout_clearance - first_breakout_max_clearance) * 160
+    if recent_near_upper_distance is not None and near_upper_recent_distance > 0:
+        score += max(0.0, 1 - max(0.0, recent_near_upper_distance) / near_upper_recent_distance) * 8
+    if pct_chg is not None:
+        score -= max(0.0, min_pct_chg - pct_chg) * 2
     if price_change is not None and price_change > 0:
         score += min(8.0, price_change * 200)
     if ma_bullish:
@@ -726,6 +787,39 @@ def _avg_number(rows: List[Dict[str, Any]], key: str) -> Optional[float]:
     values = [safe_float(row.get(key)) for row in rows]
     clean = [value for value in values if value is not None]
     return sum(clean) / len(clean) if clean else None
+
+
+def _split_platform_history(
+    history: List[Dict[str, Any]],
+    platform_days: int,
+    first_breakout_lookback_days: int,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    if first_breakout_lookback_days <= 0 or len(history) < platform_days + first_breakout_lookback_days:
+        return history[-platform_days:], []
+    platform_end = len(history) - first_breakout_lookback_days
+    return history[platform_end - platform_days : platform_end], history[platform_end:]
+
+
+def _prior_breakout_clearance(rows: List[Dict[str, Any]], platform_high: float) -> Optional[float]:
+    if not rows or platform_high <= 0:
+        return None
+    recent_close = _max_number(rows, "close")
+    if recent_close is None:
+        return None
+    return (recent_close - platform_high) / platform_high
+
+
+def _recent_near_upper_distance(
+    history: List[Dict[str, Any]],
+    platform_high: float,
+    recent_days: int,
+) -> Optional[float]:
+    if recent_days <= 0 or len(history) < recent_days or platform_high <= 0:
+        return None
+    recent_high = _max_number(history[-recent_days:], "high")
+    if recent_high is None:
+        return None
+    return (platform_high - recent_high) / platform_high
 
 
 def _bullish_ratio(rows: List[Dict[str, Any]]) -> Optional[float]:
