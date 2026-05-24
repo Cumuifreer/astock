@@ -301,7 +301,53 @@ def test_daily_brief_scheduler_enqueues_daily_slot_once(tmp_path, monkeypatch):
     duplicate = scheduler.tick(now)
 
     row = db.query("SELECT id, status, payload_json FROM task_runs WHERE kind = 'brief'")[0]
-    assert task_id == "brief-auto-20260523"
+    assert task_id == "brief-auto-20260523-0820"
     assert duplicate is None
     assert row["status"] == "queued"
     assert '"scheduled": true' in row["payload_json"]
+
+
+def test_daily_brief_scheduler_supports_multiple_daily_slots(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+
+    class NoopExecutor:
+        def submit(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(service, "executor", NoopExecutor())
+    scheduler = DailyBriefScheduler(service, poll_seconds=1, schedule_time="08:20,18:20")
+
+    before_first = scheduler.tick(datetime(2026, 5, 23, 8, 0, tzinfo=ZoneInfo("Asia/Shanghai")))
+    morning = scheduler.tick(datetime(2026, 5, 23, 8, 25, tzinfo=ZoneInfo("Asia/Shanghai")))
+    morning_duplicate = scheduler.tick(datetime(2026, 5, 23, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")))
+    evening = scheduler.tick(datetime(2026, 5, 23, 18, 25, tzinfo=ZoneInfo("Asia/Shanghai")))
+
+    task_ids = [
+        row["id"]
+        for row in db.query("SELECT id FROM task_runs WHERE kind = 'brief' ORDER BY id")
+    ]
+    assert before_first is None
+    assert morning == "brief-auto-20260523-0820"
+    assert morning_duplicate is None
+    assert evening == "brief-auto-20260523-1820"
+    assert task_ids == ["brief-auto-20260523-0820", "brief-auto-20260523-1820"]
+
+
+def test_daily_brief_scheduler_catches_up_latest_due_slot(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+
+    class NoopExecutor:
+        def submit(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(service, "executor", NoopExecutor())
+    scheduler = DailyBriefScheduler(service, poll_seconds=1, schedule_time="08:20,18:20")
+
+    task_id = scheduler.tick(datetime(2026, 5, 23, 19, 0, tzinfo=ZoneInfo("Asia/Shanghai")))
+
+    assert task_id == "brief-auto-20260523-1820"
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 1

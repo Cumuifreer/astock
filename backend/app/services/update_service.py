@@ -216,10 +216,8 @@ class UpdateService:
 
     def start_scheduled_daily_brief(self, scheduled_at: datetime) -> Optional[str]:
         brief_date = scheduled_at.date()
-        task_id = f"brief-auto-{brief_date:%Y%m%d}"
+        task_id = f"brief-auto-{brief_date:%Y%m%d}-{scheduled_at:%H%M}"
         if self.db.scalar("SELECT id FROM task_runs WHERE id = ?", [task_id]):
-            return None
-        if self.daily_brief_service.has_brief_for_date(brief_date):
             return None
         self._enqueue_task(
             task_id,

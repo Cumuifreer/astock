@@ -76,7 +76,7 @@ WantedBy=timers.target
 
 ## 资讯简报
 
-资讯简报会自动抓取国际科技、财经、时政等公开资讯源，保存原始条目和生成后的摘要到 DuckDB。默认每天北京时间 08:20 运行一次；如果数据库里还没有任何简报，服务启动或打开首页时会自动排队生成第一份。
+资讯简报会自动抓取国际科技、财经、时政等公开资讯源，保存原始条目和生成后的摘要到 DuckDB。默认每天北京时间 08:20 运行一次；也可以用逗号配置多个北京时间。 如果数据库里还没有任何简报，服务启动或打开首页时会自动排队生成第一份。
 
 LLM 默认使用 DeepSeek 兼容接口，密钥只从环境变量读取，不要写进仓库：
 
@@ -88,7 +88,7 @@ export ASHARE_DAILY_BRIEF_MODEL=deepseek-v4-flash
 可选配置：
 
 ```bash
-export ASHARE_DAILY_BRIEF_TIME=08:20
+export ASHARE_DAILY_BRIEF_TIME=08:20,18:20
 export ASHARE_DAILY_BRIEF_SCHEDULER=1
 export ASHARE_DAILY_BRIEF_SOURCE_TIMEOUT=12
 ```
@@ -157,6 +157,7 @@ WorkingDirectory=/opt/ashare-signal
 Environment="ASHARE_DB_PATH=/opt/ashare-signal/data/ashare_signal.duckdb"
 Environment="DEEPSEEK_API_KEY=replace-with-your-key"
 Environment="ASHARE_DAILY_BRIEF_MODEL=deepseek-v4-flash"
+Environment="ASHARE_DAILY_BRIEF_TIME=08:20,18:20"
 ExecStart=/opt/ashare-signal/.venv/bin/python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5

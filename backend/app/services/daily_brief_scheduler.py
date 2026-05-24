@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, time
-from typing import Optional
+from typing import List, Optional
 from zoneinfo import ZoneInfo
 
 from backend.app.services.update_service import UpdateService
@@ -21,7 +21,7 @@ class DailyBriefScheduler:
     ):
         self.update_service = update_service
         self.poll_seconds = max(10, int(poll_seconds))
-        self.schedule_time = _parse_schedule_time(schedule_time)
+        self.schedule_times = _parse_schedule_times(schedule_time)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -40,14 +40,14 @@ class DailyBriefScheduler:
     def tick(self, now: Optional[datetime] = None) -> Optional[str]:
         current = now or datetime.now(CHINA_TZ)
         current = current.astimezone(CHINA_TZ) if current.tzinfo else current.replace(tzinfo=CHINA_TZ)
-        slot = current.replace(
-            hour=self.schedule_time.hour,
-            minute=self.schedule_time.minute,
-            second=0,
-            microsecond=0,
-        )
-        if current < slot:
+        due_slots = [
+            current.replace(hour=item.hour, minute=item.minute, second=0, microsecond=0)
+            for item in self.schedule_times
+            if current >= current.replace(hour=item.hour, minute=item.minute, second=0, microsecond=0)
+        ]
+        if not due_slots:
             return None
+        slot = due_slots[-1]
         return self.update_service.start_scheduled_daily_brief(slot.replace(tzinfo=None))
 
     def _run(self) -> None:
@@ -57,6 +57,12 @@ class DailyBriefScheduler:
             except Exception:
                 logging.exception("每日资讯简报自动任务检查失败")
             self._stop.wait(self.poll_seconds)
+
+
+def _parse_schedule_times(value: str) -> List[time]:
+    raw_items = [item.strip() for item in str(value or "08:20").split(",")]
+    parsed = {_parse_schedule_time(item) for item in raw_items if item}
+    return sorted(parsed) or [time(hour=8, minute=20)]
 
 
 def _parse_schedule_time(value: str) -> time:
