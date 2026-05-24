@@ -133,6 +133,72 @@ def test_daily_brief_service_filters_entertainment_from_brief_pool(tmp_path, mon
     assert "票房" not in json.dumps(latest, ensure_ascii=False, default=str)
 
 
+def test_daily_brief_api_backfills_article_flow_for_legacy_briefs(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    generated_at = datetime(2026, 5, 24, 8, 20)
+    articles = [
+        {
+            "source_id": "mock-tech",
+            "source": "Mock Tech",
+            "category": "tech",
+            "title": f"AI infrastructure update {index}",
+            "url": f"https://example.com/tech/{index}",
+            "excerpt": f"AI infrastructure detail {index}",
+            "published_at": datetime(2026, 5, 24, 8, index),
+            "fetched_at": generated_at,
+        }
+        for index in range(8)
+    ]
+    db.upsert("news_articles", articles, ["source_id", "url"])
+    db.upsert(
+        "daily_briefs",
+        [
+            {
+                "id": "brief-20260524",
+                "brief_date": datetime(2026, 5, 24).date(),
+                "status": "completed_partial",
+                "hero_headline": "今日资讯简报",
+                "daily_overview": "",
+                "tech_briefs_json": [],
+                "finance_briefs_json": [],
+                "politics_briefs_json": [],
+                "editor_note": "",
+                "keywords_json": [],
+                "article_count": 8,
+                "source_count": 1,
+                "llm_model": "fallback",
+                "generated_at": generated_at,
+                "error_message": None,
+                "payload_json": {
+                    "article_flow": {
+                        "tech": [
+                            {
+                                "title": "Existing translated item",
+                                "url": "https://example.com/tech/0",
+                                "source": "Mock Tech",
+                                "category": "tech",
+                                "summary": "LLM translated summary",
+                                "published_at": "",
+                            }
+                        ],
+                        "finance": [],
+                        "politics": [],
+                    }
+                },
+            }
+        ],
+        ["id"],
+    )
+
+    latest = DataService(db).latest_daily_brief()
+
+    assert latest is not None
+    assert len(latest["article_flow"]["tech"]) == 8
+    assert latest["article_flow"]["tech"][0]["title"] == "Existing translated item"
+    assert latest["article_flow"]["tech"][1]["title"] == "AI infrastructure update 7"
+
+
 def test_daily_brief_service_condenses_source_failures_for_ui(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

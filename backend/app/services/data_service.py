@@ -258,6 +258,7 @@ class DataService:
             return None
         row = rows[0]
         payload = json.loads(row.get("payload_json") or "{}")
+        article_flow = self._latest_daily_brief_article_flow(row, payload.get("article_flow"))
         return {
             "id": row["id"],
             "brief_date": row.get("brief_date"),
@@ -274,8 +275,54 @@ class DataService:
             "llm_model": row.get("llm_model"),
             "generated_at": row.get("generated_at"),
             "error_message": row.get("error_message"),
-            "article_flow": payload.get("article_flow") or {"tech": [], "finance": [], "politics": []},
+            "article_flow": article_flow,
         }
+
+    def _latest_daily_brief_article_flow(
+        self,
+        row: Dict[str, Any],
+        existing_flow: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        brief_date = row.get("brief_date")
+        flow: Dict[str, List[Dict[str, Any]]] = {"tech": [], "finance": [], "politics": []}
+        if isinstance(existing_flow, dict):
+            for category in flow:
+                values = existing_flow.get(category) or []
+                flow[category] = values if isinstance(values, list) else []
+        for category in flow:
+            seen = {str(item.get("url") or item.get("title") or "") for item in flow[category] if isinstance(item, dict)}
+            rows = self.db.query(
+                """
+                SELECT title, url, source, category, excerpt, published_at
+                FROM news_articles
+                WHERE category = ?
+                  AND (
+                    ? IS NULL
+                    OR CAST(COALESCE(published_at, fetched_at) AS DATE) <= CAST(? AS DATE)
+                  )
+                ORDER BY COALESCE(published_at, fetched_at) DESC NULLS LAST
+                LIMIT 80
+                """,
+                [category, brief_date, brief_date],
+            )
+            for item in rows:
+                key = str(item.get("url") or item.get("title") or "")
+                if key in seen:
+                    continue
+                seen.add(key)
+                flow[category].append(
+                    {
+                        "title": item.get("title") or "",
+                        "url": item.get("url") or "",
+                        "source": item.get("source") or "",
+                        "category": item.get("category") or category,
+                        "summary": (item.get("excerpt") or "")[:260],
+                        "published_at": item.get("published_at"),
+                    }
+                )
+                if len(flow[category]) >= 80:
+                    break
+        return flow
 
     def _intraday_rank_count(self, sample_at: datetime, mode: str) -> int:
         return int(

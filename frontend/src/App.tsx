@@ -522,37 +522,27 @@ function DailyBriefPanel({ brief, task }: { brief: DailyBrief | null; task: Task
       </section>
     );
   }
-  const sections: Array<[string, BriefItem[]]> = [
-    ['科技', brief.tech_briefs],
-    ['财经', brief.finance_briefs],
-    ['时政', brief.politics_briefs],
-  ];
   const categoryTabs: Array<{ id: 'tech' | 'finance' | 'politics'; label: string; items: BriefArticle[] }> = [
     { id: 'tech', label: '技术动态', items: getBriefArticleRows(brief, 'tech') },
     { id: 'finance', label: '财经要点', items: getBriefArticleRows(brief, 'finance') },
     { id: 'politics', label: '时政观察', items: getBriefArticleRows(brief, 'politics') },
   ];
   const activeRows = categoryTabs.find((item) => item.id === activeCategory)?.items || [];
+  const totalRows = categoryTabs.reduce((sum, item) => sum + item.items.length, 0);
   return (
     <section className="panel daily-brief-panel">
       <div className="daily-brief-head">
-        <PanelTitle icon={<Layers3 size={18} />} title="今日资讯简报" />
-        <span className="pill">{formatChinaLocalDateTime(brief.generated_at)} · {formatInt(brief.article_count)} 条</span>
+        <div className="brief-masthead">
+          <PanelTitle icon={<Layers3 size={18} />} title="今日资讯简报" />
+          <strong>{formatDate(brief.brief_date)}</strong>
+        </div>
+        <div className="brief-meta">
+          <span>{brief.status === 'completed_full' ? '精编完成' : '部分完成'}</span>
+          <span>{formatChinaLocalDateTime(brief.generated_at)}</span>
+          <span>{formatInt(totalRows || brief.article_count)} 条</span>
+        </div>
       </div>
       {running && <TaskStrip task={task} fallback="资讯简报正在后台生成" />}
-      <div className="brief-hero">
-        <span>{brief.status === 'completed_full' ? '精编完成' : '部分完成'}</span>
-        <strong>{brief.hero_headline}</strong>
-        <p>{brief.daily_overview}</p>
-      </div>
-      <div className="brief-section-grid">
-        {sections.map(([title, items]) => (
-          <div className="brief-section" key={title}>
-            <h3>{title}</h3>
-            {items.length ? items.slice(0, 5).map((item) => <BriefCard key={`${item.url}-${item.title}`} item={item} />) : <small>暂无可用条目</small>}
-          </div>
-        ))}
-      </div>
       <div className="brief-detail-shell">
         <div className="brief-tabs">
           {categoryTabs.map((item) => (
@@ -569,7 +559,7 @@ function DailyBriefPanel({ brief, task }: { brief: DailyBrief | null; task: Task
         </div>
         <div className="brief-detail-list">
           {activeRows.length ? (
-            activeRows.slice(0, 18).map((item) => <BriefDetailItem key={`${activeCategory}-${item.url}-${item.title}`} item={item} />)
+            activeRows.map((item) => <BriefDetailItem key={`${activeCategory}-${item.url}-${item.title}`} item={item} />)
           ) : (
             <small>暂无可用条目</small>
           )}
@@ -623,19 +613,11 @@ function getBriefArticleRows(brief: DailyBrief, category: 'tech' | 'finance' | '
 function BriefDetailItem({ item }: { item: BriefArticle }) {
   return (
     <a className="brief-detail-item" href={item.url} target="_blank" rel="noreferrer">
-      <strong>{item.title}</strong>
-      <span>{item.source}{item.published_at ? ` · ${formatChinaLocalDateTime(item.published_at)}` : ''}</span>
+      <div>
+        <strong>{item.title}</strong>
+        <span>{item.source}{item.published_at ? ` · ${formatChinaLocalDateTime(item.published_at)}` : ''}</span>
+      </div>
       {item.summary && <p>{item.summary}</p>}
-    </a>
-  );
-}
-
-function BriefCard({ item }: { item: BriefItem }) {
-  return (
-    <a className="brief-card" href={item.url} target="_blank" rel="noreferrer">
-      <strong>{item.title}</strong>
-      <p>{item.summary}</p>
-      <span>{item.source} · 重要度 {formatInt(item.importance)}</span>
     </a>
   );
 }

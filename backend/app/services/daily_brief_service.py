@@ -18,7 +18,8 @@ from backend.app.db import Database
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 MAX_AGE_DAYS = 14
-PER_CATEGORY_LIMIT = {"tech": 25, "finance": 20, "politics": 15}
+PROMPT_CATEGORY_LIMIT = {"tech": 25, "finance": 20, "politics": 15}
+ARTICLE_FLOW_CATEGORY_LIMIT = 80
 CATEGORY_NAMES = {"tech": "科技", "finance": "财经", "politics": "时政"}
 ENTERTAINMENT_KEYWORDS = (
     "电影",
@@ -394,7 +395,7 @@ class DailyBriefService:
 
     def _compact_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         selected = []
-        for category, limit in PER_CATEGORY_LIMIT.items():
+        for category, limit in PROMPT_CATEGORY_LIMIT.items():
             selected.extend(_round_robin([item for item in articles if item["category"] == category], limit))
         return [
             {
@@ -412,16 +413,22 @@ class DailyBriefService:
     def _selected_by_category(self, articles: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
         return {
             category: _round_robin([item for item in articles if item["category"] == category], limit)
-            for category, limit in PER_CATEGORY_LIMIT.items()
+            for category, limit in PROMPT_CATEGORY_LIMIT.items()
         }
 
     def _filter_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return [article for article in articles if _is_brief_article(article)]
 
     def _article_flow(self, articles: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-        grouped = self._selected_by_category(articles)
+        grouped = {
+            category: _round_robin(
+                [item for item in articles if item["category"] == category],
+                ARTICLE_FLOW_CATEGORY_LIMIT,
+            )
+            for category in PROMPT_CATEGORY_LIMIT
+        }
         return {
-            category: [_article_flow_item(item) for item in items[:20]]
+            category: [_article_flow_item(item) for item in items]
             for category, items in grouped.items()
         }
 
