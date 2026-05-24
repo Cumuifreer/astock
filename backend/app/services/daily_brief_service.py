@@ -99,7 +99,10 @@ class DailyBriefService:
     def should_regenerate(self, brief: Optional[Dict[str, Any]]) -> bool:
         if not brief or not self.api_key:
             return False
-        return brief.get("llm_model") == "fallback" and "未配置 LLM API" in str(brief.get("error_message") or "")
+        if brief.get("llm_model") != "fallback":
+            return False
+        error_message = str(brief.get("error_message") or "")
+        return "未配置 LLM API" in error_message or "Client error '400 Bad Request'" in error_message
 
     def generate(
         self,

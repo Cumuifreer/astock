@@ -119,6 +119,86 @@ def test_update_service_retries_fallback_brief_after_llm_is_configured(tmp_path,
     assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 1
 
 
+def test_update_service_retries_legacy_llm_400_fallback_once(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "daily_briefs",
+        [
+            {
+                "id": "brief-20260524",
+                "brief_date": datetime(2026, 5, 24).date(),
+                "status": "completed_partial",
+                "hero_headline": "fallback",
+                "daily_overview": "fallback",
+                "tech_briefs_json": [],
+                "finance_briefs_json": [],
+                "politics_briefs_json": [],
+                "editor_note": "",
+                "keywords_json": [],
+                "article_count": 88,
+                "source_count": 7,
+                "llm_model": "fallback",
+                "generated_at": datetime(2026, 5, 24, 4, 18),
+                "error_message": "14 个资讯源暂不可用；LLM 简报降级：Client error '400 Bad Request' for url",
+                "payload_json": {},
+            }
+        ],
+        ["id"],
+    )
+    service = UpdateService(db)
+    service.daily_brief_service.api_key = "configured"
+
+    class NoopExecutor:
+        def submit(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(service, "executor", NoopExecutor())
+    task_id = service.ensure_daily_brief()
+
+    assert task_id is not None
+
+
+def test_update_service_does_not_loop_on_current_llm_400_fallback(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "daily_briefs",
+        [
+            {
+                "id": "brief-20260524",
+                "brief_date": datetime(2026, 5, 24).date(),
+                "status": "completed_partial",
+                "hero_headline": "fallback",
+                "daily_overview": "fallback",
+                "tech_briefs_json": [],
+                "finance_briefs_json": [],
+                "politics_briefs_json": [],
+                "editor_note": "",
+                "keywords_json": [],
+                "article_count": 88,
+                "source_count": 7,
+                "llm_model": "fallback",
+                "generated_at": datetime(2026, 5, 24, 4, 20),
+                "error_message": "14 个资讯源暂不可用；LLM 简报降级：400 Bad Request: bad model",
+                "payload_json": {},
+            }
+        ],
+        ["id"],
+    )
+    service = UpdateService(db)
+    service.daily_brief_service.api_key = "configured"
+
+    class NoopExecutor:
+        def submit(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(service, "executor", NoopExecutor())
+    task_id = service.ensure_daily_brief()
+
+    assert task_id is None
+
+
 def test_update_service_enqueues_brief_when_empty(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
