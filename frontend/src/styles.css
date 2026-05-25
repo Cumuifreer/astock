@@ -1243,6 +1243,7 @@ h1 {
 
 .candidate-expanded td {
   background: rgba(59, 240, 193, 0.028);
+  white-space: normal;
 }
 
 .candidate-detail-panel {
@@ -1251,11 +1252,13 @@ h1 {
   padding: 12px;
   border: 1px solid rgba(59, 240, 193, 0.16);
   background: rgba(5, 12, 13, 0.86);
+  min-width: 0;
+  white-space: normal;
 }
 
 .candidate-readout {
   display: grid;
-  grid-template-columns: minmax(260px, 0.9fr) minmax(360px, 1.35fr);
+  grid-template-columns: 1fr;
   gap: 10px;
   border: 1px solid rgba(59, 240, 193, 0.16);
   background:
@@ -1271,8 +1274,9 @@ h1 {
 
 .candidate-readout-head {
   display: grid;
-  align-content: start;
-  gap: 8px;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 12px;
 }
 
 .candidate-readout-head strong {
@@ -1281,16 +1285,18 @@ h1 {
 }
 
 .candidate-readout-head p {
+  min-width: 0;
   color: var(--soft);
   line-height: 1.6;
   margin: 0;
+  white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
 .candidate-readout-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1318,6 +1324,7 @@ h1 {
 .candidate-readout-grid li {
   color: var(--soft);
   line-height: 1.5;
+  white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
@@ -2360,11 +2367,15 @@ a {
     grid-template-columns: 1fr;
   }
 
-  .candidate-readout,
   .candidate-readout-grid,
   .score-card-grid,
   .freshness-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .candidate-readout,
+  .candidate-readout-head {
+    grid-template-columns: 1fr;
   }
 }
 
