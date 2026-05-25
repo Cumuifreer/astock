@@ -463,6 +463,9 @@ def test_platform_breakout_filters_keep_matching_shape():
     assert candidates[0]["score_breakdown"]["freshness"] > 0
     assert candidates[0]["freshness"]["first_breakout_days"] == 0
     assert candidates[0]["freshness"]["breakout_clearance"] == 0.03
+    assert candidates[0]["interpretation"]["freshness_label"] == "首日突破"
+    assert "量能" in candidates[0]["interpretation"]["strengths"][0]
+    assert candidates[0]["interpretation"]["conclusion"]
 
 
 def test_platform_breakout_filters_remove_overheated_clearance_when_required():

@@ -645,6 +645,7 @@ def _rank_candidates(
         candidate["signal_score"] = _signal_score(candidate, strategy)
         candidate["score_breakdown"] = _score_breakdown(candidate, strategy)
         candidate["freshness"] = _freshness_metrics(candidate, strategy)
+        candidate["interpretation"] = _candidate_interpretation(candidate, strategy)
         reasons = _candidate_reasons(candidate, strategy)
         if score_mode:
             reasons = ["综合评分：未达标项只影响分数"] + reasons
@@ -1420,6 +1421,129 @@ def _freshness_metrics(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[st
         "recent_gain_5d": None,
         "ma_distance": _round_optional(safe_float(row.get("ma_distance")), 6),
     }
+
+
+def _candidate_interpretation(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, Any]:
+    breakdown = row.get("score_breakdown") if isinstance(row.get("score_breakdown"), dict) else {}
+    freshness = row.get("freshness") if isinstance(row.get("freshness"), dict) else {}
+    freshness_label = _freshness_label(row, strategy, freshness)
+    strengths = _interpretation_strengths(row, strategy, breakdown, freshness_label)
+    risks = _interpretation_risks(row, strategy, breakdown, freshness)
+    trade_read = _trade_read(freshness_label, risks)
+    conclusion = _interpretation_conclusion(freshness_label, trade_read, strengths, risks)
+    return {
+        "freshness_label": freshness_label,
+        "trade_read": trade_read,
+        "conclusion": conclusion,
+        "strengths": strengths[:4],
+        "risks": risks[:4],
+    }
+
+
+def _freshness_label(row: Dict[str, Any], strategy: Dict[str, Any], freshness: Dict[str, Any]) -> str:
+    mode = strategy.get("signal_mode")
+    if mode == "platform_setup":
+        distance = safe_float(freshness.get("distance_to_platform_upper"))
+        if distance is not None and distance <= 0.02:
+            return "临界贴近"
+        return "临界观察"
+    if mode == "platform_breakout":
+        first_days = safe_float(freshness.get("first_breakout_days"))
+        days_above = safe_float(freshness.get("days_above_platform"))
+        clearance = safe_float(freshness.get("breakout_clearance"))
+        recent_gain = safe_float(freshness.get("recent_gain_5d"))
+        max_clearance = safe_float(strategy.get("platform_breakout_max_clearance")) or 0.08
+        if first_days == 0:
+            return "首日突破"
+        if first_days is not None and first_days <= 2:
+            return "二次确认"
+        if (
+            (days_above is not None and days_above >= 4)
+            or (clearance is not None and clearance > max_clearance)
+            or (recent_gain is not None and recent_gain > 0.12)
+        ):
+            return "已走远"
+        return "突破延续"
+    if mode == "trend_resonance":
+        recent_gain = safe_float(freshness.get("recent_gain_5d"))
+        if recent_gain is not None and recent_gain > 0.2:
+            return "强势后段"
+        return "强势确认"
+    return "趋势观察"
+
+
+def _interpretation_strengths(
+    row: Dict[str, Any],
+    strategy: Dict[str, Any],
+    breakdown: Dict[str, Any],
+    freshness_label: str,
+) -> List[str]:
+    strengths: List[str] = []
+    if (safe_float(breakdown.get("volume")) or 0) >= 18:
+        strengths.append("量能确认度高，成交额与放量同时支撑信号。")
+    elif (safe_float(row.get("amount")) or 0) >= (safe_float(strategy.get("min_amount")) or 0):
+        strengths.append("量能达到策略门槛，具备基本成交活跃度。")
+    if freshness_label in {"首日突破", "临界贴近", "临界观察"}:
+        strengths.append(f"新鲜度较好，当前属于{freshness_label}。")
+    if (safe_float(breakdown.get("pattern")) or 0) >= 15:
+        strengths.append("形态完成度较高，平台或K线结构比较清晰。")
+    if (safe_float(breakdown.get("trend")) or 0) >= 25:
+        strengths.append("趋势背景较强，RPS、均线或 MACD 对信号有加分。")
+    if row.get("platform_ma_bullish") or row.get("trend_ema_fast_above_mid"):
+        strengths.append("短中期均线结构偏多，趋势阻力相对较小。")
+    if not strengths:
+        strengths.append("综合条件尚可，主要依靠总分排序进入候选。")
+    return strengths
+
+
+def _interpretation_risks(
+    row: Dict[str, Any],
+    strategy: Dict[str, Any],
+    breakdown: Dict[str, Any],
+    freshness: Dict[str, Any],
+) -> List[str]:
+    risks: List[str] = []
+    risk_score = abs(safe_float(breakdown.get("risk")) or 0)
+    clearance = safe_float(freshness.get("breakout_clearance"))
+    recent_gain = safe_float(freshness.get("recent_gain_5d"))
+    pct_chg = safe_float(row.get("pct_chg"))
+    max_clearance = safe_float(strategy.get("platform_breakout_max_clearance")) or 0.08
+    if risk_score >= 10:
+        risks.append("风险扣分偏高，可能存在追高或短线过热。")
+    if clearance is not None and clearance > max_clearance:
+        risks.append(f"已高出平台上沿 {clearance * 100:.2f}%，买点可能偏后。")
+    if recent_gain is not None and recent_gain > 0.12:
+        risks.append(f"近5日涨幅 {recent_gain * 100:.2f}%，需要防止短线兑现。")
+    if pct_chg is not None and pct_chg >= 8:
+        risks.append(f"当日涨幅 {pct_chg:.2f}%，次日波动风险会放大。")
+    if safe_float(row.get("turnover_rate")) is None:
+        risks.append("换手率缺失，量价判断少一层确认。")
+    if safe_float(row.get("float_market_value")) is None:
+        risks.append("流通市值缺失，规模过滤按策略降级处理。")
+    if not risks:
+        risks.append("暂未发现明显过热项，仍需结合盘口与大盘环境确认。")
+    return risks
+
+
+def _trade_read(freshness_label: str, risks: List[str]) -> str:
+    if freshness_label in {"临界贴近", "临界观察"}:
+        return "可观察"
+    if freshness_label in {"首日突破", "二次确认"} and not any("偏高" in risk or "偏后" in risk for risk in risks):
+        return "可确认"
+    if freshness_label == "已走远":
+        return "偏追高"
+    return "谨慎确认"
+
+
+def _interpretation_conclusion(
+    freshness_label: str,
+    trade_read: str,
+    strengths: List[str],
+    risks: List[str],
+) -> str:
+    lead = strengths[0].rstrip("。") if strengths else "综合分进入候选"
+    risk = risks[0].rstrip("。") if risks else "暂无明显风险"
+    return f"{freshness_label}，{trade_read}。{lead}；{risk}。"
 
 
 def _band_score(value: float, lower: float, upper: float, score: float) -> float:

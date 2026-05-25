@@ -588,7 +588,8 @@ h1 {
 
 .status-badge,
 .pill,
-.signal {
+.signal,
+.freshness-tag {
   display: inline-flex;
   min-height: 24px;
   align-items: center;
@@ -623,6 +624,30 @@ h1 {
 
 .pill.muted {
   color: var(--muted);
+}
+
+.freshness-tag {
+  color: var(--muted);
+  border-color: rgba(157, 196, 187, 0.16);
+  background: rgba(157, 196, 187, 0.035);
+}
+
+.freshness-tag.fresh {
+  color: var(--teal);
+  border-color: rgba(59, 240, 193, 0.38);
+  background: rgba(59, 240, 193, 0.08);
+}
+
+.freshness-tag.confirm {
+  color: var(--lime);
+  border-color: rgba(182, 255, 95, 0.34);
+  background: rgba(182, 255, 95, 0.07);
+}
+
+.freshness-tag.late {
+  color: var(--amber);
+  border-color: rgba(255, 189, 90, 0.34);
+  background: rgba(255, 189, 90, 0.07);
 }
 
 .progress {
@@ -1176,7 +1201,7 @@ h1 {
 }
 
 .candidate-table {
-  min-width: 1420px;
+  min-width: 1500px;
 }
 
 .candidate-sort-bar {
@@ -1225,6 +1250,66 @@ h1 {
   padding: 12px;
   border: 1px solid rgba(59, 240, 193, 0.16);
   background: rgba(5, 12, 13, 0.86);
+}
+
+.candidate-readout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(360px, 1.35fr);
+  gap: 10px;
+  border: 1px solid rgba(59, 240, 193, 0.16);
+  background:
+    linear-gradient(90deg, rgba(59, 240, 193, 0.07), rgba(182, 255, 95, 0.02)),
+    rgba(255, 255, 255, 0.014);
+  padding: 12px;
+}
+
+.candidate-readout-head {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.candidate-readout-head strong {
+  color: var(--text);
+  font-size: 20px;
+}
+
+.candidate-readout-head p {
+  color: var(--soft);
+  line-height: 1.75;
+  margin: 0;
+}
+
+.candidate-readout-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.candidate-readout-grid > div {
+  border-left: 2px solid rgba(59, 240, 193, 0.32);
+  background: rgba(1, 10, 11, 0.42);
+  padding: 10px 12px;
+}
+
+.candidate-readout-grid span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.candidate-readout-grid ul {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.candidate-readout-grid li {
+  color: var(--soft);
+  line-height: 1.55;
 }
 
 .score-card-grid {
@@ -2264,6 +2349,13 @@ a {
   .diagnostic-summary {
     grid-template-columns: 1fr;
   }
+
+  .candidate-readout,
+  .candidate-readout-grid,
+  .score-card-grid,
+  .freshness-grid {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -2344,5 +2436,12 @@ a {
   .funnel-pass span {
     width: auto;
     min-width: 82px;
+  }
+
+  .candidate-readout,
+  .candidate-readout-grid,
+  .score-card-grid,
+  .freshness-grid {
+    grid-template-columns: 1fr;
   }
 }

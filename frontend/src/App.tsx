@@ -1311,6 +1311,7 @@ function CandidatePanel({
                 <th>MA</th>
                 <th>流通市值</th>
                 <th>信号</th>
+                <th>阶段</th>
                 <th>分数</th>
                 <th>细分</th>
                 <th>看图</th>
@@ -1320,6 +1321,7 @@ function CandidatePanel({
             <tbody>
               {sortedCandidates.map((row, index) => {
                 const expanded = expandedCode === row.code;
+                const interpretation = candidateInterpretation(row);
                 return (
                   <Fragment key={`${row.rank}-${row.code}`}>
                     <tr>
@@ -1340,6 +1342,11 @@ function CandidatePanel({
                       <td>{formatPrice(row.ma_short)} / {formatPrice(row.ma_long)}</td>
                       <td>{formatMoney(row.float_market_value)}</td>
                       <td><span className="signal">{row.signal_type}</span></td>
+                      <td>
+                        <span className={freshnessTagClass(interpretation.freshness_label)}>
+                          {interpretation.freshness_label || '-'}
+                        </span>
+                      </td>
                       <td><strong>{formatPrice(row.signal_score)}</strong></td>
                       <td>
                         <button
@@ -1361,7 +1368,7 @@ function CandidatePanel({
                     </tr>
                     {expanded && (
                       <tr className="candidate-expanded">
-                        <td colSpan={onAddRows ? 16 : 15}>
+                        <td colSpan={onAddRows ? 17 : 16}>
                           <CandidateScoreDetails row={row} />
                         </td>
                       </tr>
@@ -1380,6 +1387,7 @@ function CandidatePanel({
 function CandidateScoreDetails({ row }: { row: Candidate }) {
   const breakdown = candidateScoreBreakdown(row);
   const freshness = candidateFreshness(row);
+  const interpretation = candidateInterpretation(row);
   const hasBreakdown = Object.values(breakdown).some((value) => value !== null);
   const scoreItems: Array<{ key: keyof typeof breakdown; label: string; note: string }> = [
     { key: 'position', label: '位置', note: '靠近合理买点' },
@@ -1396,6 +1404,33 @@ function CandidateScoreDetails({ row }: { row: Candidate }) {
         <EmptyState text="旧报告暂无子分数，重新运行分析后会显示。" />
       ) : (
         <>
+          <div className="candidate-readout">
+            <div className="candidate-readout-head">
+              <span className={freshnessTagClass(interpretation.freshness_label)}>
+                {interpretation.freshness_label || '趋势观察'}
+              </span>
+              <strong>{interpretation.trade_read || '谨慎确认'}</strong>
+              <p>{interpretation.conclusion || '综合分进入候选，仍需结合盘口与大盘环境确认。'}</p>
+            </div>
+            <div className="candidate-readout-grid">
+              <div>
+                <span>强项</span>
+                <ul>
+                  {(interpretation.strengths.length ? interpretation.strengths : ['综合条件尚可，主要依靠总分排序进入候选。']).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <span>留意</span>
+                <ul>
+                  {(interpretation.risks.length ? interpretation.risks : ['暂无明显过热项，仍需结合盘口与大盘环境确认。']).map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
           <div className="score-card-grid">
             {scoreItems.map((item) => {
               const value = breakdown[item.key];
@@ -3146,6 +3181,36 @@ function candidateFreshness(row: Candidate) {
     recent_gain_5d: nullableNumber(raw.recent_gain_5d),
     ma_distance: nullableNumber(raw.ma_distance),
   };
+}
+
+function candidateInterpretation(row: Candidate) {
+  const metrics = row.metrics || {};
+  const raw = (isRecord(metrics.interpretation)
+    ? metrics.interpretation
+    : isRecord((row as unknown as Record<string, unknown>).interpretation)
+      ? (row as unknown as Record<string, unknown>).interpretation
+      : {}) as Record<string, unknown>;
+  return {
+    freshness_label: typeof raw.freshness_label === 'string' ? raw.freshness_label : null,
+    trade_read: typeof raw.trade_read === 'string' ? raw.trade_read : null,
+    conclusion: typeof raw.conclusion === 'string' ? raw.conclusion : null,
+    strengths: normalizeStringList(raw.strengths),
+    risks: normalizeStringList(raw.risks),
+  };
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+function freshnessTagClass(label: string | null) {
+  const base = 'freshness-tag';
+  if (!label) return base;
+  if (label.includes('首日') || label.includes('临界')) return `${base} fresh`;
+  if (label.includes('二次') || label.includes('确认')) return `${base} confirm`;
+  if (label.includes('走远') || label.includes('后段')) return `${base} late`;
+  return base;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
