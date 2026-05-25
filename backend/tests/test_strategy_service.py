@@ -5,6 +5,51 @@ from backend.app.schema import migrate
 from backend.app.services.strategy_service import StrategyService, normalize_strategy_config
 
 
+def test_signal_presets_are_independent_from_strategy_presets(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = StrategyService(db)
+
+    before_strategy_ids = {preset["id"] for preset in service.list_presets()}
+    created = service.save_signal_preset(
+        name="我的平台模板",
+        description="只负责填参数，不是策略",
+        config={"signal_mode": "platform_breakout", "platform_breakout_enabled": True},
+    )
+    updated = service.save_signal_preset(
+        name="我的平台模板 v2",
+        description="改过参数",
+        config={"signal_mode": "platform_breakout", "platform_breakout_enabled": True, "platform_max_range": 0.1},
+        preset_id=created["id"],
+    )
+
+    after_strategy_ids = {preset["id"] for preset in service.list_presets()}
+    signal_ids = {preset["id"] for preset in service.list_signal_presets()}
+
+    assert before_strategy_ids == after_strategy_ids
+    assert created["id"] == updated["id"]
+    assert updated["name"] == "我的平台模板 v2"
+    assert updated["description"] == "改过参数"
+    assert updated["is_system"] is False
+    assert updated["config"]["platform_breakout_enabled"] is True
+    assert updated["config"]["platform_max_range"] == 0.1
+    assert created["id"] in signal_ids
+
+
+def test_signal_presets_seed_system_rows_and_custom_delete_only(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = StrategyService(db)
+
+    system = next(preset for preset in service.list_signal_presets() if preset["id"] == "signal-platform-breakout")
+    custom = service.save_signal_preset("临时模板", "", {"platform_setup_enabled": True})
+
+    assert system["is_system"] is True
+    assert service.delete_signal_preset(system["id"]) is False
+    assert service.delete_signal_preset(custom["id"]) is True
+    assert custom["id"] not in {preset["id"] for preset in service.list_signal_presets()}
+
+
 def test_list_presets_normalizes_missing_new_fields(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

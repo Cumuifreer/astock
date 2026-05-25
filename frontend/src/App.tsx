@@ -44,6 +44,7 @@ import type {
   AnalysisReportSummary,
   FunnelStep,
   RuntimeHealth,
+  SignalPreset,
   StrategyConfig,
   StrategyPreset,
   StrategyVersion,
@@ -292,6 +293,7 @@ function App() {
       return (
         <StrategyPanel
           presets={bootstrap.strategies}
+          signalPresets={bootstrap.signal_presets || []}
           selectedPresetId={selectedPresetId}
           strategy={strategy}
           strategyName={strategyName}
@@ -333,6 +335,7 @@ function App() {
             setNotice('系统预设已恢复');
             await load(true);
           }}
+          reloadBootstrap={() => load(true)}
         />
       );
     }
@@ -446,7 +449,7 @@ function App() {
 }
 
 function cleanPlatformBreakoutModes(config: StrategyConfig): StrategyConfig {
-  const normalized = {
+  const legacyNormalized = {
     ...config,
     signal_mode: ['breakout', 'pullback'].includes(config.signal_mode) ? 'breakout_or_pullback' : config.signal_mode,
     breakout_pullback_direction: config.signal_mode === 'breakout'
@@ -455,7 +458,12 @@ function cleanPlatformBreakoutModes(config: StrategyConfig): StrategyConfig {
         ? 'pullback'
         : config.breakout_pullback_direction || 'both',
   };
-  if (normalized.signal_mode !== 'platform_breakout') return normalized;
+  const signalMode = activeSignalFamily(legacyNormalized);
+  const normalized = {
+    ...legacyNormalized,
+    signal_mode: signalMode,
+  };
+  if (!normalized.platform_breakout_enabled) return normalized;
   return {
     ...normalized,
     platform_breakout_clearance_mode: 'must',
@@ -473,75 +481,21 @@ function cleanPlatformBreakoutModes(config: StrategyConfig): StrategyConfig {
   };
 }
 
-function applySignalPreset(config: StrategyConfig, presetKey: string): StrategyConfig {
-  const base = {
-    ...config,
-    preset_key: presetKey,
-    signal_mode: presetKey,
-    platform_breakout_enabled: false,
-    platform_setup_enabled: false,
-    trend_resonance_enabled: false,
-  };
-  if (presetKey === 'platform_breakout') {
-    return cleanPlatformBreakoutModes({
-      ...base,
-      platform_breakout_enabled: true,
-      platform_lookback_days: 20,
-      platform_range_basis: 'high_low',
-      platform_max_range: 0.12,
-      platform_breakout_clearance: 0.03,
-      platform_breakout_max_clearance: 0.08,
-      platform_breakout_first_mode: 'must',
-      platform_min_bullish_ratio: 0.5,
-      platform_bullish_ratio_score: 0.6,
-      platform_bull_volume_advantage: 1.1,
-      platform_bull_volume_advantage_score: 1.2,
-      platform_breakout_volume_ratio: 3,
-      platform_breakout_pct_chg_min: 5,
-      platform_body_strength_min: 1,
-      platform_ma_bullish_mode: 'score',
-      platform_ma_rising_mode: 'score',
-      platform_macd_filter_mode: 'score',
-    });
-  }
-  if (presetKey === 'platform_setup') {
-    return {
-      ...base,
-      platform_setup_enabled: true,
-      platform_setup_lookback_days: 20,
-      platform_setup_max_range: 0.12,
-      platform_setup_max_distance_to_high: 0.035,
-      platform_setup_max_recent_gain_5d: 0.1,
-      platform_setup_volume_contraction_max: 1.05,
-      platform_setup_bull_volume_advantage: 1.05,
-      platform_setup_ma_convergence_max: 0.06,
-      platform_setup_require_ma_turning: true,
-      platform_setup_macd_mode: 'dif_above_dea',
-    };
-  }
-  if (presetKey === 'trend_resonance') {
-    return {
-      ...base,
-      trend_resonance_enabled: true,
-      trend_ema_fast_window: 13,
-      trend_ema_mid_window: 21,
-      trend_ema_long_window: 60,
-      trend_macd_fast: 4,
-      trend_macd_slow: 26,
-      trend_macd_signal: 6,
-      trend_stoch_window: 27,
-      trend_stoch_k_smooth: 9,
-      trend_stoch_d_smooth: 3,
-      trend_entry_signal: 'any',
-      trend_macd_mode: 'dif_above_dea',
-      trend_stoch_mode: 'k_above_d',
-    };
-  }
-  return {
-    ...base,
-    signal_mode: 'breakout_or_pullback',
-    breakout_pullback_direction: config.breakout_pullback_direction || 'both',
-  };
+function activeSignalFamily(config: StrategyConfig): string {
+  if (config.platform_setup_enabled) return 'platform_setup';
+  if (config.platform_breakout_enabled) return 'platform_breakout';
+  if (config.trend_resonance_enabled) return 'trend_resonance';
+  return ['platform_breakout', 'platform_setup', 'trend_resonance'].includes(config.signal_mode)
+    ? 'breakout_or_pullback'
+    : config.signal_mode || 'breakout_or_pullback';
+}
+
+function applySignalPresetConfig(current: StrategyConfig, preset: SignalPreset): StrategyConfig {
+  return cleanPlatformBreakoutModes({
+    ...current,
+    ...preset.config,
+    preset_key: preset.id,
+  });
 }
 
 function Overview({
@@ -858,6 +812,7 @@ function Warehouse() {
 
 function StrategyPanel(props: {
   presets: StrategyPreset[];
+  signalPresets: SignalPreset[];
   selectedPresetId: string | null;
   strategy: StrategyConfig;
   strategyName: string;
@@ -870,21 +825,75 @@ function StrategyPanel(props: {
   createBlank: () => Promise<void>;
   remove: () => Promise<void>;
   reset: () => Promise<void>;
+  reloadBootstrap: () => Promise<void>;
 }) {
   const selected = props.presets.find((preset) => preset.id === props.selectedPresetId);
   const customPresets = props.presets.filter((preset) => !preset.is_system);
   const selectedIsTemplate = Boolean(selected?.is_system);
   const [versions, setVersions] = useState<StrategyVersion[]>([]);
+  const [selectedSignalPresetId, setSelectedSignalPresetId] = useState('');
+  const [signalPresetName, setSignalPresetName] = useState('');
+  const [signalPresetDescription, setSignalPresetDescription] = useState('');
+  const [signalPresetMessage, setSignalPresetMessage] = useState('');
+  const [signalPresetBusy, setSignalPresetBusy] = useState(false);
+  const selectedSignalPreset = props.signalPresets.find((preset) => preset.id === selectedSignalPresetId);
+  const canMutateSignalPreset = Boolean(selectedSignalPreset && !selectedSignalPreset.is_system);
   const update = (key: keyof StrategyConfig, value: unknown) => {
     props.setStrategy({ ...props.strategy, [key]: value });
   };
-  const platformBreakoutEnabled = Boolean(props.strategy.platform_breakout_enabled || props.strategy.signal_mode === 'platform_breakout');
-  const platformSetupEnabled = Boolean(props.strategy.platform_setup_enabled || props.strategy.signal_mode === 'platform_setup');
-  const trendResonanceEnabled = Boolean(props.strategy.trend_resonance_enabled || props.strategy.signal_mode === 'trend_resonance');
-  const simpleSignalEnabled = !platformBreakoutEnabled && !platformSetupEnabled && !trendResonanceEnabled;
+  const platformBreakoutEnabled = Boolean(props.strategy.platform_breakout_enabled);
+  const platformSetupEnabled = Boolean(props.strategy.platform_setup_enabled);
+  const trendResonanceEnabled = Boolean(props.strategy.trend_resonance_enabled);
   const activeAnalysisMode = analysisModes.find((mode) => mode.id === (props.strategy.analysis_mode || 'strict')) || analysisModes[0];
   const suggestedName = suggestStrategyName(props.strategy);
   const nameLooksGeneric = !props.strategyName.trim() || /^未命名策略/.test(props.strategyName.trim());
+
+  useEffect(() => {
+    if (selectedSignalPresetId && props.signalPresets.some((preset) => preset.id === selectedSignalPresetId)) return;
+    setSelectedSignalPresetId(props.signalPresets[0]?.id || '');
+  }, [props.signalPresets, selectedSignalPresetId]);
+
+  useEffect(() => {
+    if (!selectedSignalPreset) return;
+    setSignalPresetName(selectedSignalPreset.name);
+    setSignalPresetDescription(selectedSignalPreset.description || '');
+  }, [selectedSignalPreset?.id]);
+
+  async function saveSignalPreset(updateCurrent = false) {
+    setSignalPresetBusy(true);
+    try {
+      const result = await api.saveSignalPreset({
+        id: updateCurrent && canMutateSignalPreset ? selectedSignalPresetId : undefined,
+        name: signalPresetName.trim() || '未命名信号预设',
+        description: signalPresetDescription.trim(),
+        config: cleanPlatformBreakoutModes(props.strategy),
+      });
+      setSelectedSignalPresetId(result.preset.id);
+      setSignalPresetName(result.preset.name);
+      setSignalPresetDescription(result.preset.description || '');
+      setSignalPresetMessage(updateCurrent ? '信号预设已更新' : '已保存为新的信号预设');
+      await props.reloadBootstrap();
+    } catch (error) {
+      setSignalPresetMessage(error instanceof Error ? error.message : '信号预设保存失败');
+    } finally {
+      setSignalPresetBusy(false);
+    }
+  }
+
+  async function deleteSignalPreset() {
+    if (!selectedSignalPreset || selectedSignalPreset.is_system) return;
+    setSignalPresetBusy(true);
+    try {
+      await api.deleteSignalPreset(selectedSignalPreset.id);
+      setSignalPresetMessage('信号预设已删除');
+      setSelectedSignalPresetId('');
+      await props.reloadBootstrap();
+    } catch (error) {
+      setSignalPresetMessage(error instanceof Error ? error.message : '信号预设删除失败');
+    } finally {
+      setSignalPresetBusy(false);
+    }
+  }
 
   useEffect(() => {
     let alive = true;
@@ -1008,36 +1017,49 @@ function StrategyPanel(props: {
               </button>
             )}
           </div>
-          <div className="preset-fill-strip wide">
-            <div>
-              <span>信号预设</span>
-              <small>选择后自动填入一组参数，后续可以自由修改。</small>
+          <div className="signal-preset-tools wide">
+            <div className="signal-preset-copy">
+              <strong>信号预设</strong>
+              <small>只负责填参数；下面所有指标都可以继续微调。</small>
             </div>
-            {signalModes.map((mode) => (
+            <label>
+              <span>预设</span>
+              <select value={selectedSignalPresetId} onChange={(event) => setSelectedSignalPresetId(event.target.value)}>
+                {props.signalPresets.map((preset) => (
+                  <option key={preset.id} value={preset.id}>
+                    {preset.name}{preset.is_system ? ' · 系统' : ' · 自定义'}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>名称</span>
+              <input value={signalPresetName} onChange={(event) => setSignalPresetName(event.target.value)} placeholder="未命名信号预设" />
+            </label>
+            <label>
+              <span>备注</span>
+              <input value={signalPresetDescription} onChange={(event) => setSignalPresetDescription(event.target.value)} placeholder="这组参数适合什么场景" />
+            </label>
+            <div className="signal-preset-actions">
               <button
-                key={mode.id}
-                className={(props.strategy.preset_key || props.strategy.signal_mode) === mode.id ? 'active' : ''}
-                onClick={() => props.setStrategy(applySignalPreset(props.strategy, mode.id))}
+                className="ghost compact"
+                disabled={!selectedSignalPreset || signalPresetBusy}
+                onClick={() => selectedSignalPreset && props.setStrategy(applySignalPresetConfig(props.strategy, selectedSignalPreset))}
                 type="button"
               >
-                <strong>{mode.label}</strong>
-                <small>{mode.sub}</small>
+                应用
               </button>
-            ))}
-          </div>
-          <div className="module-switches wide">
-            <label className={platformBreakoutEnabled ? 'active' : ''}>
-              <input type="checkbox" checked={platformBreakoutEnabled} onChange={(event) => update('platform_breakout_enabled', event.target.checked)} />
-              平台突破
-            </label>
-            <label className={platformSetupEnabled ? 'active' : ''}>
-              <input type="checkbox" checked={platformSetupEnabled} onChange={(event) => update('platform_setup_enabled', event.target.checked)} />
-              平台临界
-            </label>
-            <label className={trendResonanceEnabled ? 'active' : ''}>
-              <input type="checkbox" checked={trendResonanceEnabled} onChange={(event) => update('trend_resonance_enabled', event.target.checked)} />
-              趋势共振
-            </label>
+              <button className="ghost compact" disabled={signalPresetBusy} onClick={() => void saveSignalPreset(false)} type="button">
+                另存
+              </button>
+              <button className="ghost compact" disabled={!canMutateSignalPreset || signalPresetBusy} onClick={() => void saveSignalPreset(true)} type="button">
+                更新
+              </button>
+              <button className="ghost compact danger" disabled={!canMutateSignalPreset || signalPresetBusy} onClick={() => void deleteSignalPreset()} type="button">
+                删除
+              </button>
+            </div>
+            {signalPresetMessage && <small className="signal-preset-message">{signalPresetMessage}</small>}
           </div>
           <div className="analysis-mode-tabs wide" aria-label="选股方式">
             {analysisModes.map((mode) => (
@@ -1052,21 +1074,17 @@ function StrategyPanel(props: {
               </button>
             ))}
           </div>
-          {simpleSignalEnabled && (
-            <>
-              <div className="form-section wide">
-                <span>突破回踩</span>
-              </div>
-              <SelectField
-                label="形态方向"
-                value={props.strategy.breakout_pullback_direction || 'both'}
-                onChange={(value) => update('breakout_pullback_direction', value)}
-                options={[['both', '突破与回踩都看'], ['breakout', '只看右侧突破'], ['pullback', '只看左侧回踩']]}
-                description="旧的右侧突破、左侧回踩已合并到这里；策略名称可以继续区分不同用法。"
-              />
-              <NumberField label="回踩容忍" value={props.strategy.pullback_tolerance} onChange={(value) => update('pullback_tolerance', value)} description={`价格贴近短期均线 ${formatPercentRatio(props.strategy.pullback_tolerance)} 内会更像回踩信号。`} />
-            </>
-          )}
+          <div className="form-section wide">
+            <span>突破与回踩</span>
+          </div>
+          <SelectField
+            label="形态方向"
+            value={props.strategy.breakout_pullback_direction || 'both'}
+            onChange={(value) => update('breakout_pullback_direction', value)}
+            options={[['both', '突破与回踩都看'], ['breakout', '只看右侧突破'], ['pullback', '只看左侧回踩']]}
+            description="右侧突破和左侧回踩合并为基础形态；策略名称可以继续区分不同用法。"
+          />
+          <NumberField label="回踩容忍" value={props.strategy.pullback_tolerance} onChange={(value) => update('pullback_tolerance', value)} description={`价格贴近短期均线 ${formatPercentRatio(props.strategy.pullback_tolerance)} 内会更像回踩信号。`} />
           <div className="form-section wide">
             <span>基础股票池</span>
           </div>
@@ -1083,11 +1101,19 @@ function StrategyPanel(props: {
             <span>排除科创板</span>
           </label>
 
-          {platformBreakoutEnabled && (
-            <>
-              <div className="form-section wide">
-                <span>平台区间</span>
-              </div>
+          <div className="form-section wide section-with-toggle">
+            <span>平台突破</span>
+            <label className={platformBreakoutEnabled ? 'inline-toggle active' : 'inline-toggle'}>
+              <input type="checkbox" checked={platformBreakoutEnabled} onChange={(event) => update('platform_breakout_enabled', event.target.checked)} />
+              启用本组
+            </label>
+          </div>
+          <div className={platformBreakoutEnabled ? 'field-note wide module-note active' : 'field-note wide module-note'}>
+            用来寻找压缩平台后的放量突破；关闭时保留参数，但分析不会把这些条件纳入筛选。
+          </div>
+          <div className="form-section wide">
+            <span>平台区间</span>
+          </div>
               <NumberField label="平台观察天数" value={props.strategy.platform_lookback_days} onChange={(value) => update('platform_lookback_days', value)} description="这就是你说的 15 天窗口；从最新 K 线前一日往前取样，不含最新 K 线。" />
               <SelectField label="平台振幅口径" value={props.strategy.platform_range_basis} onChange={(value) => update('platform_range_basis', value)} options={[['high_low', '最高价 / 最低价'], ['close', '收盘价区间']]} description="最高价/最低价更严格；收盘价区间会忽略盘中长影线。" />
               <SelectField label="平台区间条件" value={props.strategy.platform_max_range_mode} onChange={(value) => update('platform_max_range_mode', value)} options={conditionModes} description="只控制观察天数这段平台是否必须满足。" />
@@ -1105,14 +1131,17 @@ function StrategyPanel(props: {
               <NumberField label="突破涨幅下限" value={props.strategy.platform_breakout_pct_chg_min} onChange={(value) => update('platform_breakout_pct_chg_min', value)} description={`最新 K 线涨幅至少 ${formatPercent(props.strategy.platform_breakout_pct_chg_min)}。`} />
               <NumberField label="突破实体强度" value={props.strategy.platform_body_strength_min} onChange={(value) => update('platform_body_strength_min', value)} description="红柱实体 / 上下影线总和；越高说明突破越干净。" />
               <SelectField label="MACD 位置" value={props.strategy.macd_position} onChange={(value) => update('macd_position', value)} options={[['dif_above_zero', 'DIF 在 0 轴上方'], ['dif_dea_above_zero', 'DIF 与 DEA 均在 0 轴上方']]} description="用于判断 MACD 条件是否满足。" />
-            </>
-          )}
 
-          {platformSetupEnabled && (
-            <>
-              <div className="form-section wide">
-                <span>平台临界观察</span>
-              </div>
+          <div className="form-section wide section-with-toggle">
+            <span>平台临界观察</span>
+            <label className={platformSetupEnabled ? 'inline-toggle active' : 'inline-toggle'}>
+              <input type="checkbox" checked={platformSetupEnabled} onChange={(event) => update('platform_setup_enabled', event.target.checked)} />
+              启用本组
+            </label>
+          </div>
+          <div className={platformSetupEnabled ? 'field-note wide module-note active' : 'field-note wide module-note'}>
+            用来找贴近平台上沿、还没有明显起飞的观察标的；关闭时只保存参数，不参与分析。
+          </div>
               <NumberField label="平台观察天数" value={props.strategy.platform_setup_lookback_days} onChange={(value) => update('platform_setup_lookback_days', value)} />
               <NumberField label="平台最大振幅" value={props.strategy.platform_setup_max_range} onChange={(value) => update('platform_setup_max_range', value)} />
               <NumberField label="接近上沿距离" value={props.strategy.platform_setup_max_distance_to_high} onChange={(value) => update('platform_setup_max_distance_to_high', value)} />
@@ -1125,14 +1154,17 @@ function StrategyPanel(props: {
                 <input type="checkbox" checked={props.strategy.platform_setup_require_ma_turning} onChange={(event) => update('platform_setup_require_ma_turning', event.target.checked)} />
                 <span>要求 MA5 拐头</span>
               </label>
-            </>
-          )}
 
-          {trendResonanceEnabled && (
-            <>
-              <div className="form-section wide">
-                <span>趋势共振</span>
-              </div>
+          <div className="form-section wide section-with-toggle">
+            <span>趋势共振</span>
+            <label className={trendResonanceEnabled ? 'inline-toggle active' : 'inline-toggle'}>
+              <input type="checkbox" checked={trendResonanceEnabled} onChange={(event) => update('trend_resonance_enabled', event.target.checked)} />
+              启用本组
+            </label>
+          </div>
+          <div className={trendResonanceEnabled ? 'field-note wide module-note active' : 'field-note wide module-note'}>
+            用 EMA、MACD、随机指标判断趋势共振；关闭时这些参数仍可编辑，但不会作为独立模块参与筛选。
+          </div>
               <NumberField label="EMA 快线" value={props.strategy.trend_ema_fast_window} onChange={(value) => update('trend_ema_fast_window', value)} description="默认 13，观察短线趋势是否抬头。" />
               <NumberField label="EMA 中线" value={props.strategy.trend_ema_mid_window} onChange={(value) => update('trend_ema_mid_window', value)} description="默认 21，用来控制买点是否离节奏线太远。" />
               <NumberField label="EMA 长线" value={props.strategy.trend_ema_long_window} onChange={(value) => update('trend_ema_long_window', value)} description="默认 60，判断中期趋势方向。" />
@@ -1160,8 +1192,6 @@ function StrategyPanel(props: {
                 <input type="checkbox" checked={props.strategy.trend_require_ema_fast_above_mid} onChange={(event) => update('trend_require_ema_fast_above_mid', event.target.checked)} />
                 <span>要求 EMA13 高于 EMA21</span>
               </label>
-            </>
-          )}
 
           <div className="form-section wide">
             <span>强弱与趋势</span>
@@ -1181,9 +1211,7 @@ function StrategyPanel(props: {
           <NumberField label="最大换手率" value={props.strategy.max_turnover} onChange={(value) => update('max_turnover', value)} allowBlank />
           <NumberField label="最小涨跌幅" value={props.strategy.min_pct_chg} onChange={(value) => update('min_pct_chg', value)} allowBlank />
           <NumberField label="最大涨跌幅" value={props.strategy.max_pct_chg} onChange={(value) => update('max_pct_chg', value)} allowBlank />
-          {!platformSetupEnabled && (
-            <NumberField label="成交量放大" value={props.strategy.volume_ratio_min} onChange={(value) => update('volume_ratio_min', value)} allowBlank />
-          )}
+          <NumberField label="成交量放大" value={props.strategy.volume_ratio_min} onChange={(value) => update('volume_ratio_min', value)} allowBlank />
           <NumberField label="最大均线偏离" value={props.strategy.max_ma_distance} onChange={(value) => update('max_ma_distance', value)} allowBlank />
           <NumberField label="候选上限" value={props.strategy.candidate_limit} onChange={(value) => update('candidate_limit', value)} />
           <SelectField label="排序" value={props.strategy.sort_by} onChange={(value) => update('sort_by', value)} options={[['signal_score', '信号分数'], ['rps20', 'RPS20'], ['amount', '成交额'], ['pct_chg', '涨跌幅']]} />

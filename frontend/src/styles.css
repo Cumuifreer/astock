@@ -1043,6 +1043,67 @@ h1 {
   background: rgba(59, 240, 193, 0.11);
 }
 
+.signal-preset-tools {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(150px, 0.85fr) minmax(180px, 1fr) minmax(180px, 1fr) minmax(220px, 1.2fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid rgba(59, 240, 193, 0.18);
+  background:
+    linear-gradient(135deg, rgba(59, 240, 193, 0.045), rgba(255, 255, 255, 0.012)),
+    var(--panel-2);
+}
+
+.signal-preset-copy,
+.signal-preset-tools label {
+  display: grid;
+  gap: 7px;
+}
+
+.signal-preset-copy {
+  align-content: center;
+  color: var(--soft);
+}
+
+.signal-preset-copy strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.signal-preset-copy small,
+.signal-preset-tools label span,
+.signal-preset-message {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.signal-preset-tools input,
+.signal-preset-tools select {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  background: #071012;
+  color: var(--text);
+  padding: 0 10px;
+  border-radius: 6px;
+  outline: none;
+}
+
+.signal-preset-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.signal-preset-message {
+  grid-column: 1 / -1;
+  color: var(--lime);
+}
+
 .module-switches {
   grid-column: 1 / -1;
   display: flex;
@@ -1134,6 +1195,45 @@ h1 {
 
 .form-section.wide {
   grid-column: 1 / -1;
+}
+
+.section-with-toggle {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--soft);
+  background: rgba(255, 255, 255, 0.018);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.inline-toggle.active {
+  border-color: rgba(59, 240, 193, 0.48);
+  color: var(--text);
+  background: rgba(59, 240, 193, 0.08);
+}
+
+.inline-toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+}
+
+.module-note {
+  color: rgba(183, 204, 198, 0.68);
+}
+
+.module-note.active {
+  border-color: rgba(59, 240, 193, 0.14);
+  color: var(--soft);
 }
 
 .form-grid {
@@ -2423,6 +2523,7 @@ a {
 
   .mode-tabs,
   .preset-fill-strip,
+  .signal-preset-tools,
   .analysis-mode-tabs {
     grid-template-columns: 1fr 1fr;
   }
@@ -2480,6 +2581,7 @@ a {
   .form-section.wide,
   .mode-tabs,
   .preset-fill-strip,
+  .signal-preset-tools,
   .analysis-mode-tabs,
   .field-note,
   .wide-panel {
@@ -2488,6 +2590,7 @@ a {
 
   .mode-tabs,
   .preset-fill-strip,
+  .signal-preset-tools,
   .analysis-mode-tabs {
     grid-template-columns: 1fr;
   }

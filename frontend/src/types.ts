@@ -46,6 +46,16 @@ export interface StrategyPreset {
   updated_at: string;
 }
 
+export interface SignalPreset {
+  id: string;
+  name: string;
+  description: string;
+  config: StrategyConfig;
+  is_system: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface StrategyVersion {
   id: string;
   preset_id: string;
@@ -545,6 +555,7 @@ export interface Bootstrap {
   overview: Overview;
   capabilities: Capability[];
   strategies: StrategyPreset[];
+  signal_presets: SignalPreset[];
   default_strategy: StrategyConfig;
   update_status: TaskRun | null;
   analyze_status: TaskRun | null;

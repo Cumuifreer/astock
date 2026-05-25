@@ -193,6 +193,134 @@ SYSTEM_PRESETS = [
     },
 ]
 
+SIGNAL_PRESETS = [
+    {
+        "id": "signal-blank",
+        "name": "空白参数",
+        "description": "清空形态模块，只保留基础股票池和通用过滤。",
+        "config": {
+            **DEFAULT_STRATEGY_CONFIG,
+            "preset_key": "blank",
+            "signal_mode": "breakout_or_pullback",
+            "platform_breakout_enabled": False,
+            "platform_setup_enabled": False,
+            "trend_resonance_enabled": False,
+            "analysis_mode": "strict",
+        },
+    },
+    {
+        "id": "signal-breakout-pullback",
+        "name": "突破回踩",
+        "description": "双形态基础参数，适合右侧突破和均线回踩观察。",
+        "config": {
+            **DEFAULT_STRATEGY_CONFIG,
+            "preset_key": "breakout_or_pullback",
+            "signal_mode": "breakout_or_pullback",
+            "breakout_pullback_direction": "both",
+            "platform_breakout_enabled": False,
+            "platform_setup_enabled": False,
+            "trend_resonance_enabled": False,
+        },
+    },
+    {
+        "id": "signal-platform-breakout",
+        "name": "平台突破",
+        "description": "压缩平台后放量突破，平台质量作为核心确认。",
+        "config": {
+            **DEFAULT_STRATEGY_CONFIG,
+            "preset_key": "platform_breakout",
+            "signal_mode": "platform_breakout",
+            "platform_breakout_enabled": True,
+            "platform_setup_enabled": False,
+            "trend_resonance_enabled": False,
+            "trend_filter": "none",
+            "platform_lookback_days": 20,
+            "platform_range_basis": "high_low",
+            "platform_max_range": 0.12,
+            "platform_breakout_clearance": 0.03,
+            "platform_breakout_max_clearance": 0.08,
+            "platform_breakout_first_mode": "must",
+            "platform_min_bullish_ratio": 0.5,
+            "platform_bullish_ratio_score": 0.6,
+            "platform_bull_volume_advantage": 1.1,
+            "platform_bull_volume_advantage_score": 1.2,
+            "platform_breakout_volume_ratio": 3.0,
+            "platform_breakout_pct_chg_min": 5.0,
+            "platform_body_strength_min": 1.0,
+            "platform_ma_bullish_mode": "score",
+            "platform_ma_rising_mode": "score",
+            "platform_macd_filter_mode": "score",
+            "min_rps20": None,
+            "max_turnover": None,
+            "min_pct_chg": 5.0,
+            "max_pct_chg": None,
+            "volume_ratio_min": None,
+            "max_ma_distance": None,
+            "max_amplitude": None,
+        },
+    },
+    {
+        "id": "signal-platform-setup",
+        "name": "平台临界",
+        "description": "贴近平台上沿但不过热，偏观察池和盘中雷达风格。",
+        "config": {
+            **DEFAULT_STRATEGY_CONFIG,
+            "preset_key": "platform_setup",
+            "signal_mode": "platform_setup",
+            "platform_breakout_enabled": False,
+            "platform_setup_enabled": True,
+            "trend_resonance_enabled": False,
+            "platform_setup_lookback_days": 20,
+            "platform_setup_max_range": 0.12,
+            "platform_setup_max_distance_to_high": 0.035,
+            "platform_setup_max_recent_gain_5d": 0.1,
+            "platform_setup_volume_contraction_max": 1.05,
+            "platform_setup_bull_volume_advantage": 1.05,
+            "platform_setup_ma_convergence_max": 0.06,
+            "platform_setup_require_ma_turning": True,
+            "platform_setup_macd_mode": "dif_above_dea",
+            "min_rps20": 60.0,
+            "volume_ratio_min": None,
+            "max_ma_distance": 0.1,
+            "min_pct_chg": -3.0,
+            "max_pct_chg": 6.0,
+        },
+    },
+    {
+        "id": "signal-trend-resonance",
+        "name": "趋势共振",
+        "description": "EMA/MACD/KDJ 共振，偏中线趋势过滤。",
+        "config": {
+            **DEFAULT_STRATEGY_CONFIG,
+            "preset_key": "trend_resonance",
+            "signal_mode": "trend_resonance",
+            "platform_breakout_enabled": False,
+            "platform_setup_enabled": False,
+            "trend_resonance_enabled": True,
+            "analysis_mode": "score",
+            "trend_filter": "none",
+            "trend_ema_fast_window": 13,
+            "trend_ema_mid_window": 21,
+            "trend_ema_long_window": 60,
+            "trend_macd_fast": 4,
+            "trend_macd_slow": 26,
+            "trend_macd_signal": 6,
+            "trend_stoch_window": 27,
+            "trend_stoch_k_smooth": 9,
+            "trend_stoch_d_smooth": 3,
+            "trend_entry_signal": "any",
+            "trend_macd_mode": "dif_above_dea",
+            "trend_stoch_mode": "k_above_d",
+            "min_rps20": 60.0,
+            "min_pct_chg": -3.0,
+            "max_pct_chg": 8.0,
+            "volume_ratio_min": None,
+            "max_ma_distance": None,
+            "sort_by": "signal_score",
+        },
+    },
+]
+
 STRATEGY_VERSIONS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS strategy_versions (
     id TEXT PRIMARY KEY,
@@ -507,6 +635,72 @@ class StrategyService:
                 ["id"],
             )
         return self.list_presets()
+
+    def list_signal_presets(self) -> List[Dict[str, Any]]:
+        rows = self.db.query(
+            """
+            SELECT *
+            FROM signal_presets
+            WHERE deleted_at IS NULL
+            ORDER BY is_system DESC, updated_at DESC
+            """
+        )
+        for row in rows:
+            row["config"] = normalize_strategy_config(json.loads(row.pop("config_json") or "{}"))
+        return rows
+
+    def get_signal_preset(self, preset_id: str) -> Optional[Dict[str, Any]]:
+        rows = self.db.query(
+            "SELECT * FROM signal_presets WHERE id = ? AND deleted_at IS NULL",
+            [preset_id],
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        row["config"] = normalize_strategy_config(json.loads(row.pop("config_json") or "{}"))
+        return row
+
+    def save_signal_preset(
+        self,
+        name: str,
+        description: str,
+        config: Dict[str, Any],
+        preset_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        now = datetime.utcnow()
+        target_id = preset_id or f"signal-custom-{uuid.uuid4().hex[:12]}"
+        existing = self.get_signal_preset(target_id)
+        if existing and existing.get("is_system"):
+            target_id = f"signal-custom-{uuid.uuid4().hex[:12]}"
+            existing = None
+        normalized_config = normalize_strategy_config(config)
+        row = {
+            "id": target_id,
+            "name": name.strip() or "未命名信号预设",
+            "description": (description or "").strip(),
+            "config_json": json.dumps(normalized_config, ensure_ascii=False),
+            "is_system": False,
+            "created_at": existing.get("created_at") if existing else now,
+            "updated_at": now,
+            "deleted_at": None,
+        }
+        self.db.upsert("signal_presets", [row], ["id"])
+        return self.get_signal_preset(target_id) or row
+
+    def delete_signal_preset(self, preset_id: str) -> bool:
+        preset = self.get_signal_preset(preset_id)
+        if not preset or preset.get("is_system"):
+            return False
+        self.db.execute(
+            """
+            UPDATE signal_presets
+            SET deleted_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            [datetime.utcnow(), datetime.utcnow(), preset_id],
+            write=True,
+        )
+        return True
 
     def _latest_versions(self, preset_ids: Optional[List[str]] = None) -> Dict[str, Dict[str, Any]]:
         params: List[Any] = []

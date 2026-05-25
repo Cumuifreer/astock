@@ -7,6 +7,7 @@ from datetime import datetime
 from backend.app.db import Database
 from backend.app.services.strategy_service import (
     DEFAULT_STRATEGY_CONFIG,
+    SIGNAL_PRESETS,
     SYSTEM_PRESETS,
     _config_hash,
     _strategy_summary,
@@ -15,7 +16,7 @@ from backend.app.services.strategy_service import (
 )
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 MIGRATIONS = [
@@ -129,6 +130,18 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE strategy_presets ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS signal_presets (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        description TEXT,
+        config_json TEXT,
+        is_system BOOLEAN,
+        created_at TIMESTAMP,
+        updated_at TIMESTAMP,
+        deleted_at TIMESTAMP
+    )
     """,
     """
     CREATE TABLE IF NOT EXISTS strategy_versions (
@@ -446,6 +459,7 @@ def migrate(db: Database) -> None:
         ["version"],
     )
     seed_strategy_presets(db)
+    seed_signal_presets(db)
     backfill_strategy_versions(db)
 
 
@@ -489,6 +503,42 @@ def seed_strategy_presets(db: Database) -> None:
             [SYSTEM_PRESETS[0]["id"]],
             write=True,
         )
+
+
+def seed_signal_presets(db: Database) -> None:
+    now = datetime.utcnow()
+    existing = db.query("SELECT id FROM signal_presets WHERE deleted_at IS NULL")
+    existing_ids = {row["id"] for row in existing}
+    rows = [
+        {
+            "id": preset["id"],
+            "name": preset["name"],
+            "description": preset.get("description") or "",
+            "config_json": json.dumps(normalize_strategy_config(preset["config"]), ensure_ascii=False),
+            "is_system": True,
+            "created_at": now,
+            "updated_at": now,
+            "deleted_at": None,
+        }
+        for preset in SIGNAL_PRESETS
+    ]
+    if not existing_ids:
+        db.upsert("signal_presets", rows, ["id"])
+        return
+    for row in rows:
+        if row["id"] in existing_ids:
+            db.execute(
+                """
+                UPDATE signal_presets
+                SET name = ?, description = ?, config_json = ?, is_system = TRUE,
+                    deleted_at = NULL, updated_at = ?
+                WHERE id = ? AND is_system = TRUE
+                """,
+                [row["name"], row["description"], row["config_json"], now, row["id"]],
+                write=True,
+            )
+        else:
+            db.upsert("signal_presets", [row], ["id"])
 
 
 def backfill_strategy_versions(db: Database) -> None:

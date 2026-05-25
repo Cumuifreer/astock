@@ -48,6 +48,7 @@ def bootstrap() -> Dict[str, Any]:
         "overview": data_service.overview(),
         "capabilities": data_service.capabilities(),
         "strategies": strategy_service.list_presets(),
+        "signal_presets": strategy_service.list_signal_presets(),
         "default_strategy": strategy_service.default_config(),
         "update_status": data_service.latest_task("update"),
         "analyze_status": data_service.latest_task("analyze"),
@@ -356,3 +357,26 @@ def set_default_strategy(preset_id: str) -> Dict[str, Any]:
 @router.post("/strategies/system/reset")
 def reset_system_strategies() -> Dict[str, Any]:
     return {"rows": strategy_service.restore_system_defaults()}
+
+
+@router.get("/signal-presets")
+def list_signal_presets() -> Dict[str, Any]:
+    return {"rows": strategy_service.list_signal_presets()}
+
+
+@router.post("/signal-presets")
+def save_signal_preset(payload: Dict[str, Any]) -> Dict[str, Any]:
+    preset = strategy_service.save_signal_preset(
+        name=payload.get("name") or "未命名信号预设",
+        description=payload.get("description") or "",
+        config=payload.get("config") or {},
+        preset_id=payload.get("id"),
+    )
+    return {"preset": preset}
+
+
+@router.delete("/signal-presets/{preset_id}")
+def delete_signal_preset(preset_id: str) -> Dict[str, Any]:
+    if not strategy_service.delete_signal_preset(preset_id):
+        raise HTTPException(status_code=400, detail="系统信号预设不能删除，或预设不存在。")
+    return {"ok": True}

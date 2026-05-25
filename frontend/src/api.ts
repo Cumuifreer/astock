@@ -1,4 +1,4 @@
-import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, IntradayRadarConfig, IntradayRadarResult, IntradayTimeline, RuntimeHealth, StrategyConfig, StrategyPreset, StrategyVersion, WatchlistResult } from './types';
+import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, IntradayRadarConfig, IntradayRadarResult, IntradayTimeline, RuntimeHealth, SignalPreset, StrategyConfig, StrategyPreset, StrategyVersion, WatchlistResult } from './types';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -75,4 +75,8 @@ export const api = {
     request(`/api/strategies/${id}/default`, { method: 'POST' }),
   resetSystemStrategies: () =>
     request('/api/strategies/system/reset', { method: 'POST' }),
+  saveSignalPreset: (payload: Record<string, unknown>) =>
+    request<{ preset: SignalPreset }>('/api/signal-presets', { method: 'POST', body: JSON.stringify(payload) }),
+  deleteSignalPreset: (id: string) =>
+    request(`/api/signal-presets/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };
