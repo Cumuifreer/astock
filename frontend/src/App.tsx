@@ -2376,12 +2376,22 @@ function RadarTimeline({ timeline, loading }: { timeline: IntradayTimeline | nul
 function DataMap({ capabilities, afterProbe }: { capabilities: Capability[]; afterProbe: () => Promise<void> }) {
   const [probing, setProbing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const rows = useMemo(() => buildDataLedgerRows(capabilities), [capabilities]);
+  const summary = useMemo(
+    () => ({
+      normal: rows.filter((row) => row.status === 'normal').length,
+      stale: rows.filter((row) => row.status === 'stale').length,
+      partial: rows.filter((row) => row.status === 'partial').length,
+      empty: rows.filter((row) => row.status === 'empty').length,
+    }),
+    [rows],
+  );
   async function probe() {
     try {
       setProbing(true);
       const result = (await api.probeSources()) as { rows: Array<{ status: string }> };
       const available = result.rows.filter((row) => row.status === 'available').length;
-      setMessage(`${available} 个数据源能力可用`);
+      setMessage(`检测完成，${available} 项连接可用`);
       await afterProbe();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : '探测失败');
@@ -2391,42 +2401,64 @@ function DataMap({ capabilities, afterProbe }: { capabilities: Capability[]; aft
   }
   return (
     <div className="page-stack">
-      <section className="panel map-toolbar">
-        <PanelTitle icon={<Layers3 size={18} />} title="能力视图" />
-        <div className="quick-actions">
-          {message && <span className="muted-text">{message}</span>}
-          <button className="ghost" disabled={probing} onClick={probe}>
-            <RefreshCw size={16} />
-            刷新探测
-          </button>
+      <section className="panel data-ledger">
+        <div className="data-ledger-head">
+          <div>
+            <PanelTitle icon={<Layers3 size={18} />} title="数据账本" />
+            <p>按数据类检查本地仓库的新鲜度和字段覆盖。</p>
+          </div>
+          <div className="quick-actions">
+            {message && <span className="muted-text">{message}</span>}
+            <button className="ghost" disabled={probing} onClick={probe}>
+              <RefreshCw size={16} />
+              刷新状态
+            </button>
+          </div>
         </div>
-      </section>
-      <section className="cap-grid">
-        {capabilities.map((capability) => (
-          <article key={capability.capability} className="cap-card">
-            <div className="cap-head">
-              <h3>{capability.capability}</h3>
-              <span className={capability.participates_in_analysis ? 'pill good' : 'pill muted'}>
-                {capability.participates_in_analysis ? '参与分析' : '观察项'}
-              </span>
+        <div className="ledger-summary">
+          <span>
+            <b>{summary.normal}</b>
+            正常
+          </span>
+          <span>
+            <b>{summary.stale}</b>
+            落后
+          </span>
+          <span>
+            <b>{summary.partial}</b>
+            缺口
+          </span>
+          <span>
+            <b>{summary.empty}</b>
+            未接入
+          </span>
+        </div>
+        <div className="data-ledger-table">
+          <div className="data-ledger-row data-ledger-row-head">
+            <span>数据类</span>
+            <span>当前最新</span>
+            <span>应该最新</span>
+            <span>覆盖</span>
+            <span>状态</span>
+          </div>
+          {rows.map((row) => (
+            <div key={row.key} className="data-ledger-row">
+              <div className="ledger-name">
+                <strong>{row.label}</strong>
+                <small>{row.fields}</small>
+              </div>
+              <span className="mono">{row.currentLatest}</span>
+              <span className="mono">{row.expectedLatest}</span>
+              <div className="ledger-coverage">
+                <span>
+                  {formatInt(row.coverage)} / {formatInt(row.total)}
+                </span>
+                <Progress value={row.percent} />
+              </div>
+              <span className={`ledger-status ${row.status}`}>{row.statusLabel}</span>
             </div>
-            <div className="cap-number">
-              <strong>{formatInt(capability.coverage_count)}</strong>
-              <span>缺失 {formatInt(capability.missing_count)}</span>
-            </div>
-            <Progress value={coveragePercent(capability)} />
-            <dl>
-              <dt>实际来源</dt>
-              <dd>{sourceList(capability.actual_sources)}</dd>
-              <dt>备用来源</dt>
-              <dd>{sourceList(capability.fallback_sources)}</dd>
-              <dt>最近更新</dt>
-              <dd>{capability.latest_update || '暂无'}</dd>
-              <dt>最近失败</dt>
-              <dd>{capability.last_failure_reason || '无'}</dd>
-            </dl>
-          </article>
-        ))}
+          ))}
+        </div>
       </section>
     </div>
   );
@@ -3345,6 +3377,146 @@ function slotStatusLabel(status: string) {
     skipped: '跳过',
   };
   return labels[status] || status;
+}
+
+type DataLedgerStatus = 'normal' | 'stale' | 'partial' | 'empty';
+type ExpectedDateKind = 'history' | 'snapshot' | 'long_lived' | 'as_needed';
+
+interface DataLedgerRow {
+  key: string;
+  label: string;
+  fields: string;
+  currentLatest: string;
+  expectedLatest: string;
+  coverage: number;
+  total: number;
+  percent: number;
+  status: DataLedgerStatus;
+  statusLabel: string;
+}
+
+const dataLedgerMeta: Record<string, { fields: string[]; expected: ExpectedDateKind }> = {
+  '历史 K 线': {
+    fields: ['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'turn'],
+    expected: 'history',
+  },
+  当天行情快照: {
+    fields: ['code', 'date', 'name', 'latest_price', 'pct_chg', 'volume', 'amount'],
+    expected: 'snapshot',
+  },
+  股票基础信息: {
+    fields: ['code', 'name', 'exchange', 'list_date', 'is_active'],
+    expected: 'long_lived',
+  },
+  流通市值: {
+    fields: ['code', 'date', 'float_share', 'float_market_value', 'price'],
+    expected: 'history',
+  },
+  换手率: {
+    fields: ['code', 'date', 'turn', 'turnover_rate'],
+    expected: 'history',
+  },
+  RPS: {
+    fields: ['code', 'date', 'rps20', 'rps60', 'rps120'],
+    expected: 'history',
+  },
+  振幅: {
+    fields: ['code', 'date', 'high', 'low', 'prev_close', 'amplitude'],
+    expected: 'history',
+  },
+  概念标签: {
+    fields: ['code', 'concept_name', 'source', 'updated_at'],
+    expected: 'as_needed',
+  },
+  'ST / 停牌状态': {
+    fields: ['code', 'date', 'is_st', 'tradestatus'],
+    expected: 'history',
+  },
+  市场环境: {
+    fields: ['date', 'index_code', 'trend_score', 'risk_level'],
+    expected: 'as_needed',
+  },
+};
+
+function buildDataLedgerRows(capabilities: Capability[]): DataLedgerRow[] {
+  return capabilities.map((capability) => {
+    const meta = dataLedgerMeta[capability.capability] || {
+      fields: ['code', 'date', 'value'],
+      expected: 'history' as ExpectedDateKind,
+    };
+    const total = capability.coverage_count + capability.missing_count;
+    const percent = total ? Math.round((capability.coverage_count / total) * 100) : 0;
+    const currentLatest = capability.latest_update ? formatDate(capability.latest_update) : '暂无';
+    const expectedLatest = expectedLatestLabel(meta.expected);
+    const status = classifyLedgerStatus(capability.coverage_count, percent, currentLatest, expectedLatest);
+    return {
+      key: capability.capability,
+      label: capability.capability,
+      fields: meta.fields.join(' · '),
+      currentLatest,
+      expectedLatest,
+      coverage: capability.coverage_count,
+      total,
+      percent,
+      status,
+      statusLabel: ledgerStatusLabel(status),
+    };
+  });
+}
+
+function expectedLatestLabel(kind: ExpectedDateKind) {
+  if (kind === 'long_lived') return '长期有效';
+  if (kind === 'as_needed') return '按需';
+  return expectedMarketDate(kind);
+}
+
+function classifyLedgerStatus(coverage: number, percent: number, currentLatest: string, expectedLatest: string): DataLedgerStatus {
+  if (coverage <= 0) return 'empty';
+  if (isDateLabel(currentLatest) && isDateLabel(expectedLatest) && currentLatest < expectedLatest) return 'stale';
+  if (percent < 98) return 'partial';
+  return 'normal';
+}
+
+function ledgerStatusLabel(status: DataLedgerStatus) {
+  const labels: Record<DataLedgerStatus, string> = {
+    normal: '正常',
+    stale: '落后',
+    partial: '缺口',
+    empty: '未接入',
+  };
+  return labels[status];
+}
+
+function isDateLabel(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function expectedMarketDate(kind: 'history' | 'snapshot') {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const today = `${byType.year}-${byType.month}-${byType.day}`;
+  const todayDate = new Date(`${today}T00:00:00Z`);
+  const day = todayDate.getUTCDay();
+  const minuteOfDay = Number(byType.hour) * 60 + Number(byType.minute);
+  const threshold = kind === 'snapshot' ? 9 * 60 + 30 : 15 * 60 + 30;
+  if (day >= 1 && day <= 5 && minuteOfDay >= threshold) return today;
+  return previousWeekday(todayDate);
+}
+
+function previousWeekday(date: Date) {
+  const copy = new Date(date);
+  do {
+    copy.setUTCDate(copy.getUTCDate() - 1);
+  } while (copy.getUTCDay() === 0 || copy.getUTCDay() === 6);
+  return copy.toISOString().slice(0, 10);
 }
 
 function coveragePercent(capability: Capability) {
