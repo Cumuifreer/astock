@@ -21,6 +21,10 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "trend_filter": "ma_short_above_long",
     "analysis_mode": "strict",
     "signal_mode": "breakout_or_pullback",
+    "preset_key": "breakout_or_pullback",
+    "platform_breakout_enabled": False,
+    "platform_setup_enabled": False,
+    "trend_resonance_enabled": False,
     "breakout_pullback_direction": "both",
     "breakout_lookback": 20,
     "pullback_tolerance": 0.035,
@@ -79,6 +83,17 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "trend_max_ema_mid_distance": 0.12,
     "trend_max_recent_gain_10d": 0.28,
     "trend_stoch_overheat": 85.0,
+    "sar_mode": "score",
+    "sar_step": 0.02,
+    "sar_max_step": 0.2,
+    "atr_window": 14,
+    "atr_pct_mode": "score",
+    "min_atr_pct": None,
+    "max_atr_pct": None,
+    "bollinger_window": 20,
+    "bollinger_std": 2.0,
+    "bollinger_width_mode": "score",
+    "max_bollinger_width": None,
     "macd_filter_enabled": True,
     "macd_position": "dif_dea_above_zero",
     "max_amplitude": 0.12,
@@ -129,6 +144,8 @@ SYSTEM_PRESETS = [
         "config": {
             **DEFAULT_STRATEGY_CONFIG,
             "signal_mode": "platform_breakout",
+            "preset_key": "platform_breakout",
+            "platform_breakout_enabled": True,
             "trend_filter": "none",
             "min_rps20": None,
             "max_turnover": None,
@@ -146,6 +163,8 @@ SYSTEM_PRESETS = [
         "config": {
             **DEFAULT_STRATEGY_CONFIG,
             "signal_mode": "platform_setup",
+            "preset_key": "platform_setup",
+            "platform_setup_enabled": True,
             "min_rps20": 60.0,
             "volume_ratio_min": None,
             "max_ma_distance": 0.1,
@@ -160,6 +179,8 @@ SYSTEM_PRESETS = [
         "config": {
             **DEFAULT_STRATEGY_CONFIG,
             "signal_mode": "trend_resonance",
+            "preset_key": "trend_resonance",
+            "trend_resonance_enabled": True,
             "analysis_mode": "score",
             "trend_filter": "none",
             "min_rps20": 60.0,
@@ -227,7 +248,8 @@ def insert_strategy_versions(db: Database, rows: List[Dict[str, Any]]) -> int:
 
 
 def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    merged = {**DEFAULT_STRATEGY_CONFIG, **(config or {})}
+    raw_config = config or {}
+    merged = {**DEFAULT_STRATEGY_CONFIG, **raw_config}
     raw_signal_mode = merged.get("signal_mode")
     if raw_signal_mode in {"breakout", "pullback"}:
         merged["signal_mode"] = "breakout_or_pullback"
@@ -242,6 +264,23 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
         merged["signal_mode"] = "breakout_or_pullback"
     if merged.get("breakout_pullback_direction") not in {"both", "breakout", "pullback"}:
         merged["breakout_pullback_direction"] = "both"
+    if not raw_config.get("preset_key"):
+        merged["preset_key"] = merged.get("signal_mode") or "custom"
+    if "platform_breakout_enabled" not in raw_config:
+        merged["platform_breakout_enabled"] = merged.get("signal_mode") == "platform_breakout"
+    if "platform_setup_enabled" not in raw_config:
+        merged["platform_setup_enabled"] = merged.get("signal_mode") == "platform_setup"
+    if "trend_resonance_enabled" not in raw_config:
+        merged["trend_resonance_enabled"] = merged.get("signal_mode") == "trend_resonance"
+    if (
+        merged.get("signal_mode") in {"platform_breakout", "platform_setup", "trend_resonance"}
+        and not merged.get("platform_breakout_enabled")
+        and not merged.get("platform_setup_enabled")
+        and not merged.get("trend_resonance_enabled")
+    ):
+        merged["platform_breakout_enabled"] = merged.get("signal_mode") == "platform_breakout"
+        merged["platform_setup_enabled"] = merged.get("signal_mode") == "platform_setup"
+        merged["trend_resonance_enabled"] = merged.get("signal_mode") == "trend_resonance"
     merged["ma_short_window"] = max(3, int(merged["ma_short_window"]))
     merged["ma_long_window"] = max(merged["ma_short_window"] + 1, int(merged["ma_long_window"]))
     merged["platform_lookback_days"] = max(10, int(merged["platform_lookback_days"]))
@@ -255,6 +294,11 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     merged["trend_stoch_window"] = max(5, int(merged["trend_stoch_window"]))
     merged["trend_stoch_k_smooth"] = max(1, int(merged["trend_stoch_k_smooth"]))
     merged["trend_stoch_d_smooth"] = max(1, int(merged["trend_stoch_d_smooth"]))
+    merged["sar_step"] = max(0.001, min(0.2, float(merged.get("sar_step") or 0.02)))
+    merged["sar_max_step"] = max(merged["sar_step"], min(1.0, float(merged.get("sar_max_step") or 0.2)))
+    merged["atr_window"] = max(3, int(merged.get("atr_window") or 14))
+    merged["bollinger_window"] = max(5, int(merged.get("bollinger_window") or 20))
+    merged["bollinger_std"] = max(0.5, float(merged.get("bollinger_std") or 2.0))
     if merged.get("trend_entry_signal") not in {"any", "thunder", "follow", "stealth"}:
         merged["trend_entry_signal"] = "any"
     if merged.get("trend_macd_mode") not in {"off", "dif_above_dea", "dif_above_zero", "dif_dea_above_zero"}:
@@ -291,6 +335,12 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
         merged["platform_ma_rising_mode"] = "score"
     if merged.get("platform_macd_filter_mode") not in {"must", "score", "off"}:
         merged["platform_macd_filter_mode"] = "score"
+    if merged.get("sar_mode") not in {"must", "score", "off"}:
+        merged["sar_mode"] = "score"
+    if merged.get("atr_pct_mode") not in {"must", "score", "off"}:
+        merged["atr_pct_mode"] = "score"
+    if merged.get("bollinger_width_mode") not in {"must", "score", "off"}:
+        merged["bollinger_width_mode"] = "score"
     merged["candidate_limit"] = max(1, min(500, int(merged["candidate_limit"])))
     merged["sort_by"] = merged.get("sort_by") or "signal_score"
     merged["macd_position"] = merged.get("macd_position") or "dif_dea_above_zero"

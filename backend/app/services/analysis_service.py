@@ -416,6 +416,116 @@ def compute_trend_resonance_metrics(group: pd.DataFrame, strategy: Dict[str, Any
     }
 
 
+def compute_volatility_indicators(group: pd.DataFrame, strategy: Dict[str, Any]) -> Dict[str, Any]:
+    clean = group.copy().sort_values("date")
+    for column in ["high", "low", "close", "prev_close"]:
+        clean[column] = pd.to_numeric(clean.get(column), errors="coerce")
+    clean = clean.dropna(subset=["high", "low", "close"])
+    if len(clean) < 3:
+        return {"volatility_ready": False}
+
+    highs = clean["high"].astype(float)
+    lows = clean["low"].astype(float)
+    closes = clean["close"].astype(float)
+    prev_closes = pd.to_numeric(clean.get("prev_close"), errors="coerce").fillna(closes.shift(1))
+
+    atr_window = max(3, int(strategy.get("atr_window") or 14))
+    tr = pd.concat(
+        [
+            highs - lows,
+            (highs - prev_closes).abs(),
+            (lows - prev_closes).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr_series = tr.rolling(window=atr_window, min_periods=atr_window).mean()
+    atr = safe_float(atr_series.iloc[-1]) if len(atr_series.dropna()) else None
+    latest_close = safe_float(closes.iloc[-1])
+    atr_pct = atr / latest_close if atr is not None and latest_close and latest_close > 0 else None
+
+    bollinger_window = max(5, int(strategy.get("bollinger_window") or 20))
+    bollinger_std = max(0.5, float(strategy.get("bollinger_std") or 2.0))
+    rolling_close = closes.rolling(window=bollinger_window, min_periods=bollinger_window)
+    middle_series = rolling_close.mean()
+    std_series = rolling_close.std(ddof=0)
+    middle = safe_float(middle_series.iloc[-1]) if len(middle_series.dropna()) else None
+    std = safe_float(std_series.iloc[-1]) if len(std_series.dropna()) else None
+    upper = middle + bollinger_std * std if middle is not None and std is not None else None
+    lower = middle - bollinger_std * std if middle is not None and std is not None else None
+    bollinger_width = (upper - lower) / middle if upper is not None and lower is not None and middle and middle > 0 else None
+
+    sar, sar_bullish = _parabolic_sar(
+        highs.reset_index(drop=True),
+        lows.reset_index(drop=True),
+        float(strategy.get("sar_step") or 0.02),
+        float(strategy.get("sar_max_step") or 0.2),
+    )
+    sar_distance = (latest_close - sar) / latest_close if sar is not None and latest_close and latest_close > 0 else None
+    atr_key = f"atr{atr_window}"
+    return {
+        "volatility_ready": True,
+        "sar": _round_optional(sar, 6),
+        "sar_bullish": bool(sar_bullish) if sar_bullish is not None else False,
+        "sar_distance": _round_optional(sar_distance, 6),
+        "atr": _round_optional(atr, 6),
+        atr_key: _round_optional(atr, 6),
+        "atr_pct": _round_optional(atr_pct, 6),
+        f"{atr_key}_pct": _round_optional(atr_pct, 6),
+        "bollinger_middle": _round_optional(middle, 6),
+        "bollinger_upper": _round_optional(upper, 6),
+        "bollinger_lower": _round_optional(lower, 6),
+        "bollinger_width": _round_optional(bollinger_width, 6),
+    }
+
+
+def _parabolic_sar(
+    highs: pd.Series,
+    lows: pd.Series,
+    step: float,
+    max_step: float,
+) -> Tuple[Optional[float], Optional[bool]]:
+    if len(highs) < 3 or len(lows) < 3:
+        return None, None
+    step = max(0.001, min(step, 0.2))
+    max_step = max(step, min(max_step, 1.0))
+    bullish = bool((highs.iloc[1] + lows.iloc[1]) >= (highs.iloc[0] + lows.iloc[0]))
+    sar = float(lows.iloc[:2].min() if bullish else highs.iloc[:2].max())
+    extreme = float(highs.iloc[:2].max() if bullish else lows.iloc[:2].min())
+    acceleration = step
+
+    for index in range(2, len(highs)):
+        high = float(highs.iloc[index])
+        low = float(lows.iloc[index])
+        prev_high = float(highs.iloc[index - 1])
+        prev_low = float(lows.iloc[index - 1])
+        prev2_high = float(highs.iloc[index - 2])
+        prev2_low = float(lows.iloc[index - 2])
+        sar = sar + acceleration * (extreme - sar)
+
+        if bullish:
+            sar = min(sar, prev_low, prev2_low)
+            if low < sar:
+                bullish = False
+                sar = extreme
+                extreme = low
+                acceleration = step
+            elif high > extreme:
+                extreme = high
+                acceleration = min(acceleration + step, max_step)
+        else:
+            sar = max(sar, prev_high, prev2_high)
+            if high > sar:
+                bullish = True
+                sar = extreme
+                extreme = high
+                acceleration = step
+            elif low < extreme:
+                extreme = low
+                acceleration = min(acceleration + step, max_step)
+
+    return sar, bullish
+
+
 def _platform_ma_values(closes: pd.Series) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     clean = pd.to_numeric(closes, errors="coerce").dropna()
     if len(clean) < 20:
@@ -530,17 +640,25 @@ def apply_strategy_filters(
         working = working[mask]
         mark("流通市值", before, working, "缺失时按策略配置降级")
 
+    platform_breakout_enabled = _module_enabled(strategy, "platform_breakout_enabled", "platform_breakout")
+    platform_setup_enabled = _module_enabled(strategy, "platform_setup_enabled", "platform_setup")
+    trend_resonance_enabled = _module_enabled(strategy, "trend_resonance_enabled", "trend_resonance")
+
     if strategy.get("analysis_mode") == "score":
-        if strategy.get("signal_mode") == "platform_breakout":
+        if platform_breakout_enabled:
             working = _apply_platform_breakout_filters(working, strategy, funnel)
             if working.empty:
                 zero_reason = _zero_reason(funnel)
                 return [], funnel, zero_reason
-        if strategy.get("signal_mode") == "trend_resonance":
+        if trend_resonance_enabled:
             working = _apply_trend_resonance_filters(working, strategy, funnel)
             if working.empty:
                 zero_reason = _zero_reason(funnel)
                 return [], funnel, zero_reason
+        working = _apply_volatility_filters(working, strategy, funnel)
+        if working.empty:
+            zero_reason = _zero_reason(funnel)
+            return [], funnel, zero_reason
         return _rank_candidates(
             working,
             strategy,
@@ -548,7 +666,7 @@ def apply_strategy_filters(
             score_mode=True,
         )
 
-    if strategy.get("trend_filter") == "ma_short_above_long" and strategy.get("signal_mode") != "trend_resonance":
+    if strategy.get("trend_filter") == "ma_short_above_long" and not trend_resonance_enabled:
         before = len(working)
         working = working[
             pd.to_numeric(working.get("ma_short"), errors="coerce")
@@ -586,7 +704,7 @@ def apply_strategy_filters(
         funnel,
     )
     working = _numeric_filter(working, "amplitude", None, strategy.get("max_amplitude"), "振幅", funnel)
-    if strategy.get("signal_mode") != "platform_setup":
+    if not platform_setup_enabled:
         working = _numeric_filter(
             working,
             "volume_ratio",
@@ -603,12 +721,13 @@ def apply_strategy_filters(
         "均线偏离",
         funnel,
     )
-    if strategy.get("signal_mode") == "platform_breakout":
+    if platform_breakout_enabled:
         working = _apply_platform_breakout_filters(working, strategy, funnel)
-    if strategy.get("signal_mode") == "platform_setup":
+    if platform_setup_enabled:
         working = _apply_platform_setup_filters(working, strategy, funnel)
-    if strategy.get("signal_mode") == "trend_resonance":
+    if trend_resonance_enabled:
         working = _apply_trend_resonance_filters(working, strategy, funnel)
+    working = _apply_volatility_filters(working, strategy, funnel)
 
     if working.empty:
         zero_reason = _zero_reason(funnel)
@@ -958,6 +1077,35 @@ def _apply_trend_resonance_filters(
     return working
 
 
+def _apply_volatility_filters(
+    frame: pd.DataFrame,
+    strategy: Dict[str, Any],
+    funnel: List[Dict[str, Any]],
+) -> pd.DataFrame:
+    working = frame
+    if _condition_mode(strategy, "sar_mode", "score") == "must":
+        working = _bool_filter(working, "sar_bullish", "SAR 多头", funnel, "价格处于 SAR 多头跟踪状态")
+    if _condition_mode(strategy, "atr_pct_mode", "score") == "must":
+        working = _numeric_filter(
+            working,
+            "atr_pct",
+            strategy.get("min_atr_pct"),
+            strategy.get("max_atr_pct"),
+            "ATR 波动",
+            funnel,
+        )
+    if _condition_mode(strategy, "bollinger_width_mode", "score") == "must":
+        working = _numeric_filter(
+            working,
+            "bollinger_width",
+            None,
+            strategy.get("max_bollinger_width"),
+            "布林宽度",
+            funnel,
+        )
+    return working
+
+
 def _bool_filter(
     frame: pd.DataFrame,
     column: str,
@@ -989,14 +1137,32 @@ def _condition_mode(strategy: Dict[str, Any], key: str, default: str) -> str:
     return default
 
 
+def _module_enabled(strategy: Dict[str, Any], key: str, legacy_mode: str) -> bool:
+    value = strategy.get(key)
+    if isinstance(value, bool):
+        return value
+    return strategy.get("signal_mode") == legacy_mode
+
+
+def _active_signal_family(strategy: Dict[str, Any]) -> str:
+    if _module_enabled(strategy, "platform_setup_enabled", "platform_setup"):
+        return "platform_setup"
+    if _module_enabled(strategy, "platform_breakout_enabled", "platform_breakout"):
+        return "platform_breakout"
+    if _module_enabled(strategy, "trend_resonance_enabled", "trend_resonance"):
+        return "trend_resonance"
+    return str(strategy.get("signal_mode") or "breakout_or_pullback")
+
+
 def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
-    if strategy.get("signal_mode") == "platform_setup":
+    mode = _active_signal_family(strategy)
+    if mode == "platform_setup":
         return "平台临界"
-    if strategy.get("signal_mode") == "platform_breakout":
+    if mode == "platform_breakout":
         if strategy.get("analysis_mode") == "score":
             return "平台突破观察"
         return "平台突破"
-    if strategy.get("signal_mode") == "trend_resonance":
+    if mode == "trend_resonance":
         return str(row.get("trend_signal_label") or "趋势共振")
     distance = safe_float(row.get("ma_distance"))
     volume_ratio = safe_float(row.get("volume_ratio")) or 0
@@ -1013,224 +1179,13 @@ def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
 
 
 def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
-    rps = safe_float(row.get(f"rps{int(strategy.get('rps_window') or 20)}")) or safe_float(row.get("rps20")) or 0
-    if strategy.get("signal_mode") == "platform_setup":
-        setup_range = safe_float(row.get("platform_setup_range"))
-        distance_to_high = safe_float(row.get("platform_setup_distance_to_high"))
-        recent_gain = safe_float(row.get("platform_setup_recent_gain_5d"))
-        volume_contraction = safe_float(row.get("platform_setup_volume_contraction"))
-        bull_volume_ratio = safe_float(row.get("platform_setup_bull_volume_ratio"))
-        ma_convergence = safe_float(row.get("platform_setup_ma_convergence"))
-        max_range = safe_float(strategy.get("platform_setup_max_range")) or 0.1
-        max_distance = safe_float(strategy.get("platform_setup_max_distance_to_high")) or 0.035
-        max_recent_gain = safe_float(strategy.get("platform_setup_max_recent_gain_5d")) or 0.1
-        max_volume_contraction = safe_float(strategy.get("platform_setup_volume_contraction_max")) or 1.05
-        min_bull_volume = safe_float(strategy.get("platform_setup_bull_volume_advantage")) or 1.05
-        max_ma_convergence = safe_float(strategy.get("platform_setup_ma_convergence_max")) or 0.05
-        min_rps = safe_float(strategy.get(f"min_rps{int(strategy.get('rps_window') or 20)}")) or safe_float(
-            strategy.get("min_rps20")
-        )
-
-        score = float(rps) * 0.5
-        if setup_range is not None:
-            score += max(0.0, (max_range - setup_range) / max_range) * 14 if setup_range <= max_range else -8
-        if distance_to_high is not None:
-            score += (
-                max(0.0, (max_distance - distance_to_high) / max_distance) * 18
-                if distance_to_high <= max_distance
-                else -10
-            )
-        if recent_gain is not None:
-            score += 8 if recent_gain <= max_recent_gain else -min((recent_gain - max_recent_gain) * 100, 12)
-        if volume_contraction is not None:
-            score += (
-                max(0.0, (max_volume_contraction - volume_contraction) / max_volume_contraction) * 8
-                if volume_contraction <= max_volume_contraction
-                else -min((volume_contraction - max_volume_contraction) * 10, 8)
-            )
-        if bull_volume_ratio is not None:
-            score += min(bull_volume_ratio * 6, 12)
-        if ma_convergence is not None:
-            score += (
-                max(0.0, (max_ma_convergence - ma_convergence) / max_ma_convergence) * 8
-                if ma_convergence <= max_ma_convergence
-                else -6
-            )
-        if row.get("platform_setup_ma_turning_up"):
-            score += 8
-        if (safe_float(row.get("macd_dif")) or 0) > (safe_float(row.get("macd_dea")) or 0):
-            score += 5
-        if setup_range is not None and distance_to_high is not None and setup_range <= max_range and distance_to_high <= max_distance:
-            score += 8
-        if (
-            volume_contraction is not None
-            and bull_volume_ratio is not None
-            and volume_contraction <= max_volume_contraction
-            and bull_volume_ratio >= min_bull_volume
-        ):
-            score += 5
-        if min_rps is not None and recent_gain is not None and rps >= min_rps and recent_gain <= max_recent_gain:
-            score += 5
-        if ma_convergence is not None and ma_convergence <= max_ma_convergence and row.get("platform_setup_ma_turning_up"):
-            score += 5
-        return round(max(score, 0), 2)
-    if strategy.get("signal_mode") == "platform_breakout":
-        platform_range = safe_float(row.get("platform_range"))
-        bullish_ratio = safe_float(row.get("platform_bullish_ratio"))
-        bull_volume_ratio = safe_float(row.get("platform_bull_volume_ratio"))
-        breakout_volume_ratio = safe_float(row.get("platform_breakout_volume_ratio"))
-        breakout_pct = safe_float(row.get("platform_breakout_pct_chg"))
-        breakout_clearance = safe_float(row.get("platform_breakout_clearance"))
-        body_strength = safe_float(row.get("platform_body_strength"))
-        range_mode = _condition_mode(strategy, "platform_max_range_mode", "must")
-        bullish_ratio_mode = _condition_mode(strategy, "platform_bullish_ratio_mode", "must")
-        bull_volume_mode = _condition_mode(strategy, "platform_bull_volume_advantage_mode", "must")
-        breakout_volume_mode = _condition_mode(strategy, "platform_breakout_volume_ratio_mode", "must")
-        breakout_pct_mode = _condition_mode(strategy, "platform_breakout_pct_chg_mode", "must")
-        breakout_bullish_mode = _condition_mode(strategy, "platform_breakout_bullish_mode", "must")
-        body_strength_mode = _condition_mode(strategy, "platform_body_strength_mode", "must")
-        ma_bullish_mode = _condition_mode(strategy, "platform_ma_bullish_mode", "score")
-        ma_rising_mode = _condition_mode(strategy, "platform_ma_rising_mode", "score")
-        macd_filter_mode = _condition_mode(strategy, "platform_macd_filter_mode", "score")
-        dif = safe_float(row.get("macd_dif"))
-        dea = safe_float(row.get("macd_dea"))
-        if strategy.get("macd_position") == "dif_dea_above_zero":
-            macd_ok = dif is not None and dea is not None and dif > 0 and dea > 0
-        else:
-            macd_ok = dif is not None and dif > 0
-
-        breakout_volume = min((breakout_volume_ratio or 0) * 7, 24) if breakout_volume_mode != "off" else 0
-        bull_volume = min((bull_volume_ratio or 0) * 7, 14) if bull_volume_mode != "off" else 0
-        pct_bonus = min(max(breakout_pct or 0, 0) * 1.2, 14) if breakout_pct_mode != "off" else 0
-        trend_bonus = 10 if ma_bullish_mode != "off" and row.get("platform_ma_bullish") else 0
-        macd_bonus = 6 if macd_filter_mode != "off" and macd_ok else 0
-        range_penalty = min((platform_range or 0) * 80, 8) if range_mode != "off" else 0
-        score = float(rps) * 0.45 + breakout_volume + bull_volume + pct_bonus + trend_bonus + macd_bonus - range_penalty
-
-        max_range = safe_float(strategy.get("platform_max_range"))
-        min_bullish_ratio = safe_float(strategy.get("platform_min_bullish_ratio"))
-        score_bullish_ratio = safe_float(strategy.get("platform_bullish_ratio_score"))
-        min_bull_volume = safe_float(strategy.get("platform_bull_volume_advantage"))
-        score_bull_volume = safe_float(strategy.get("platform_bull_volume_advantage_score"))
-        min_breakout_volume = safe_float(strategy.get("platform_breakout_volume_ratio"))
-        min_breakout_pct = safe_float(strategy.get("platform_breakout_pct_chg_min"))
-        min_body_strength = safe_float(strategy.get("platform_body_strength_min"))
-        min_clearance = safe_float(strategy.get("platform_breakout_clearance")) or 0
-        max_clearance = safe_float(strategy.get("platform_breakout_max_clearance"))
-        min_rps = safe_float(strategy.get(f"min_rps{int(strategy.get('rps_window') or 20)}")) or safe_float(
-            strategy.get("min_rps20")
-        )
-
-        if range_mode != "off" and max_range is not None and platform_range is not None:
-            score += 7 if platform_range <= max_range else -min((platform_range - max_range) * 70, 8)
-        if _condition_mode(strategy, "platform_breakout_clearance_mode", "must") != "off" and breakout_clearance is not None:
-            score += 8 if breakout_clearance >= min_clearance else -8
-        if (
-            _condition_mode(strategy, "platform_breakout_max_clearance_mode", "must") != "off"
-            and breakout_clearance is not None
-            and max_clearance is not None
-            and max_clearance > 0
-        ):
-            if breakout_clearance <= max_clearance:
-                score += max(0.0, (max_clearance - breakout_clearance) / max_clearance) * 8
-            else:
-                score -= min((breakout_clearance - max_clearance) * 160, 18)
-        if _condition_mode(strategy, "platform_breakout_first_mode", "score") != "off":
-            score += 6 if row.get("platform_first_breakout") else -8
-        if breakout_volume_mode != "off" and min_breakout_volume is not None and breakout_volume_ratio is not None:
-            if breakout_volume_ratio >= min_breakout_volume:
-                score += 8
-            elif breakout_volume_ratio >= min_breakout_volume * 0.7:
-                score += 3
-        if (
-            bullish_ratio_mode != "off"
-            and min_bullish_ratio is not None
-            and bullish_ratio is not None
-            and bullish_ratio >= min_bullish_ratio
-        ):
-            score += 2
-        if bullish_ratio_mode != "off" and score_bullish_ratio is not None and bullish_ratio is not None:
-            score += 5 if bullish_ratio >= score_bullish_ratio else 0
-        if (
-            bull_volume_mode != "off"
-            and min_bull_volume is not None
-            and bull_volume_ratio is not None
-            and bull_volume_ratio >= min_bull_volume
-        ):
-            score += 2
-        if bull_volume_mode != "off" and score_bull_volume is not None and bull_volume_ratio is not None:
-            score += 5 if bull_volume_ratio >= score_bull_volume else 0
-        if (
-            breakout_pct_mode != "off"
-            and body_strength_mode != "off"
-            and breakout_bullish_mode != "off"
-            and min_breakout_pct is not None
-            and min_body_strength is not None
-            and breakout_pct is not None
-            and body_strength is not None
-            and breakout_pct >= min_breakout_pct
-            and body_strength >= min_body_strength
-            and row.get("platform_breakout_bullish")
-        ):
-            score += 5
-        if min_rps is not None and rps >= min_rps and ma_bullish_mode != "off" and row.get("platform_ma_bullish"):
-            score += 6
-        if ma_rising_mode != "off":
-            score += 5 if row.get("platform_ma_rising") else -3
-        if ma_rising_mode != "off" and row.get("platform_ma_rising") and macd_bonus > 0:
-            score += 4
-        return round(max(score, 0), 2)
-    if strategy.get("signal_mode") == "trend_resonance":
-        score = float(rps) * 0.38
-        if row.get("trend_price_above_ema_long"):
-            score += 10
-        if row.get("trend_ema_long_rising"):
-            score += 12
-        if row.get("trend_ema_fast_above_mid"):
-            score += 10
-        if row.get("trend_ema_fast_rising"):
-            score += 5
-        if row.get("trend_ema_mid_rising"):
-            score += 5
-        if row.get("trend_macd_dif_above_dea"):
-            score += 10
-        if row.get("trend_macd_dif_above_zero"):
-            score += 6
-        if row.get("trend_stoch_k_above_d"):
-            score += 8
-        if row.get("trend_stoch_cross_up"):
-            score += 4
-        if row.get("trend_thunder_signal"):
-            score += 8
-        elif row.get("trend_follow_signal"):
-            score += 5
-        elif row.get("trend_stealth_signal"):
-            score += 6
-        distance = safe_float(row.get("trend_ema_mid_distance"))
-        max_distance = safe_float(strategy.get("trend_max_ema_mid_distance")) or 0.12
-        if distance is not None:
-            if distance <= max_distance:
-                score += max(0.0, (max_distance - max(distance, 0.0)) / max_distance) * 8
-            else:
-                score -= min((distance - max_distance) * 100, 18)
-        recent_gain = safe_float(row.get("trend_recent_gain_10d"))
-        max_gain = safe_float(strategy.get("trend_max_recent_gain_10d")) or 0.28
-        if recent_gain is not None and recent_gain > max_gain:
-            score -= min((recent_gain - max_gain) * 80, 18)
-        if row.get("trend_stoch_overheated"):
-            score -= 8
-        score += min((safe_float(row.get("volume_ratio")) or 0) * 4, 10)
-        score += min((safe_float(row.get("turnover_rate")) or 0) * 0.8, 8)
-        return round(max(score, 0), 2)
-    volume_ratio = min((safe_float(row.get("volume_ratio")) or 0) * 8, 20)
-    trend_bonus = 12 if (safe_float(row.get("ma_short")) or 0) > (safe_float(row.get("ma_long")) or 0) else 0
-    turnover = min((safe_float(row.get("turnover_rate")) or 0) * 1.5, 12)
-    amplitude_penalty = min((safe_float(row.get("amplitude")) or 0) * 40, 8)
-    return round(float(rps) * 0.65 + volume_ratio + trend_bonus + turnover - amplitude_penalty, 2)
+    breakdown = _score_breakdown(row, strategy)
+    score = sum(safe_float(value) or 0.0 for value in breakdown.values())
+    return round(max(score, 0.0), 2)
 
 
 def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, float]:
-    mode = strategy.get("signal_mode")
+    mode = _active_signal_family(strategy)
     rps = safe_float(row.get(f"rps{int(strategy.get('rps_window') or 20)}")) or safe_float(row.get("rps20")) or 0.0
     amount = safe_float(row.get("amount")) or 0.0
     min_amount = safe_float(strategy.get("min_amount")) or 0.0
@@ -1269,38 +1224,49 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
         max_range = safe_float(strategy.get("platform_max_range")) or 0.12
         min_clearance = safe_float(strategy.get("platform_breakout_clearance")) or 0.0
         max_clearance = safe_float(strategy.get("platform_breakout_max_clearance")) or 0.08
+        range_mode = _condition_mode(strategy, "platform_max_range_mode", "must")
+        clearance_mode = _condition_mode(strategy, "platform_breakout_clearance_mode", "must")
+        max_clearance_mode = _condition_mode(strategy, "platform_breakout_max_clearance_mode", "must")
+        first_mode = _condition_mode(strategy, "platform_breakout_first_mode", "score")
+        bullish_ratio_mode = _condition_mode(strategy, "platform_bullish_ratio_mode", "must")
+        bull_volume_mode = _condition_mode(strategy, "platform_bull_volume_advantage_mode", "must")
+        breakout_volume_mode = _condition_mode(strategy, "platform_breakout_volume_ratio_mode", "must")
+        breakout_bullish_mode = _condition_mode(strategy, "platform_breakout_bullish_mode", "must")
+        body_strength_mode = _condition_mode(strategy, "platform_body_strength_mode", "must")
+        ma_bullish_mode = _condition_mode(strategy, "platform_ma_bullish_mode", "score")
+        ma_rising_mode = _condition_mode(strategy, "platform_ma_rising_mode", "score")
 
-        if breakout_clearance is not None:
+        if breakout_clearance is not None and clearance_mode != "off":
             position += _band_score(breakout_clearance, min_clearance, max_clearance, 14)
             freshness += _band_score(breakout_clearance, min_clearance, max_clearance, 12)
-            if breakout_clearance > max_clearance:
+            if max_clearance_mode != "off" and breakout_clearance > max_clearance:
                 risk += min((breakout_clearance - max_clearance) * 180, 16)
-        if platform_range is not None:
+        if platform_range is not None and range_mode != "off":
             pattern += max(0.0, (max_range - platform_range) / max_range) * 12 if platform_range <= max_range else 0
             if platform_range > max_range:
                 risk += min((platform_range - max_range) * 80, 8)
-        if bullish_ratio is not None:
+        if bullish_ratio is not None and bullish_ratio_mode != "off":
             pattern += min(bullish_ratio * 10, 8)
-        if body_strength is not None:
+        if body_strength is not None and body_strength_mode != "off":
             pattern += min(body_strength * 4, 8)
-        if row.get("platform_breakout_bullish"):
+        if row.get("platform_breakout_bullish") and breakout_bullish_mode != "off":
             pattern += 5
-        if breakout_volume is not None:
+        if breakout_volume is not None and breakout_volume_mode != "off":
             volume += min(breakout_volume * 5, 18)
-        if bull_volume is not None:
+        if bull_volume is not None and bull_volume_mode != "off":
             volume += min(bull_volume * 5, 8)
-        if row.get("platform_first_breakout"):
+        if row.get("platform_first_breakout") and first_mode != "off":
             freshness += 12
-        elif _condition_mode(strategy, "platform_breakout_first_mode", "score") != "off":
+        elif first_mode != "off":
             risk += 8
         recent_gain = safe_float(row.get("platform_recent_gain_5d"))
         if recent_gain is not None:
             freshness += max(0.0, 8 - min(max(recent_gain, 0.0) * 60, 8))
             if recent_gain > 0.12:
                 risk += min((recent_gain - 0.12) * 100, 12)
-        if row.get("platform_ma_bullish"):
+        if row.get("platform_ma_bullish") and ma_bullish_mode != "off":
             trend += 6
-        if row.get("platform_ma_rising"):
+        if row.get("platform_ma_rising") and ma_rising_mode != "off":
             trend += 6
 
     elif mode == "platform_setup":
@@ -1364,6 +1330,38 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
         pattern += max(0.0, 10 - min(amplitude * 60, 10))
         freshness += max(0.0, 8 - min(abs(pct_chg) * 0.8, 8))
 
+    if _condition_mode(strategy, "sar_mode", "score") != "off":
+        sar_distance = safe_float(row.get("sar_distance"))
+        if row.get("sar_bullish"):
+            trend += 4
+            if sar_distance is not None:
+                position += max(0.0, 5 - min(max(sar_distance, 0.0) * 50, 5))
+        elif _condition_mode(strategy, "sar_mode", "score") == "must":
+            risk += 6
+
+    if _condition_mode(strategy, "atr_pct_mode", "score") != "off":
+        atr_pct = safe_float(row.get("atr_pct"))
+        min_atr = safe_float(strategy.get("min_atr_pct"))
+        max_atr = safe_float(strategy.get("max_atr_pct"))
+        if atr_pct is not None:
+            if min_atr is not None and atr_pct < min_atr:
+                risk += min((min_atr - atr_pct) * 220, 8)
+            elif max_atr is not None and atr_pct > max_atr:
+                risk += min((atr_pct - max_atr) * 180, 10)
+            else:
+                pattern += min(atr_pct * 120, 6)
+
+    if _condition_mode(strategy, "bollinger_width_mode", "score") != "off":
+        bollinger_width = safe_float(row.get("bollinger_width"))
+        max_width = safe_float(strategy.get("max_bollinger_width"))
+        if bollinger_width is not None:
+            if max_width is not None and max_width > 0:
+                pattern += max(0.0, (max_width - min(bollinger_width, max_width)) / max_width) * 8
+                if bollinger_width > max_width:
+                    risk += min((bollinger_width - max_width) * 70, 8)
+            else:
+                pattern += max(0.0, 5 - min(bollinger_width * 20, 5))
+
     max_pct_chg = safe_float(strategy.get("max_pct_chg"))
     if max_pct_chg is not None and pct_chg > max_pct_chg:
         risk += min((pct_chg - max_pct_chg) * 1.5, 10)
@@ -1381,7 +1379,8 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
 
 
 def _freshness_metrics(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, Optional[float]]:
-    if strategy.get("signal_mode") == "platform_setup":
+    mode = _active_signal_family(strategy)
+    if mode == "platform_setup":
         distance = safe_float(row.get("platform_setup_distance_to_high"))
         return {
             "first_breakout_days": None,
@@ -1391,7 +1390,7 @@ def _freshness_metrics(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[st
             "recent_gain_5d": _round_optional(safe_float(row.get("platform_setup_recent_gain_5d")), 6),
             "ma_distance": _round_optional(safe_float(row.get("ma_distance")), 6),
         }
-    if strategy.get("signal_mode") == "platform_breakout":
+    if mode == "platform_breakout":
         clearance = safe_float(row.get("platform_breakout_clearance"))
         first_breakout_days = safe_float(row.get("platform_first_breakout_days"))
         if first_breakout_days is None and row.get("platform_first_breakout"):
@@ -1404,7 +1403,7 @@ def _freshness_metrics(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[st
             "recent_gain_5d": _round_optional(safe_float(row.get("platform_recent_gain_5d")), 6),
             "ma_distance": _round_optional(safe_float(row.get("ma_distance")), 6),
         }
-    if strategy.get("signal_mode") == "trend_resonance":
+    if mode == "trend_resonance":
         return {
             "first_breakout_days": None,
             "days_above_platform": None,
@@ -1441,7 +1440,7 @@ def _candidate_interpretation(row: Dict[str, Any], strategy: Dict[str, Any]) -> 
 
 
 def _freshness_label(row: Dict[str, Any], strategy: Dict[str, Any], freshness: Dict[str, Any]) -> str:
-    mode = strategy.get("signal_mode")
+    mode = _active_signal_family(strategy)
     if mode == "platform_setup":
         distance = safe_float(freshness.get("distance_to_platform_upper"))
         if distance is not None and distance <= 0.02:
@@ -1560,6 +1559,7 @@ def _band_score(value: float, lower: float, upper: float, score: float) -> float
 
 def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[str]:
     reasons = []
+    mode = _active_signal_family(strategy)
     amount = safe_float(row.get("amount"))
     if amount is not None:
         reasons.append(f"成交额 {amount / 100_000_000:.2f} 亿")
@@ -1578,7 +1578,7 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
         reasons.append(f"换手率 {turnover:.2f}%")
     if safe_float(row.get("float_market_value")) is None:
         reasons.append("流通市值缺失，按策略降级")
-    if strategy.get("signal_mode") == "platform_setup":
+    if mode == "platform_setup":
         setup_range = safe_float(row.get("platform_setup_range"))
         if setup_range is not None:
             reasons.append(f"平台振幅 {setup_range * 100:.2f}%")
@@ -1599,7 +1599,7 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
             reasons.append(f"均线粘合 {ma_convergence * 100:.2f}%")
         if row.get("platform_setup_ma_turning_up"):
             reasons.append("MA5 拐头")
-    if strategy.get("signal_mode") == "platform_breakout":
+    if mode == "platform_breakout":
         platform_range = safe_float(row.get("platform_range"))
         if platform_range is not None:
             reasons.append(f"平台振幅 {platform_range * 100:.2f}%")
@@ -1621,7 +1621,7 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
         macd_dif = safe_float(row.get("macd_dif"))
         if macd_dif is not None and macd_dif > 0:
             reasons.append("MACD 位于 0 轴上方")
-    if strategy.get("signal_mode") == "trend_resonance":
+    if mode == "trend_resonance":
         ema_fast = safe_float(row.get("trend_ema_fast"))
         ema_mid = safe_float(row.get("trend_ema_mid"))
         ema_long = safe_float(row.get("trend_ema_long"))
@@ -1648,6 +1648,14 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
         label = row.get("trend_signal_label")
         if label:
             reasons.append(str(label))
+    atr_pct = safe_float(row.get("atr_pct"))
+    if atr_pct is not None:
+        reasons.append(f"ATR 波动 {atr_pct * 100:.2f}%")
+    bollinger_width = safe_float(row.get("bollinger_width"))
+    if bollinger_width is not None:
+        reasons.append(f"布林宽度 {bollinger_width * 100:.2f}%")
+    if row.get("sar_bullish"):
+        reasons.append("SAR 多头")
     return reasons
 
 
@@ -1858,10 +1866,9 @@ class AnalysisService:
                 )
             )
             platform_metrics = compute_platform_breakout_metrics(group, strategy)
-            if strategy.get("signal_mode") == "platform_setup":
-                platform_metrics.update(compute_platform_setup_metrics(group, strategy))
-            if strategy.get("signal_mode") == "trend_resonance":
-                platform_metrics.update(compute_trend_resonance_metrics(group, strategy))
+            platform_metrics.update(compute_platform_setup_metrics(group, strategy))
+            platform_metrics.update(compute_trend_resonance_metrics(group, strategy))
+            platform_metrics.update(compute_volatility_indicators(group, strategy))
             output.append(
                 {
                     "code": code,

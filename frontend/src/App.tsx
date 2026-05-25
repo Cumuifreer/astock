@@ -113,6 +113,12 @@ const conditionModes: Array<[string, string]> = [
   ['off', '不启用'],
 ];
 
+const volatilityModes: Array<[string, string]> = [
+  ['score', '只参与得分'],
+  ['must', '必须满足'],
+  ['off', '不启用'],
+];
+
 const reviewStatuses = ['观察中', '已验证', '已放弃', '已错过'];
 const batchReviewStatuses = ['观察中', '有效', '一般', '误报', '已归档'];
 
@@ -467,6 +473,77 @@ function cleanPlatformBreakoutModes(config: StrategyConfig): StrategyConfig {
   };
 }
 
+function applySignalPreset(config: StrategyConfig, presetKey: string): StrategyConfig {
+  const base = {
+    ...config,
+    preset_key: presetKey,
+    signal_mode: presetKey,
+    platform_breakout_enabled: false,
+    platform_setup_enabled: false,
+    trend_resonance_enabled: false,
+  };
+  if (presetKey === 'platform_breakout') {
+    return cleanPlatformBreakoutModes({
+      ...base,
+      platform_breakout_enabled: true,
+      platform_lookback_days: 20,
+      platform_range_basis: 'high_low',
+      platform_max_range: 0.12,
+      platform_breakout_clearance: 0.03,
+      platform_breakout_max_clearance: 0.08,
+      platform_breakout_first_mode: 'must',
+      platform_min_bullish_ratio: 0.5,
+      platform_bullish_ratio_score: 0.6,
+      platform_bull_volume_advantage: 1.1,
+      platform_bull_volume_advantage_score: 1.2,
+      platform_breakout_volume_ratio: 3,
+      platform_breakout_pct_chg_min: 5,
+      platform_body_strength_min: 1,
+      platform_ma_bullish_mode: 'score',
+      platform_ma_rising_mode: 'score',
+      platform_macd_filter_mode: 'score',
+    });
+  }
+  if (presetKey === 'platform_setup') {
+    return {
+      ...base,
+      platform_setup_enabled: true,
+      platform_setup_lookback_days: 20,
+      platform_setup_max_range: 0.12,
+      platform_setup_max_distance_to_high: 0.035,
+      platform_setup_max_recent_gain_5d: 0.1,
+      platform_setup_volume_contraction_max: 1.05,
+      platform_setup_bull_volume_advantage: 1.05,
+      platform_setup_ma_convergence_max: 0.06,
+      platform_setup_require_ma_turning: true,
+      platform_setup_macd_mode: 'dif_above_dea',
+    };
+  }
+  if (presetKey === 'trend_resonance') {
+    return {
+      ...base,
+      trend_resonance_enabled: true,
+      trend_ema_fast_window: 13,
+      trend_ema_mid_window: 21,
+      trend_ema_long_window: 60,
+      trend_macd_fast: 4,
+      trend_macd_slow: 26,
+      trend_macd_signal: 6,
+      trend_stoch_window: 27,
+      trend_stoch_k_smooth: 9,
+      trend_stoch_d_smooth: 3,
+      trend_entry_signal: 'any',
+      trend_macd_mode: 'dif_above_dea',
+      trend_stoch_mode: 'k_above_d',
+    };
+  }
+  return {
+    ...base,
+    signal_mode: 'breakout_or_pullback',
+    breakout_pullback_direction: config.breakout_pullback_direction || 'both',
+  };
+}
+
 function Overview({
   bootstrap,
   startUpdate,
@@ -801,6 +878,10 @@ function StrategyPanel(props: {
   const update = (key: keyof StrategyConfig, value: unknown) => {
     props.setStrategy({ ...props.strategy, [key]: value });
   };
+  const platformBreakoutEnabled = Boolean(props.strategy.platform_breakout_enabled || props.strategy.signal_mode === 'platform_breakout');
+  const platformSetupEnabled = Boolean(props.strategy.platform_setup_enabled || props.strategy.signal_mode === 'platform_setup');
+  const trendResonanceEnabled = Boolean(props.strategy.trend_resonance_enabled || props.strategy.signal_mode === 'trend_resonance');
+  const simpleSignalEnabled = !platformBreakoutEnabled && !platformSetupEnabled && !trendResonanceEnabled;
   const activeAnalysisMode = analysisModes.find((mode) => mode.id === (props.strategy.analysis_mode || 'strict')) || analysisModes[0];
   const suggestedName = suggestStrategyName(props.strategy);
   const nameLooksGeneric = !props.strategyName.trim() || /^未命名策略/.test(props.strategyName.trim());
@@ -927,18 +1008,36 @@ function StrategyPanel(props: {
               </button>
             )}
           </div>
-          <div className="mode-tabs wide">
+          <div className="preset-fill-strip wide">
+            <div>
+              <span>信号预设</span>
+              <small>选择后自动填入一组参数，后续可以自由修改。</small>
+            </div>
             {signalModes.map((mode) => (
               <button
                 key={mode.id}
-                className={mode.id === props.strategy.signal_mode ? 'active' : ''}
-                onClick={() => update('signal_mode', mode.id)}
+                className={(props.strategy.preset_key || props.strategy.signal_mode) === mode.id ? 'active' : ''}
+                onClick={() => props.setStrategy(applySignalPreset(props.strategy, mode.id))}
                 type="button"
               >
                 <strong>{mode.label}</strong>
                 <small>{mode.sub}</small>
               </button>
             ))}
+          </div>
+          <div className="module-switches wide">
+            <label className={platformBreakoutEnabled ? 'active' : ''}>
+              <input type="checkbox" checked={platformBreakoutEnabled} onChange={(event) => update('platform_breakout_enabled', event.target.checked)} />
+              平台突破
+            </label>
+            <label className={platformSetupEnabled ? 'active' : ''}>
+              <input type="checkbox" checked={platformSetupEnabled} onChange={(event) => update('platform_setup_enabled', event.target.checked)} />
+              平台临界
+            </label>
+            <label className={trendResonanceEnabled ? 'active' : ''}>
+              <input type="checkbox" checked={trendResonanceEnabled} onChange={(event) => update('trend_resonance_enabled', event.target.checked)} />
+              趋势共振
+            </label>
           </div>
           <div className="analysis-mode-tabs wide" aria-label="选股方式">
             {analysisModes.map((mode) => (
@@ -953,7 +1052,7 @@ function StrategyPanel(props: {
               </button>
             ))}
           </div>
-          {props.strategy.signal_mode === 'breakout_or_pullback' && (
+          {simpleSignalEnabled && (
             <>
               <div className="form-section wide">
                 <span>突破回踩</span>
@@ -984,7 +1083,7 @@ function StrategyPanel(props: {
             <span>排除科创板</span>
           </label>
 
-          {props.strategy.signal_mode === 'platform_breakout' && (
+          {platformBreakoutEnabled && (
             <>
               <div className="form-section wide">
                 <span>平台区间</span>
@@ -1009,7 +1108,7 @@ function StrategyPanel(props: {
             </>
           )}
 
-          {props.strategy.signal_mode === 'platform_setup' && (
+          {platformSetupEnabled && (
             <>
               <div className="form-section wide">
                 <span>平台临界观察</span>
@@ -1029,7 +1128,7 @@ function StrategyPanel(props: {
             </>
           )}
 
-          {props.strategy.signal_mode === 'trend_resonance' && (
+          {trendResonanceEnabled && (
             <>
               <div className="form-section wide">
                 <span>趋势共振</span>
@@ -1082,12 +1181,27 @@ function StrategyPanel(props: {
           <NumberField label="最大换手率" value={props.strategy.max_turnover} onChange={(value) => update('max_turnover', value)} allowBlank />
           <NumberField label="最小涨跌幅" value={props.strategy.min_pct_chg} onChange={(value) => update('min_pct_chg', value)} allowBlank />
           <NumberField label="最大涨跌幅" value={props.strategy.max_pct_chg} onChange={(value) => update('max_pct_chg', value)} allowBlank />
-          {props.strategy.signal_mode !== 'platform_setup' && (
+          {!platformSetupEnabled && (
             <NumberField label="成交量放大" value={props.strategy.volume_ratio_min} onChange={(value) => update('volume_ratio_min', value)} allowBlank />
           )}
           <NumberField label="最大均线偏离" value={props.strategy.max_ma_distance} onChange={(value) => update('max_ma_distance', value)} allowBlank />
           <NumberField label="候选上限" value={props.strategy.candidate_limit} onChange={(value) => update('candidate_limit', value)} />
           <SelectField label="排序" value={props.strategy.sort_by} onChange={(value) => update('sort_by', value)} options={[['signal_score', '信号分数'], ['rps20', 'RPS20'], ['amount', '成交额'], ['pct_chg', '涨跌幅']]} />
+
+          <div className="form-section wide">
+            <span>波动与跟踪</span>
+          </div>
+          <SelectField label="SAR 条件" value={props.strategy.sar_mode || 'score'} onChange={(value) => update('sar_mode', value)} options={volatilityModes} description="SAR 用来判断趋势跟踪方向，必须满足时只保留多头状态。" />
+          <NumberField label="SAR 步长" value={props.strategy.sar_step} onChange={(value) => update('sar_step', value)} description="默认 0.02，越大越贴近价格。" />
+          <NumberField label="SAR 最大步长" value={props.strategy.sar_max_step} onChange={(value) => update('sar_max_step', value)} description="默认 0.2，控制 SAR 加速上限。" />
+          <NumberField label="ATR 周期" value={props.strategy.atr_window} onChange={(value) => update('atr_window', value)} description="ATR 衡量真实波动空间，默认 14。" />
+          <SelectField label="ATR 条件" value={props.strategy.atr_pct_mode || 'score'} onChange={(value) => update('atr_pct_mode', value)} options={volatilityModes} description="ATR% 太低代表没空间，太高代表波动风险大。" />
+          <NumberField label="ATR% 下限" value={props.strategy.min_atr_pct} onChange={(value) => update('min_atr_pct', value)} allowBlank />
+          <NumberField label="ATR% 上限" value={props.strategy.max_atr_pct} onChange={(value) => update('max_atr_pct', value)} allowBlank />
+          <NumberField label="布林周期" value={props.strategy.bollinger_window} onChange={(value) => update('bollinger_window', value)} description="默认 20，用来衡量收缩和扩张。" />
+          <NumberField label="布林倍数" value={props.strategy.bollinger_std} onChange={(value) => update('bollinger_std', value)} description="默认 2。" />
+          <SelectField label="布林宽度条件" value={props.strategy.bollinger_width_mode || 'score'} onChange={(value) => update('bollinger_width_mode', value)} options={volatilityModes} description="宽度越小，通常表示波动压缩越充分。" />
+          <NumberField label="布林宽度上限" value={props.strategy.max_bollinger_width} onChange={(value) => update('max_bollinger_width', value)} allowBlank />
 
           <div className="form-section wide">
             <span>缺失数据处理</span>
@@ -2928,11 +3042,18 @@ function InitialLoading() {
 }
 
 function strategySummary(strategy: StrategyConfig) {
-  const mode = signalModes.find((item) => item.id === strategy.signal_mode)?.label || '自定义';
-  if (strategy.signal_mode === 'platform_setup') {
+  const activeKey = strategy.platform_setup_enabled
+    ? 'platform_setup'
+    : strategy.platform_breakout_enabled
+      ? 'platform_breakout'
+      : strategy.trend_resonance_enabled
+        ? 'trend_resonance'
+        : (strategy.preset_key || strategy.signal_mode);
+  const mode = signalModes.find((item) => item.id === activeKey)?.label || '自定义';
+  if (activeKey === 'platform_setup') {
     return `${mode} · ${strategy.platform_setup_lookback_days}日 · 距上沿≤${formatPercentRatio(strategy.platform_setup_max_distance_to_high)} · 近5日≤${formatPercentRatio(strategy.platform_setup_max_recent_gain_5d)}`;
   }
-  if (strategy.signal_mode === 'platform_breakout') {
+  if (activeKey === 'platform_breakout') {
     const clearance = strategy.platform_breakout_clearance_mode !== 'off'
       ? ` · 上沿≥${formatPercentRatio(strategy.platform_breakout_clearance)}`
       : '';
@@ -2942,7 +3063,7 @@ function strategySummary(strategy: StrategyConfig) {
     const firstBreak = strategy.platform_breakout_first_mode === 'must' ? ' · 首次' : '';
     return `${mode} · ${strategy.platform_lookback_days}日 · 区间≤${formatPercentRatio(strategy.platform_max_range)}${clearance}${maxClearance}${firstBreak} · 量比≥${formatPrice(strategy.platform_breakout_volume_ratio)}x · 涨幅≥${formatPercent(strategy.platform_breakout_pct_chg_min)}`;
   }
-  if (strategy.signal_mode === 'trend_resonance') {
+  if (activeKey === 'trend_resonance') {
     return `${mode} · EMA${strategy.trend_ema_fast_window}/${strategy.trend_ema_mid_window}/${strategy.trend_ema_long_window} · MACD ${strategy.trend_macd_fast}-${strategy.trend_macd_slow}-${strategy.trend_macd_signal} · 随机 ${strategy.trend_stoch_window}-${strategy.trend_stoch_k_smooth}-${strategy.trend_stoch_d_smooth}`;
   }
   const rpsKey = `RPS${strategy.rps_window}`;
@@ -2956,15 +3077,22 @@ function strategySummary(strategy: StrategyConfig) {
 }
 
 function suggestStrategyName(strategy: StrategyConfig) {
-  const mode = signalModes.find((item) => item.id === strategy.signal_mode)?.label || '自定义';
+  const activeKey = strategy.platform_setup_enabled
+    ? 'platform_setup'
+    : strategy.platform_breakout_enabled
+      ? 'platform_breakout'
+      : strategy.trend_resonance_enabled
+        ? 'trend_resonance'
+        : (strategy.preset_key || strategy.signal_mode);
+  const mode = signalModes.find((item) => item.id === activeKey)?.label || '自定义';
   const analysis = strategy.analysis_mode === 'score' ? '评分' : '严格';
-  if (strategy.signal_mode === 'platform_setup') {
+  if (activeKey === 'platform_setup') {
     return `${mode}-${analysis}-${strategy.platform_setup_lookback_days}日-距上沿${formatPercentRatio(strategy.platform_setup_max_distance_to_high)}`;
   }
-  if (strategy.signal_mode === 'platform_breakout') {
+  if (activeKey === 'platform_breakout') {
     return `${mode}-${analysis}-${strategy.platform_lookback_days}日-量比${formatPrice(strategy.platform_breakout_volume_ratio)}x`;
   }
-  if (strategy.signal_mode === 'trend_resonance') {
+  if (activeKey === 'trend_resonance') {
     return `${mode}-${analysis}-EMA${strategy.trend_ema_fast_window}/${strategy.trend_ema_mid_window}/${strategy.trend_ema_long_window}`;
   }
   if (strategy.breakout_pullback_direction === 'pullback') {

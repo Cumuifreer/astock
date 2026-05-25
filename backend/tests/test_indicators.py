@@ -9,6 +9,7 @@ from backend.app.services.analysis_service import (
     compute_platform_setup_metrics,
     compute_rps_scores,
     compute_trend_resonance_metrics,
+    compute_volatility_indicators,
 )
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG
 
@@ -263,6 +264,126 @@ def test_trend_resonance_metrics_handles_flat_stochastic_window():
     assert metrics["trend_stoch_d"] is None
     assert metrics["trend_stoch_k_above_d"] is False
     assert metrics["trend_signal_match"] is False
+
+
+def test_volatility_indicators_compute_sar_atr_and_bollinger_width():
+    bars = []
+    start = date(2026, 1, 1)
+    close = 10.0
+    for index in range(42):
+        close += 0.08
+        bars.append(
+            {
+                "code": "000001.SZ",
+                "date": (start + timedelta(days=index)).isoformat(),
+                "open": close - 0.04,
+                "high": close + 0.18,
+                "low": close - 0.16,
+                "close": close,
+                "prev_close": close - 0.08,
+                "volume": 1000 + index * 8,
+                "pct_chg": 0.8,
+            }
+        )
+
+    metrics = compute_volatility_indicators(pd.DataFrame(bars), DEFAULT_STRATEGY_CONFIG)
+
+    assert metrics["atr14"] > 0
+    assert 0 < metrics["atr14_pct"] < 0.08
+    assert metrics["bollinger_width"] > 0
+    assert metrics["sar"] is not None
+    assert metrics["sar_bullish"] is True
+
+
+def test_strategy_modules_not_signal_mode_drive_specialized_filters():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平台合格",
+                "latest_price": 11.55,
+                "amount": 900_000_000,
+                "float_market_value": 80_000_000_000,
+                "ma_short": 11.1,
+                "ma_long": 10.6,
+                "rps20": 88.0,
+                "turnover_rate": 4.2,
+                "pct_chg": 8.15,
+                "amplitude": 0.1,
+                "volume_ratio": 2.7,
+                "ma_distance": 0.04,
+                "platform_ready": True,
+                "platform_range": 0.07,
+                "platform_bullish_ratio": 0.6,
+                "platform_bull_volume_ratio": 1.2,
+                "platform_breakout_volume_ratio": 3.1,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 8.15,
+                "platform_breakout_clearance": 0.03,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": True,
+                "platform_body_strength": 1.3,
+                "platform_ma_bullish": True,
+                "platform_ma_rising": True,
+                "macd_dif": 0.12,
+                "macd_dea": 0.08,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "000002.SZ",
+                "name": "平台不合格",
+                "latest_price": 10.4,
+                "amount": 900_000_000,
+                "float_market_value": 80_000_000_000,
+                "ma_short": 10.1,
+                "ma_long": 9.9,
+                "rps20": 90.0,
+                "turnover_rate": 3.0,
+                "pct_chg": 6.0,
+                "amplitude": 0.09,
+                "volume_ratio": 2.6,
+                "ma_distance": 0.02,
+                "platform_ready": True,
+                "platform_range": 0.24,
+                "platform_bullish_ratio": 0.65,
+                "platform_bull_volume_ratio": 1.3,
+                "platform_breakout_volume_ratio": 3.0,
+                "platform_breakout_bullish": True,
+                "platform_breakout_pct_chg": 6.0,
+                "platform_breakout_clearance": 0.03,
+                "platform_breakout_above_upper": True,
+                "platform_first_breakout": True,
+                "platform_body_strength": 1.4,
+                "platform_ma_bullish": True,
+                "platform_ma_rising": True,
+                "macd_dif": 0.2,
+                "macd_dea": 0.1,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "signal_mode": "breakout_or_pullback",
+        "platform_breakout_enabled": True,
+        "trend_filter": "none",
+        "min_price": 5,
+        "min_amount": 100_000_000,
+        "min_rps20": None,
+        "max_turnover": None,
+        "volume_ratio_min": None,
+        "max_amplitude": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+    }
+
+    candidates, funnel, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert [row["code"] for row in candidates] == ["000001.SZ"]
+    assert any(step["step_name"] == "平台振幅" for step in funnel)
 
 
 def test_trend_resonance_filters_keep_multi_indicator_candidate():
