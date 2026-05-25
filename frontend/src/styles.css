@@ -401,8 +401,9 @@ h1 {
 .runtime-queue strong {
   color: var(--text);
   font-family: "SFMono-Regular", "Roboto Mono", monospace;
-  font-size: 24px;
-  line-height: 1;
+  font-size: clamp(18px, 1.45vw, 23px);
+  line-height: 1.15;
+  white-space: nowrap;
 }
 
 .runtime-data-strip {
@@ -1263,6 +1264,11 @@ h1 {
   padding: 12px;
 }
 
+.candidate-readout > *,
+.candidate-readout-grid > div {
+  min-width: 0;
+}
+
 .candidate-readout-head {
   display: grid;
   align-content: start;
@@ -1276,8 +1282,10 @@ h1 {
 
 .candidate-readout-head p {
   color: var(--soft);
-  line-height: 1.75;
+  line-height: 1.6;
   margin: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .candidate-readout-grid {
@@ -1309,7 +1317,9 @@ h1 {
 
 .candidate-readout-grid li {
   color: var(--soft);
-  line-height: 1.55;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .score-card-grid {

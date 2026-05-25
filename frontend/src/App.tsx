@@ -2491,7 +2491,6 @@ function RuntimeHealthPanel({ runtime }: { runtime: RuntimeHealth }) {
   ];
   const nextSlot = runtime.scheduler.next_slot?.time || (runtime.scheduler.is_weekend ? '非交易日' : '-');
   const activeStage = runtime.tasks.latest_intraday?.stage || runtime.tasks.latest_update?.stage || runtime.tasks.latest_analyze?.stage || runtime.tasks.latest_brief?.stage;
-  const queueState = runtime.tasks.running > 0 ? '任务运行中' : runtime.tasks.queued > 0 ? '任务排队中' : '队列空闲';
   const schedulerState = !runtime.scheduler.enabled ? '定时关闭' : runtime.scheduler.is_weekend ? '周末休眠' : '系统待命';
   const nextAction = runtime.scheduler.enabled ? `下一次盘中采样 ${nextSlot}` : '定时任务未启用';
   return (
@@ -2509,8 +2508,8 @@ function RuntimeHealthPanel({ runtime }: { runtime: RuntimeHealth }) {
           <small>{nextAction}</small>
         </div>
         <div className="runtime-queue">
-          <span>{queueState}</span>
-          <strong>{formatInt(runtime.tasks.running)} / {formatInt(runtime.tasks.queued)}</strong>
+          <span>任务队列</span>
+          <strong>运行 {formatInt(runtime.tasks.running)} · 排队 {formatInt(runtime.tasks.queued)}</strong>
           <small>{activeStage || `补触发窗口 ${formatInt(runtime.scheduler.catchup_minutes)} 分钟`}</small>
         </div>
         <div className="runtime-data-strip">
