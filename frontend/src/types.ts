@@ -522,6 +522,7 @@ export interface Candidate {
   signal_score: number | null;
   data_sources: Record<string, string | null>;
   reasons: string[];
+  metrics: Record<string, unknown>;
   chart_url: string;
 }
 

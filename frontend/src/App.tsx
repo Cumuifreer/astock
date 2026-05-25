@@ -56,6 +56,32 @@ import './styles.css';
 
 type Tab = 'overview' | 'warehouse' | 'strategy' | 'intraday' | 'results' | 'watchlist' | 'backtest' | 'map' | 'status';
 type UpdateMode = 'full' | 'daily_light';
+type CandidateSortKey =
+  | 'none'
+  | 'signal_score'
+  | 'score_position'
+  | 'score_volume'
+  | 'score_pattern'
+  | 'score_trend'
+  | 'score_freshness'
+  | 'score_risk'
+  | 'amount'
+  | 'rps20'
+  | 'pct_chg';
+
+const candidateSortOptions: Array<{ value: CandidateSortKey; label: string }> = [
+  { value: 'none', label: '不启用' },
+  { value: 'signal_score', label: '总分' },
+  { value: 'score_position', label: '位置分' },
+  { value: 'score_volume', label: '量能分' },
+  { value: 'score_pattern', label: '形态分' },
+  { value: 'score_trend', label: '趋势分' },
+  { value: 'score_freshness', label: '新鲜度' },
+  { value: 'score_risk', label: '风险扣分' },
+  { value: 'amount', label: '成交额' },
+  { value: 'rps20', label: 'RPS20' },
+  { value: 'pct_chg', label: '涨跌幅' },
+];
 
 const navItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: 'overview', label: '总览', icon: <Gauge size={17} /> },
@@ -1215,6 +1241,15 @@ function CandidatePanel({
   title: string;
   onAddRows?: (rows: Candidate[]) => void | Promise<void>;
 }) {
+  const [expandedCode, setExpandedCode] = useState<string | null>(null);
+  const [sortPrimary, setSortPrimary] = useState<CandidateSortKey>('signal_score');
+  const [sortSecondary, setSortSecondary] = useState<CandidateSortKey>('none');
+  const [sortTertiary, setSortTertiary] = useState<CandidateSortKey>('none');
+  const sortedCandidates = useMemo(
+    () => sortCandidates(candidates, [sortPrimary, sortSecondary, sortTertiary]),
+    [candidates, sortPrimary, sortSecondary, sortTertiary],
+  );
+
   return (
     <section className="panel">
       <div className="table-toolbar">
@@ -1229,10 +1264,39 @@ function CandidatePanel({
           <span className="pill">{formatInt(candidates.length)} 只</span>
         </div>
       </div>
+      {candidates.length > 1 && (
+        <div className="candidate-sort-bar">
+          <span>排序</span>
+          <label>
+            第一优先
+            <select value={sortPrimary} onChange={(event) => setSortPrimary(event.target.value as CandidateSortKey)}>
+              {candidateSortOptions.filter((option) => option.value !== 'none').map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            第二优先
+            <select value={sortSecondary} onChange={(event) => setSortSecondary(event.target.value as CandidateSortKey)}>
+              {candidateSortOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            第三优先
+            <select value={sortTertiary} onChange={(event) => setSortTertiary(event.target.value as CandidateSortKey)}>
+              {candidateSortOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
       {candidates.length === 0 && <EmptyState text={zeroReason || '暂无候选。'} />}
       {candidates.length > 0 && (
         <div className="table-wrap">
-          <table>
+          <table className="candidate-table">
             <thead>
               <tr>
                 <th>#</th>
@@ -1248,46 +1312,130 @@ function CandidatePanel({
                 <th>流通市值</th>
                 <th>信号</th>
                 <th>分数</th>
+                <th>细分</th>
                 <th>看图</th>
                 {onAddRows && <th>入池</th>}
               </tr>
             </thead>
             <tbody>
-              {candidates.map((row) => (
-                <tr key={`${row.rank}-${row.code}`}>
-                  <td>{row.rank}</td>
-                  <td className="mono">{row.code}</td>
-                  <td>
-                    <div className="name-cell">
-                      <strong>{row.name}</strong>
-                      <span>{row.reasons?.slice(0, 2).join(' / ')}</span>
-                    </div>
-                  </td>
-                  <td>{formatPrice(row.latest_price)}</td>
-                  <td className={toneClass(Number(row.pct_chg || 0))}>{formatPercent(row.pct_chg)}</td>
-                  <td>{formatMoney(row.amount)}</td>
-                  <td>{formatPercent(row.turnover_rate)}</td>
-                  <td>{formatPercentRatio(row.amplitude)}</td>
-                  <td>{formatPrice(row.rps20)}</td>
-                  <td>{formatPrice(row.ma_short)} / {formatPrice(row.ma_long)}</td>
-                  <td>{formatMoney(row.float_market_value)}</td>
-                  <td><span className="signal">{row.signal_type}</span></td>
-                  <td><strong>{formatPrice(row.signal_score)}</strong></td>
-                  <td><a href={row.chart_url} target="_blank" rel="noreferrer">打开</a></td>
-                  {onAddRows && (
-                    <td>
-                      <button className="table-action" onClick={() => void onAddRows([row])} title="加入观察池">
-                        <Plus size={14} />
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              ))}
+              {sortedCandidates.map((row, index) => {
+                const expanded = expandedCode === row.code;
+                return (
+                  <Fragment key={`${row.rank}-${row.code}`}>
+                    <tr>
+                      <td>{index + 1}</td>
+                      <td className="mono">{row.code}</td>
+                      <td>
+                        <div className="name-cell">
+                          <strong>{row.name}</strong>
+                          <span>{row.reasons?.slice(0, 2).join(' / ')}</span>
+                        </div>
+                      </td>
+                      <td>{formatPrice(row.latest_price)}</td>
+                      <td className={toneClass(Number(row.pct_chg || 0))}>{formatPercent(row.pct_chg)}</td>
+                      <td>{formatMoney(row.amount)}</td>
+                      <td>{formatPercent(row.turnover_rate)}</td>
+                      <td>{formatPercentRatio(row.amplitude)}</td>
+                      <td>{formatPrice(row.rps20)}</td>
+                      <td>{formatPrice(row.ma_short)} / {formatPrice(row.ma_long)}</td>
+                      <td>{formatMoney(row.float_market_value)}</td>
+                      <td><span className="signal">{row.signal_type}</span></td>
+                      <td><strong>{formatPrice(row.signal_score)}</strong></td>
+                      <td>
+                        <button
+                          className={expanded ? 'table-action active' : 'table-action'}
+                          onClick={() => setExpandedCode(expanded ? null : row.code)}
+                          title="查看子分数"
+                        >
+                          <BarChart3 size={14} />
+                        </button>
+                      </td>
+                      <td><a href={row.chart_url} target="_blank" rel="noreferrer">打开</a></td>
+                      {onAddRows && (
+                        <td>
+                          <button className="table-action" onClick={() => void onAddRows([row])} title="加入观察池">
+                            <Plus size={14} />
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                    {expanded && (
+                      <tr className="candidate-expanded">
+                        <td colSpan={onAddRows ? 16 : 15}>
+                          <CandidateScoreDetails row={row} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
     </section>
+  );
+}
+
+function CandidateScoreDetails({ row }: { row: Candidate }) {
+  const breakdown = candidateScoreBreakdown(row);
+  const freshness = candidateFreshness(row);
+  const hasBreakdown = Object.values(breakdown).some((value) => value !== null);
+  const scoreItems: Array<{ key: keyof typeof breakdown; label: string; note: string }> = [
+    { key: 'position', label: '位置', note: '靠近合理买点' },
+    { key: 'volume', label: '量能', note: '成交额与放量质量' },
+    { key: 'pattern', label: '形态', note: '平台、K线和结构' },
+    { key: 'trend', label: '趋势', note: 'RPS、均线与 MACD' },
+    { key: 'freshness', label: '新鲜度', note: '越靠近触发点越高' },
+    { key: 'risk', label: '风险扣分', note: '过热、偏离和追高' },
+  ];
+
+  return (
+    <div className="candidate-detail-panel">
+      {!hasBreakdown ? (
+        <EmptyState text="旧报告暂无子分数，重新运行分析后会显示。" />
+      ) : (
+        <>
+          <div className="score-card-grid">
+            {scoreItems.map((item) => {
+              const value = breakdown[item.key];
+              const isRisk = item.key === 'risk';
+              const width = Math.min(Math.abs(Number(value || 0)) / (isRisk ? 20 : 30), 1) * 100;
+              return (
+                <div className={isRisk ? 'score-card risk' : 'score-card'} key={item.key}>
+                  <span>{item.label}</span>
+                  <strong>{formatSignedScore(value, isRisk)}</strong>
+                  <div className="score-meter"><i style={{ width: `${width}%` }} /></div>
+                  <small>{item.note}</small>
+                </div>
+              );
+            })}
+          </div>
+          <div className="freshness-grid">
+            <MetricMini label="首次突破" value={formatDays(freshness.first_breakout_days)} />
+            <MetricMini label="站上平台" value={formatDays(freshness.days_above_platform)} />
+            <MetricMini label="突破上沿" value={formatPercentRatio(freshness.breakout_clearance)} />
+            <MetricMini label="距平台上沿" value={formatPercentRatio(freshness.distance_to_platform_upper)} />
+            <MetricMini label="近5日" value={formatPercentRatio(freshness.recent_gain_5d)} />
+            <MetricMini label="均线偏离" value={formatPercentRatio(freshness.ma_distance)} />
+          </div>
+          {row.reasons?.length > 0 && (
+            <div className="candidate-reason-strip">
+              {row.reasons.slice(0, 8).map((reason) => <span key={reason}>{reason}</span>)}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function MetricMini({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="metric-mini">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 
@@ -2945,6 +3093,88 @@ function reportDate(report?: AnalysisReportSummary) {
   return formatDate(report?.finished_at || report?.started_at || new Date().toISOString());
 }
 
+function sortCandidates(rows: Candidate[], priorities: CandidateSortKey[]) {
+  const active = priorities.filter((key) => key !== 'none');
+  if (active.length === 0) return rows;
+  return [...rows].sort((a, b) => {
+    for (const key of active) {
+      const left = candidateSortValue(a, key);
+      const right = candidateSortValue(b, key);
+      if (left !== right) return right - left;
+    }
+    return Number(a.rank || 0) - Number(b.rank || 0);
+  });
+}
+
+function candidateSortValue(row: Candidate, key: CandidateSortKey) {
+  if (key === 'none') return 0;
+  if (key === 'signal_score') return finiteNumber(row.signal_score);
+  if (key === 'amount') return finiteNumber(row.amount);
+  if (key === 'rps20') return finiteNumber(row.rps20);
+  if (key === 'pct_chg') return finiteNumber(row.pct_chg);
+  const breakdown = candidateScoreBreakdown(row);
+  if (key === 'score_position') return finiteNumber(breakdown.position);
+  if (key === 'score_volume') return finiteNumber(breakdown.volume);
+  if (key === 'score_pattern') return finiteNumber(breakdown.pattern);
+  if (key === 'score_trend') return finiteNumber(breakdown.trend);
+  if (key === 'score_freshness') return finiteNumber(breakdown.freshness);
+  if (key === 'score_risk') return finiteNumber(breakdown.risk);
+  return 0;
+}
+
+function candidateScoreBreakdown(row: Candidate) {
+  const metrics = row.metrics || {};
+  const raw = (isRecord(metrics.score_breakdown) ? metrics.score_breakdown : isRecord((row as unknown as Record<string, unknown>).score_breakdown) ? (row as unknown as Record<string, unknown>).score_breakdown : {}) as Record<string, unknown>;
+  return {
+    position: nullableNumber(raw.position),
+    volume: nullableNumber(raw.volume),
+    pattern: nullableNumber(raw.pattern),
+    trend: nullableNumber(raw.trend),
+    freshness: nullableNumber(raw.freshness),
+    risk: nullableNumber(raw.risk),
+  };
+}
+
+function candidateFreshness(row: Candidate) {
+  const metrics = row.metrics || {};
+  const raw = (isRecord(metrics.freshness) ? metrics.freshness : isRecord((row as unknown as Record<string, unknown>).freshness) ? (row as unknown as Record<string, unknown>).freshness : {}) as Record<string, unknown>;
+  return {
+    first_breakout_days: nullableNumber(raw.first_breakout_days),
+    days_above_platform: nullableNumber(raw.days_above_platform),
+    distance_to_platform_upper: nullableNumber(raw.distance_to_platform_upper),
+    breakout_clearance: nullableNumber(raw.breakout_clearance),
+    recent_gain_5d: nullableNumber(raw.recent_gain_5d),
+    ma_distance: nullableNumber(raw.ma_distance),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function finiteNumber(value: unknown) {
+  return nullableNumber(value) ?? Number.NEGATIVE_INFINITY;
+}
+
+function formatSignedScore(value: unknown, isRisk = false) {
+  const number = nullableNumber(value);
+  if (number === null) return '-';
+  if (isRisk && number === 0) return '0.00';
+  return number > 0 ? `+${number.toFixed(2)}` : number.toFixed(2);
+}
+
+function formatDays(value: unknown) {
+  const number = nullableNumber(value);
+  if (number === null) return '-';
+  return `${Math.round(number)} 天`;
+}
+
 function candidateWatchlistPayload(row: Candidate) {
   return {
     code: row.code,
@@ -2965,6 +3195,7 @@ function candidateWatchlistPayload(row: Candidate) {
       ma_short: row.ma_short,
       ma_long: row.ma_long,
       float_market_value: row.float_market_value,
+      ...row.metrics,
     },
   };
 }

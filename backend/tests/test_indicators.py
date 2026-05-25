@@ -458,6 +458,11 @@ def test_platform_breakout_filters_keep_matching_shape():
     assert any(step["step_name"] == "突破上沿" for step in funnel)
     assert any("平台振幅" in reason for reason in candidates[0]["reasons"])
     assert any("突破上沿" in reason for reason in candidates[0]["reasons"])
+    assert candidates[0]["score_breakdown"]["volume"] > 0
+    assert candidates[0]["score_breakdown"]["pattern"] > 0
+    assert candidates[0]["score_breakdown"]["freshness"] > 0
+    assert candidates[0]["freshness"]["first_breakout_days"] == 0
+    assert candidates[0]["freshness"]["breakout_clearance"] == 0.03
 
 
 def test_platform_breakout_filters_remove_overheated_clearance_when_required():

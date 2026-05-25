@@ -117,6 +117,24 @@ def compute_platform_breakout_metrics(group: pd.DataFrame, strategy: Dict[str, A
         breakout_clearance is not None
         and breakout_clearance >= min_clearance
     )
+    days_above_platform = None
+    first_breakout_days = None
+    if platform_high is not None and platform_high > 0:
+        consecutive = 0
+        for value in reversed(clean["close"].tail(platform_days + 1).tolist()):
+            close = safe_float(value)
+            if close is not None and close > platform_high:
+                consecutive += 1
+            else:
+                break
+        if consecutive > 0:
+            days_above_platform = consecutive
+            first_breakout_days = max(0, consecutive - 1)
+    recent_gain_5d = None
+    if len(clean) >= 6 and close_value is not None:
+        start_close = safe_float(clean.iloc[-6].get("close"))
+        if start_close is not None and start_close > 0:
+            recent_gain_5d = (close_value - start_close) / start_close
     previous_platform_upper = None
     previous_breakout_clearance = None
     platform_first_breakout = False
@@ -175,6 +193,9 @@ def compute_platform_breakout_metrics(group: pd.DataFrame, strategy: Dict[str, A
         "platform_breakout_close": _round_optional(close_value, 6),
         "platform_breakout_clearance": _round_optional(breakout_clearance, 6),
         "platform_breakout_above_upper": bool(breakout_above_upper),
+        "platform_days_above_upper": days_above_platform,
+        "platform_first_breakout_days": first_breakout_days,
+        "platform_recent_gain_5d": _round_optional(recent_gain_5d, 6),
         "platform_previous_upper": _round_optional(previous_platform_upper, 6),
         "platform_previous_breakout_clearance": _round_optional(previous_breakout_clearance, 6),
         "platform_first_breakout": platform_first_breakout,
@@ -622,6 +643,8 @@ def _rank_candidates(
         candidate = row.to_dict()
         candidate["signal_type"] = _signal_type(candidate, strategy)
         candidate["signal_score"] = _signal_score(candidate, strategy)
+        candidate["score_breakdown"] = _score_breakdown(candidate, strategy)
+        candidate["freshness"] = _freshness_metrics(candidate, strategy)
         reasons = _candidate_reasons(candidate, strategy)
         if score_mode:
             reasons = ["综合评分：未达标项只影响分数"] + reasons
@@ -1203,6 +1226,212 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
     turnover = min((safe_float(row.get("turnover_rate")) or 0) * 1.5, 12)
     amplitude_penalty = min((safe_float(row.get("amplitude")) or 0) * 40, 8)
     return round(float(rps) * 0.65 + volume_ratio + trend_bonus + turnover - amplitude_penalty, 2)
+
+
+def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, float]:
+    mode = strategy.get("signal_mode")
+    rps = safe_float(row.get(f"rps{int(strategy.get('rps_window') or 20)}")) or safe_float(row.get("rps20")) or 0.0
+    amount = safe_float(row.get("amount")) or 0.0
+    min_amount = safe_float(strategy.get("min_amount")) or 0.0
+    turnover = safe_float(row.get("turnover_rate")) or 0.0
+    pct_chg = safe_float(row.get("pct_chg")) or 0.0
+    amplitude = safe_float(row.get("amplitude")) or 0.0
+    ma_distance = safe_float(row.get("ma_distance"))
+
+    volume = 0.0
+    if min_amount > 0:
+        volume += min(amount / min_amount, 2.0) * 4
+    volume += min((safe_float(row.get("volume_ratio")) or 0.0) * 4, 10)
+    volume += min(turnover * 0.8, 6)
+
+    trend = min(float(rps) * 0.22, 22)
+    if (safe_float(row.get("ma_short")) or 0) > (safe_float(row.get("ma_long")) or 0):
+        trend += 8
+    if (safe_float(row.get("macd_dif")) or 0) > (safe_float(row.get("macd_dea")) or 0):
+        trend += 5
+
+    position = 8.0
+    if ma_distance is not None:
+        position += max(0.0, 10 - min(abs(ma_distance) * 100, 10))
+
+    pattern = 0.0
+    freshness = 0.0
+    risk = 0.0
+
+    if mode == "platform_breakout":
+        platform_range = safe_float(row.get("platform_range"))
+        breakout_clearance = safe_float(row.get("platform_breakout_clearance"))
+        breakout_volume = safe_float(row.get("platform_breakout_volume_ratio"))
+        bull_volume = safe_float(row.get("platform_bull_volume_ratio"))
+        bullish_ratio = safe_float(row.get("platform_bullish_ratio"))
+        body_strength = safe_float(row.get("platform_body_strength"))
+        max_range = safe_float(strategy.get("platform_max_range")) or 0.12
+        min_clearance = safe_float(strategy.get("platform_breakout_clearance")) or 0.0
+        max_clearance = safe_float(strategy.get("platform_breakout_max_clearance")) or 0.08
+
+        if breakout_clearance is not None:
+            position += _band_score(breakout_clearance, min_clearance, max_clearance, 14)
+            freshness += _band_score(breakout_clearance, min_clearance, max_clearance, 12)
+            if breakout_clearance > max_clearance:
+                risk += min((breakout_clearance - max_clearance) * 180, 16)
+        if platform_range is not None:
+            pattern += max(0.0, (max_range - platform_range) / max_range) * 12 if platform_range <= max_range else 0
+            if platform_range > max_range:
+                risk += min((platform_range - max_range) * 80, 8)
+        if bullish_ratio is not None:
+            pattern += min(bullish_ratio * 10, 8)
+        if body_strength is not None:
+            pattern += min(body_strength * 4, 8)
+        if row.get("platform_breakout_bullish"):
+            pattern += 5
+        if breakout_volume is not None:
+            volume += min(breakout_volume * 5, 18)
+        if bull_volume is not None:
+            volume += min(bull_volume * 5, 8)
+        if row.get("platform_first_breakout"):
+            freshness += 12
+        elif _condition_mode(strategy, "platform_breakout_first_mode", "score") != "off":
+            risk += 8
+        recent_gain = safe_float(row.get("platform_recent_gain_5d"))
+        if recent_gain is not None:
+            freshness += max(0.0, 8 - min(max(recent_gain, 0.0) * 60, 8))
+            if recent_gain > 0.12:
+                risk += min((recent_gain - 0.12) * 100, 12)
+        if row.get("platform_ma_bullish"):
+            trend += 6
+        if row.get("platform_ma_rising"):
+            trend += 6
+
+    elif mode == "platform_setup":
+        setup_range = safe_float(row.get("platform_setup_range"))
+        distance_to_high = safe_float(row.get("platform_setup_distance_to_high"))
+        volume_contraction = safe_float(row.get("platform_setup_volume_contraction"))
+        bull_volume = safe_float(row.get("platform_setup_bull_volume_ratio"))
+        recent_gain = safe_float(row.get("platform_setup_recent_gain_5d"))
+        ma_convergence = safe_float(row.get("platform_setup_ma_convergence"))
+        max_range = safe_float(strategy.get("platform_setup_max_range")) or 0.12
+        max_distance = safe_float(strategy.get("platform_setup_max_distance_to_high")) or 0.035
+
+        if setup_range is not None:
+            pattern += max(0.0, (max_range - setup_range) / max_range) * 16 if setup_range <= max_range else 0
+            if setup_range > max_range:
+                risk += min((setup_range - max_range) * 70, 8)
+        if distance_to_high is not None:
+            position += max(0.0, (max_distance - distance_to_high) / max_distance) * 16 if distance_to_high <= max_distance else 0
+            freshness += max(0.0, (max_distance - distance_to_high) / max_distance) * 12 if distance_to_high <= max_distance else 0
+        if volume_contraction is not None:
+            volume += max(0.0, (1.2 - volume_contraction) / 1.2) * 8 if volume_contraction <= 1.2 else 0
+        if bull_volume is not None:
+            volume += min(bull_volume * 5, 9)
+        if recent_gain is not None:
+            freshness += 10 if recent_gain <= (safe_float(strategy.get("platform_setup_max_recent_gain_5d")) or 0.1) else 0
+            if recent_gain > 0.12:
+                risk += min((recent_gain - 0.12) * 100, 12)
+        if ma_convergence is not None:
+            pattern += max(0.0, (0.08 - ma_convergence) / 0.08) * 8 if ma_convergence <= 0.08 else 0
+        if row.get("platform_setup_ma_turning_up"):
+            trend += 6
+
+    elif mode == "trend_resonance":
+        if row.get("trend_price_above_ema_long"):
+            trend += 8
+        if row.get("trend_ema_long_rising"):
+            trend += 8
+        if row.get("trend_ema_fast_above_mid"):
+            trend += 6
+        if row.get("trend_macd_dif_above_dea"):
+            trend += 7
+        if row.get("trend_stoch_k_above_d"):
+            trend += 5
+        distance = safe_float(row.get("trend_ema_mid_distance"))
+        if distance is not None:
+            position += max(0.0, (0.12 - max(distance, 0.0)) / 0.12) * 12 if distance <= 0.12 else 0
+            if distance > 0.12:
+                risk += min((distance - 0.12) * 90, 14)
+        recent_gain = safe_float(row.get("trend_recent_gain_10d"))
+        if recent_gain is not None:
+            freshness += 10 if recent_gain <= (safe_float(strategy.get("trend_max_recent_gain_10d")) or 0.28) else 0
+            if recent_gain > 0.28:
+                risk += min((recent_gain - 0.28) * 70, 14)
+        if row.get("trend_thunder_signal") or row.get("trend_follow_signal") or row.get("trend_stealth_signal"):
+            pattern += 10
+        if row.get("trend_stoch_overheated"):
+            risk += 8
+    else:
+        if ma_distance is not None:
+            position += max(0.0, 8 - min(max(ma_distance, 0.0) * 80, 8))
+        pattern += max(0.0, 10 - min(amplitude * 60, 10))
+        freshness += max(0.0, 8 - min(abs(pct_chg) * 0.8, 8))
+
+    max_pct_chg = safe_float(strategy.get("max_pct_chg"))
+    if max_pct_chg is not None and pct_chg > max_pct_chg:
+        risk += min((pct_chg - max_pct_chg) * 1.5, 10)
+    if amplitude > 0:
+        risk += min(amplitude * 18, 8)
+
+    return {
+        "position": round(max(position, 0.0), 2),
+        "volume": round(max(volume, 0.0), 2),
+        "pattern": round(max(pattern, 0.0), 2),
+        "trend": round(max(trend, 0.0), 2),
+        "freshness": round(max(freshness, 0.0), 2),
+        "risk": round(-max(risk, 0.0), 2),
+    }
+
+
+def _freshness_metrics(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, Optional[float]]:
+    if strategy.get("signal_mode") == "platform_setup":
+        distance = safe_float(row.get("platform_setup_distance_to_high"))
+        return {
+            "first_breakout_days": None,
+            "days_above_platform": None,
+            "distance_to_platform_upper": _round_optional(distance, 6),
+            "breakout_clearance": None,
+            "recent_gain_5d": _round_optional(safe_float(row.get("platform_setup_recent_gain_5d")), 6),
+            "ma_distance": _round_optional(safe_float(row.get("ma_distance")), 6),
+        }
+    if strategy.get("signal_mode") == "platform_breakout":
+        clearance = safe_float(row.get("platform_breakout_clearance"))
+        first_breakout_days = safe_float(row.get("platform_first_breakout_days"))
+        if first_breakout_days is None and row.get("platform_first_breakout"):
+            first_breakout_days = 0.0
+        return {
+            "first_breakout_days": first_breakout_days,
+            "days_above_platform": safe_float(row.get("platform_days_above_upper")),
+            "distance_to_platform_upper": _round_optional(-clearance if clearance is not None else None, 6),
+            "breakout_clearance": _round_optional(clearance, 6),
+            "recent_gain_5d": _round_optional(safe_float(row.get("platform_recent_gain_5d")), 6),
+            "ma_distance": _round_optional(safe_float(row.get("ma_distance")), 6),
+        }
+    if strategy.get("signal_mode") == "trend_resonance":
+        return {
+            "first_breakout_days": None,
+            "days_above_platform": None,
+            "distance_to_platform_upper": None,
+            "breakout_clearance": None,
+            "recent_gain_5d": _round_optional(safe_float(row.get("trend_recent_gain_10d")), 6),
+            "ma_distance": _round_optional(safe_float(row.get("trend_ema_mid_distance")), 6),
+        }
+    return {
+        "first_breakout_days": None,
+        "days_above_platform": None,
+        "distance_to_platform_upper": None,
+        "breakout_clearance": None,
+        "recent_gain_5d": None,
+        "ma_distance": _round_optional(safe_float(row.get("ma_distance")), 6),
+    }
+
+
+def _band_score(value: float, lower: float, upper: float, score: float) -> float:
+    if upper <= lower:
+        return score if value >= lower else 0.0
+    if value < lower:
+        return max(0.0, value / lower) * score if lower > 0 else 0.0
+    if value <= upper:
+        midpoint = lower + (upper - lower) * 0.35
+        distance = abs(value - midpoint) / max(upper - lower, 0.000001)
+        return max(0.0, score * (1 - distance * 0.75))
+    return 0.0
 
 
 def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[str]:
