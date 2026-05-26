@@ -326,7 +326,8 @@ class DataService:
             f"""
             SELECT b.code, b.name, b.exchange, b.list_date, b.source, b.is_st, b.suspended,
                    {STOCK_BOARD_CASE} AS board,
-                   s.latest_price, s.pct_chg, s.amount, s.volume, s.turnover_rate,
+                   s.latest_price, s.pct_chg, s.amount, s.volume,
+                   COALESCE(dbs.turnover_rate, s.turnover_rate) AS turnover_rate,
                    f.float_market_value,
                    dbs.volume_ratio,
                    mf.main_net_amount,
@@ -368,7 +369,8 @@ class DataService:
             f"""
             SELECT b.code, b.name, b.exchange, b.list_date, b.source, b.is_st, b.suspended,
                    {STOCK_BOARD_CASE} AS board,
-                   s.latest_price, s.pct_chg, s.amount, s.volume, s.turnover_rate,
+                   s.latest_price, s.pct_chg, s.amount, s.volume,
+                   COALESCE(dbs.turnover_rate, s.turnover_rate) AS turnover_rate,
                    f.float_market_value,
                    (SELECT COUNT(*) FROM historical_bars h WHERE h.code = b.code) AS history_days,
                    (SELECT MAX(date) FROM historical_bars h WHERE h.code = b.code) AS latest_history_date
@@ -379,6 +381,9 @@ class DataService:
             LEFT JOIN float_market_values f
               ON f.code = b.code
              AND f.date = (SELECT MAX(date) FROM float_market_values WHERE code = b.code)
+            LEFT JOIN tushare_daily_basic dbs
+              ON dbs.code = b.code
+             AND dbs.trade_date = (SELECT MAX(trade_date) FROM tushare_daily_basic WHERE code = b.code)
             WHERE b.code = ?
             LIMIT 1
             """,

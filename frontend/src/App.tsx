@@ -696,6 +696,7 @@ function Warehouse() {
   const [search, setSearch] = useState('');
   const [exchange, setExchange] = useState('');
   const [board, setBoard] = useState('');
+  const [view, setView] = useState<'quote' | 'flow' | 'structure'>('quote');
   const [error, setError] = useState<string | null>(null);
   const limit = 40;
   const exchangeOptions = [
@@ -710,6 +711,11 @@ function Warehouse() {
     { label: '创业板', value: 'gem' },
     { label: '科创板', value: 'star' },
   ];
+  const viewOptions = [
+    { value: 'quote', label: '行情', sub: '价格 / 成交 / 换手' },
+    { value: 'flow', label: '资金', sub: '主力 / 龙虎榜 / 量能' },
+    { value: 'structure', label: '结构', sub: '题材 / 筹码 / 事件' },
+  ] as const;
 
   async function load() {
     try {
@@ -740,11 +746,23 @@ function Warehouse() {
   }
 
   return (
-    <div className="page-stack">
-      <section className="panel">
+    <div className="warehouse-layout">
+      <section className="panel warehouse-list-panel">
         <div className="table-toolbar">
           <PanelTitle icon={<Database size={18} />} title="本地股票仓" />
           <input className="search" placeholder="代码 / 名称" value={search} onChange={(event) => { setOffset(0); setSearch(event.target.value); }} />
+        </div>
+        <div className="warehouse-view-tabs" aria-label="仓库视图">
+          {viewOptions.map((option) => (
+            <button
+              key={option.value}
+              className={view === option.value ? 'active' : ''}
+              onClick={() => setView(option.value)}
+            >
+              <strong>{option.label}</strong>
+              <small>{option.sub}</small>
+            </button>
+          ))}
         </div>
         <div className="warehouse-filters" aria-label="股票筛选">
           <div className="filter-group">
@@ -771,49 +789,98 @@ function Warehouse() {
           </div>
         </div>
         {error && <InlineError text={error} />}
-        <div className="table-wrap">
-          <table>
+        <div className="table-wrap warehouse-table-wrap">
+          <table className="warehouse-table">
             <thead>
               <tr>
-                <th>代码</th>
-                <th>名称</th>
-                <th>交易所</th>
-                <th>板块</th>
-                <th>最新价</th>
-                <th>涨跌幅</th>
-                <th>成交额</th>
-                <th>换手率</th>
-                <th>流通市值</th>
-                <th>量比</th>
-                <th>主力净额</th>
-                <th>筹码胜率</th>
-                <th>题材</th>
-                <th>事件</th>
+                <th>股票</th>
+                {view === 'quote' && (
+                  <>
+                    <th>最新价</th>
+                    <th>涨跌幅</th>
+                    <th>成交额</th>
+                    <th>换手率</th>
+                    <th>流通市值</th>
+                    <th>量比</th>
+                  </>
+                )}
+                {view === 'flow' && (
+                  <>
+                    <th>最新价</th>
+                    <th>主力净额</th>
+                    <th>资金净流</th>
+                    <th>成交额</th>
+                    <th>量比</th>
+                    <th>龙虎榜</th>
+                  </>
+                )}
+                {view === 'structure' && (
+                  <>
+                    <th>题材</th>
+                    <th>筹码胜率</th>
+                    <th>历史天数</th>
+                    <th>最新 K 线</th>
+                    <th>事件</th>
+                  </>
+                )}
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={14} className="empty-cell">暂无本地股票数据</td></tr>
+                <tr><td colSpan={view === 'structure' ? 6 : 7} className="empty-cell">暂无本地股票数据</td></tr>
               ) : rows.map((row) => (
                 <tr
                   key={String(row.code)}
                   className={selectedCode === String(row.code) ? 'selected-row' : ''}
                   onClick={() => void selectStock(String(row.code))}
                 >
-                  <td className="mono">{String(row.code || '')}</td>
-                  <td>{String(row.name || '')}</td>
-                  <td>{String(row.exchange || '')}</td>
-                  <td>{boardLabel(row.board)}</td>
-                  <td>{formatPrice(row.latest_price)}</td>
-                  <td className={toneClass(Number(row.pct_chg || 0))}>{formatPercent(row.pct_chg)}</td>
-                  <td>{formatMoney(row.amount)}</td>
-                  <td>{formatPercent(row.turnover_rate)}</td>
-                  <td>{formatMoney(row.float_market_value)}</td>
-                  <td>{formatRatioX(row.volume_ratio)}</td>
-                  <td className={toneClass(Number(row.main_net_amount || 0))}>{formatMoney(row.main_net_amount)}</td>
-                  <td>{formatPercentRatio(row.winner_rate)}</td>
-                  <td>{formatInt(row.concept_count)}</td>
-                  <td>{warehouseEventLabel(row)}</td>
+                  <td>
+                    <div className="warehouse-stock-cell">
+                      <button
+                        className="table-action"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void selectStock(String(row.code));
+                        }}
+                        title="打开个股档案"
+                      >
+                        <Database size={14} />
+                      </button>
+                      <div>
+                        <strong>{String(row.name || '')}</strong>
+                        <span className="mono">{String(row.code || '')} · {String(row.exchange || '')} · {boardLabel(row.board)}</span>
+                      </div>
+                    </div>
+                  </td>
+                  {view === 'quote' && (
+                    <>
+                      <td>{formatPrice(row.latest_price)}</td>
+                      <td className={toneClass(Number(row.pct_chg || 0))}>{formatPercent(row.pct_chg)}</td>
+                      <td>{formatMoney(row.amount)}</td>
+                      <td>{formatPercent(row.turnover_rate)}</td>
+                      <td>{formatMoney(row.float_market_value)}</td>
+                      <td>{formatRatioX(row.volume_ratio)}</td>
+                    </>
+                  )}
+                  {view === 'flow' && (
+                    <>
+                      <td>{formatPrice(row.latest_price)}</td>
+                      <td className={toneClass(Number(row.main_net_amount || 0))}>{formatMoney(row.main_net_amount)}</td>
+                      <td className={toneClass(Number(row.net_mf_amount || 0))}>{formatMoney(row.net_mf_amount)}</td>
+                      <td>{formatMoney(row.amount)}</td>
+                      <td>{formatRatioX(row.volume_ratio)}</td>
+                      <td>{nullableNumber(row.latest_top_net_amount) === null ? '-' : formatMoney(row.latest_top_net_amount)}</td>
+                    </>
+                  )}
+                  {view === 'structure' && (
+                    <>
+                      <td>{formatInt(row.concept_count)}</td>
+                      <td>{formatPercentRatio(row.winner_rate)}</td>
+                      <td>{formatInt(row.history_days)}</td>
+                      <td className="mono">{formatDate(row.latest_history_date)}</td>
+                      <td>{warehouseEventLabel(row)}</td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -825,7 +892,16 @@ function Warehouse() {
           <button className="ghost" disabled={offset + limit >= total} onClick={() => setOffset(offset + limit)}>下一页</button>
         </div>
       </section>
-      {(detail || detailLoading) && <StockDetailPanel detail={detail} loading={detailLoading} onClose={() => { setDetail(null); setSelectedCode(null); }} />}
+      <aside className="warehouse-detail-rail">
+        {(detail || detailLoading) ? (
+          <StockDetailPanel detail={detail} loading={detailLoading} onClose={() => { setDetail(null); setSelectedCode(null); }} />
+        ) : (
+          <section className="panel stock-profile stock-profile-empty">
+            <PanelTitle icon={<Database size={18} />} title="个股档案" />
+            <p>选择左侧任意股票，行情、资金、技术、题材和事件会固定显示在这里。</p>
+          </section>
+        )}
+      </aside>
     </div>
   );
 }
@@ -2527,7 +2603,13 @@ function DataMap({
   const [probing, setProbing] = useState(false);
   const [backfilling, setBackfilling] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [showNormal, setShowNormal] = useState(false);
   const rows = useMemo(() => buildDataLedgerRows(capabilities), [capabilities]);
+  const visibleRows = useMemo(
+    () => (showNormal ? rows : rows.filter((row) => row.status !== 'normal')),
+    [rows, showNormal],
+  );
+  const groupedRows = useMemo(() => groupLedgerRows(visibleRows), [visibleRows]);
   const summary = useMemo(
     () => ({
       normal: rows.filter((row) => row.status === 'normal').length,
@@ -2571,6 +2653,9 @@ function DataMap({
           </div>
           <div className="quick-actions">
             {message && <span className="muted-text">{message}</span>}
+            <button className="ghost" onClick={() => setShowNormal((value) => !value)}>
+              {showNormal ? '隐藏正常项' : '显示全部'}
+            </button>
             <button className="ghost" disabled={probing} onClick={probe}>
               <RefreshCw size={16} />
               刷新状态
@@ -2595,41 +2680,56 @@ function DataMap({
             未接入
           </span>
         </div>
-        <div className="data-ledger-table">
-          <div className="data-ledger-row data-ledger-row-head">
-            <span>数据类</span>
-            <span>当前最新</span>
-            <span>应该最新</span>
-            <span>覆盖</span>
-            <span>状态 / 操作</span>
+        {visibleRows.length === 0 ? (
+          <div className="ledger-all-clear">
+            <b>当前没有异常数据项</b>
+            <span>需要检查完整账本时可以打开“显示全部”。</span>
           </div>
-          {rows.map((row) => (
-            <div key={row.key} className="data-ledger-row">
-              <div className="ledger-name">
-                <strong>{row.label}</strong>
-                <small>{row.fields}</small>
-              </div>
-              <span className="mono">{row.currentLatest}</span>
-              <span className="mono">{row.expectedLatest}</span>
-              <div className="ledger-coverage">
-                <span>{row.coverageText}</span>
-                <Progress value={row.percent} />
-              </div>
-              <div className="ledger-actions">
-                <span className={`ledger-status ${row.status}`}>{row.statusLabel}</span>
-                <button
-                  className="mini-action"
-                  disabled={!row.canBackfill || backfillDisabled || backfilling === row.key}
-                  onClick={() => backfill(row.key)}
-                  title={`${row.label}补齐`}
-                >
-                  <RotateCcw size={13} />
-                  补齐
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+        ) : (
+          <div className="ledger-groups">
+            {groupedRows.map((group) => (
+              <section className="ledger-group" key={group.key}>
+                <div className="ledger-group-head">
+                  <div>
+                    <strong>{group.label}</strong>
+                    <span>{group.description}</span>
+                  </div>
+                  <b>{group.rows.length}</b>
+                </div>
+                <div className="data-ledger-table">
+                  {group.rows.map((row) => (
+                    <div key={row.key} className="data-ledger-row">
+                      <div className="ledger-name">
+                        <strong>{row.label}</strong>
+                        <small>{row.fields}</small>
+                      </div>
+                      <div className="ledger-date-pair">
+                        <span>当前 <b className="mono">{row.currentLatest}</b></span>
+                        <span>应该 <b className="mono">{row.expectedLatest}</b></span>
+                      </div>
+                      <div className="ledger-coverage">
+                        <span>{row.coverageText}</span>
+                        <Progress value={row.percent} />
+                      </div>
+                      <div className="ledger-actions">
+                        <span className={`ledger-status ${row.status}`}>{row.statusLabel}</span>
+                        <button
+                          className="mini-action"
+                          disabled={!row.canBackfill || backfillDisabled || backfilling === row.key}
+                          onClick={() => backfill(row.key)}
+                          title={`${row.label}补齐`}
+                        >
+                          <RotateCcw size={13} />
+                          补齐
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );
@@ -3672,10 +3772,12 @@ function slotStatusLabel(status: string) {
 type DataLedgerStatus = 'normal' | 'stale' | 'partial' | 'empty';
 type ExpectedDateKind = 'history' | 'snapshot' | 'long_lived' | 'as_needed';
 type CoverageKind = 'stock' | 'event' | 'dataset';
+type DataLedgerGroupKey = 'core' | 'daily' | 'event' | 'structure' | 'context';
 
 interface DataLedgerRow {
   key: string;
   label: string;
+  group: DataLedgerGroupKey;
   fields: string;
   currentLatest: string;
   expectedLatest: string;
@@ -3688,73 +3790,97 @@ interface DataLedgerRow {
   canBackfill: boolean;
 }
 
-const dataLedgerMeta: Record<string, { fields: string[]; expected: ExpectedDateKind; coverageKind?: CoverageKind }> = {
+const dataLedgerGroupMeta: Record<DataLedgerGroupKey, { label: string; description: string }> = {
+  core: { label: '基础行情', description: '股票池、快照、历史 K 线和衍生行情字段' },
+  daily: { label: '日频增强', description: 'Tushare 日线增强指标、资金流和技术因子' },
+  event: { label: '事件数据', description: '涨跌停、龙虎榜、游资等低覆盖但高信息密度数据' },
+  structure: { label: '结构关系', description: '概念、行业、筹码等横截面标签' },
+  context: { label: '市场上下文', description: '大盘环境与本地宽度诊断' },
+};
+
+const dataLedgerMeta: Record<string, { fields: string[]; expected: ExpectedDateKind; coverageKind?: CoverageKind; group: DataLedgerGroupKey }> = {
   '历史 K 线': {
     fields: ['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'turn'],
     expected: 'history',
+    group: 'core',
   },
   当天行情快照: {
     fields: ['code', 'date', 'name', 'latest_price', 'pct_chg', 'volume', 'amount'],
     expected: 'snapshot',
+    group: 'core',
   },
   股票基础信息: {
     fields: ['code', 'name', 'exchange', 'list_date', 'is_active'],
     expected: 'long_lived',
+    group: 'core',
   },
   流通市值: {
     fields: ['code', 'date', 'float_share', 'float_market_value', 'price'],
     expected: 'history',
+    group: 'core',
   },
   换手率: {
     fields: ['code', 'date', 'turn', 'turnover_rate'],
     expected: 'history',
+    group: 'core',
   },
   RPS: {
     fields: ['code', 'date', 'rps20', 'rps60', 'rps120'],
     expected: 'history',
+    group: 'core',
   },
   振幅: {
     fields: ['code', 'date', 'high', 'low', 'prev_close', 'amplitude'],
     expected: 'history',
+    group: 'core',
   },
   'ST / 停牌状态': {
     fields: ['code', 'date', 'is_st', 'tradestatus'],
     expected: 'history',
+    group: 'core',
   },
   市场环境: {
     fields: ['date', 'trend_score', 'breadth_score', 'risk_level'],
     expected: 'as_needed',
     coverageKind: 'dataset',
+    group: 'context',
   },
   每日指标: {
     fields: ['code', 'date', 'turnover_rate', 'volume_ratio', 'circ_mv'],
     expected: 'history',
+    group: 'daily',
   },
   技术因子: {
     fields: ['code', 'date', 'macd', 'kdj', 'rsi', 'boll'],
     expected: 'history',
+    group: 'daily',
   },
   资金流向: {
     fields: ['code', 'date', 'net_mf_amount', 'buy_lg_amount'],
     expected: 'history',
+    group: 'daily',
   },
   涨跌停: {
     fields: ['code', 'trade_date', 'limit_type', 'open_times', 'fd_amount'],
     expected: 'history',
     coverageKind: 'event',
+    group: 'event',
   },
   筹码分布: {
     fields: ['code', 'trade_date', 'winner_rate', 'cost_50pct'],
     expected: 'history',
+    group: 'structure',
   },
   '概念/行业成分': {
     fields: ['code', 'ts_code', 'con_name', 'source'],
     expected: 'as_needed',
+    group: 'structure',
   },
   '龙虎榜/游资': {
     fields: ['code', 'trade_date', 'net_amount', 'hm_name'],
     expected: 'as_needed',
     coverageKind: 'event',
+    group: 'event',
   },
 };
 
@@ -3763,6 +3889,7 @@ function buildDataLedgerRows(capabilities: Capability[]): DataLedgerRow[] {
     const meta = dataLedgerMeta[capability.capability] || {
       fields: ['code', 'date', 'value'],
       expected: 'history' as ExpectedDateKind,
+      group: 'daily' as DataLedgerGroupKey,
     };
     const coverageKind = meta.coverageKind || 'stock';
     const total = coverageKind === 'stock' ? capability.coverage_count + capability.missing_count : capability.coverage_count;
@@ -3773,6 +3900,7 @@ function buildDataLedgerRows(capabilities: Capability[]): DataLedgerRow[] {
     return {
       key: capability.capability,
       label: capability.capability,
+      group: meta.group,
       fields: meta.fields.join(' · '),
       currentLatest,
       expectedLatest,
@@ -3785,6 +3913,19 @@ function buildDataLedgerRows(capabilities: Capability[]): DataLedgerRow[] {
       canBackfill: capability.can_backfill || (capability.capability in dataLedgerMeta),
     };
   });
+}
+
+function groupLedgerRows(rows: DataLedgerRow[]) {
+  const priority: Record<DataLedgerStatus, number> = { empty: 0, stale: 1, partial: 2, normal: 3 };
+  return (Object.keys(dataLedgerGroupMeta) as DataLedgerGroupKey[])
+    .map((key) => ({
+      key,
+      ...dataLedgerGroupMeta[key],
+      rows: rows
+        .filter((row) => row.group === key)
+        .sort((a, b) => priority[a.status] - priority[b.status] || a.label.localeCompare(b.label, 'zh-Hans-CN')),
+    }))
+    .filter((group) => group.rows.length > 0);
 }
 
 function expectedLatestLabel(kind: ExpectedDateKind) {

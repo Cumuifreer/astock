@@ -101,6 +101,30 @@ def test_stock_warehouse_filters_by_exchange_and_board(tmp_path):
     assert [row["code"] for row in main["rows"]] == ["000001.SZ", "600519.SH"]
 
 
+def test_stock_warehouse_turnover_rate_prefers_tushare_daily_basic(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    seed_stock_basics(db)
+    db.upsert(
+        "tushare_daily_basic",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": date(2026, 5, 24),
+                "turnover_rate": 2.4,
+                "volume_ratio": 1.7,
+                "source": "Tushare daily_basic",
+                "updated_at": datetime(2026, 5, 24, 17, 0),
+            }
+        ],
+        ["code", "trade_date"],
+    )
+
+    result = DataService(db).list_stocks(search="000001")
+
+    assert result["rows"][0]["turnover_rate"] == 2.4
+
+
 def test_capabilities_count_snapshot_float_market_value(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
