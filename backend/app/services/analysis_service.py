@@ -530,6 +530,8 @@ def apply_strategy_filters(
         working = working[mask]
         mark("流通市值", before, working, "缺失时按策略配置降级")
 
+    working = _apply_theme_filters(working, strategy, funnel)
+
     if strategy.get("analysis_mode") == "score":
         if strategy.get("signal_mode") == "platform_breakout":
             working = _apply_platform_breakout_filters(working, strategy, funnel)
@@ -700,6 +702,37 @@ def _numeric_filter(
         }
     )
     return filtered
+
+
+def _apply_theme_filters(
+    frame: pd.DataFrame,
+    strategy: Dict[str, Any],
+    funnel: List[Dict[str, Any]],
+) -> pd.DataFrame:
+    working = _numeric_filter(
+        frame,
+        "topic_count",
+        strategy.get("min_topic_count"),
+        None,
+        "题材数量",
+        funnel,
+    )
+    working = _numeric_filter(
+        working,
+        "topic_heat",
+        strategy.get("min_topic_heat"),
+        None,
+        "题材热度",
+        funnel,
+    )
+    return _numeric_filter(
+        working,
+        "theme_limit_count",
+        strategy.get("min_theme_limit_count"),
+        None,
+        "题材涨停数",
+        funnel,
+    )
 
 
 def _apply_platform_breakout_filters(
@@ -989,6 +1022,23 @@ def _condition_mode(strategy: Dict[str, Any], key: str, default: str) -> str:
     return default
 
 
+def _theme_score_bonus(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
+    bonus = 0.0
+    topic_count = safe_float(row.get("topic_count"))
+    topic_heat = safe_float(row.get("topic_heat"))
+    theme_limit_count = safe_float(row.get("theme_limit_count"))
+    min_topic_count = safe_float(strategy.get("min_topic_count"))
+    min_topic_heat = safe_float(strategy.get("min_topic_heat"))
+    min_theme_limit_count = safe_float(strategy.get("min_theme_limit_count"))
+    if min_topic_count is not None and topic_count is not None:
+        bonus += 4 if topic_count >= min_topic_count else -4
+    if min_topic_heat is not None and topic_heat is not None:
+        bonus += min(topic_heat / max(min_topic_heat, 1.0), 1.4) * 8 if topic_heat >= min_topic_heat else -8
+    if min_theme_limit_count is not None and theme_limit_count is not None:
+        bonus += 6 if theme_limit_count >= min_theme_limit_count else -6
+    return bonus
+
+
 def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
     if strategy.get("signal_mode") == "platform_setup":
         return "平台临界"
@@ -1014,6 +1064,7 @@ def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
 
 def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
     rps = safe_float(row.get(f"rps{int(strategy.get('rps_window') or 20)}")) or safe_float(row.get("rps20")) or 0
+    theme_bonus = _theme_score_bonus(row, strategy)
     if strategy.get("signal_mode") == "platform_setup":
         setup_range = safe_float(row.get("platform_setup_range"))
         distance_to_high = safe_float(row.get("platform_setup_distance_to_high"))
@@ -1073,7 +1124,7 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
             score += 5
         if ma_convergence is not None and ma_convergence <= max_ma_convergence and row.get("platform_setup_ma_turning_up"):
             score += 5
-        return round(max(score, 0), 2)
+        return round(max(score + theme_bonus, 0), 2)
     if strategy.get("signal_mode") == "platform_breakout":
         platform_range = safe_float(row.get("platform_range"))
         bullish_ratio = safe_float(row.get("platform_bullish_ratio"))
@@ -1179,7 +1230,7 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
             score += 5 if row.get("platform_ma_rising") else -3
         if ma_rising_mode != "off" and row.get("platform_ma_rising") and macd_bonus > 0:
             score += 4
-        return round(max(score, 0), 2)
+        return round(max(score + theme_bonus, 0), 2)
     if strategy.get("signal_mode") == "trend_resonance":
         score = float(rps) * 0.38
         if row.get("trend_price_above_ema_long"):
@@ -1221,12 +1272,12 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
             score -= 8
         score += min((safe_float(row.get("volume_ratio")) or 0) * 4, 10)
         score += min((safe_float(row.get("turnover_rate")) or 0) * 0.8, 8)
-        return round(max(score, 0), 2)
+        return round(max(score + theme_bonus, 0), 2)
     volume_ratio = min((safe_float(row.get("volume_ratio")) or 0) * 8, 20)
     trend_bonus = 12 if (safe_float(row.get("ma_short")) or 0) > (safe_float(row.get("ma_long")) or 0) else 0
     turnover = min((safe_float(row.get("turnover_rate")) or 0) * 1.5, 12)
     amplitude_penalty = min((safe_float(row.get("amplitude")) or 0) * 40, 8)
-    return round(float(rps) * 0.65 + volume_ratio + trend_bonus + turnover - amplitude_penalty, 2)
+    return round(float(rps) * 0.65 + volume_ratio + trend_bonus + turnover - amplitude_penalty + theme_bonus, 2)
 
 
 def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, float]:
@@ -1258,6 +1309,7 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
     pattern = 0.0
     freshness = 0.0
     risk = 0.0
+    theme = max(_theme_score_bonus(row, strategy), 0.0)
 
     if mode == "platform_breakout":
         platform_range = safe_float(row.get("platform_range"))
@@ -1375,6 +1427,7 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
         "volume": round(max(volume, 0.0), 2),
         "pattern": round(max(pattern, 0.0), 2),
         "trend": round(max(trend, 0.0), 2),
+        "theme": round(theme, 2),
         "freshness": round(max(freshness, 0.0), 2),
         "risk": round(-max(risk, 0.0), 2),
     }
@@ -1894,7 +1947,89 @@ class AnalysisService:
                     **platform_metrics,
                 }
             )
-        return pd.DataFrame(output)
+        return self._enrich_theme_metrics(pd.DataFrame(output), target_date)
+
+    def _enrich_theme_metrics(self, frame: pd.DataFrame, as_of_date: Optional[date] = None) -> pd.DataFrame:
+        if frame.empty or "code" not in frame:
+            return frame
+        enriched = frame.copy()
+        enriched["concept_count"] = 0
+        enriched["topic_count"] = 0
+        enriched["theme_limit_count"] = 0
+        enriched["topic_heat"] = 0.0
+        codes = {str(code) for code in enriched["code"].dropna().tolist()}
+        if not codes:
+            return enriched
+        members = [
+            row
+            for row in self.db.query(
+                """
+                SELECT code, con_code
+                FROM tushare_ths_member
+                WHERE code IS NOT NULL AND con_code IS NOT NULL
+                """
+            )
+            if str(row.get("code")) in codes
+        ]
+        if not members:
+            return enriched
+
+        themes_by_code: Dict[str, set[str]] = {}
+        codes_by_theme: Dict[str, set[str]] = {}
+        for row in members:
+            code = str(row.get("code"))
+            theme = str(row.get("con_code"))
+            themes_by_code.setdefault(code, set()).add(theme)
+            codes_by_theme.setdefault(theme, set()).add(code)
+
+        limit_codes: set[str] = set()
+        latest_limit_date = (
+            self.db.scalar("SELECT MAX(trade_date) FROM tushare_limit_list_d WHERE trade_date <= ?", [as_of_date])
+            if as_of_date
+            else self.db.scalar("SELECT MAX(trade_date) FROM tushare_limit_list_d")
+        )
+        if latest_limit_date:
+            for row in self.db.query(
+                """
+                SELECT code, limit_type
+                FROM tushare_limit_list_d
+                WHERE trade_date = ?
+                """,
+                [latest_limit_date],
+            ):
+                limit_type = str(row.get("limit_type") or "").upper()
+                if "U" in limit_type or "UP" in limit_type or "涨停" in limit_type:
+                    limit_codes.add(str(row.get("code")))
+
+        frame_by_code = enriched.set_index("code", drop=False)
+        theme_heat: Dict[str, float] = {}
+        theme_limit_counts: Dict[str, int] = {}
+        for theme, member_codes in codes_by_theme.items():
+            present_codes = [code for code in member_codes if code in frame_by_code.index]
+            if not present_codes:
+                continue
+            subset = frame_by_code.loc[present_codes]
+            if isinstance(subset, pd.Series):
+                subset = subset.to_frame().T
+            pct = pd.to_numeric(subset.get("pct_chg"), errors="coerce")
+            rps = pd.to_numeric(subset.get("rps20"), errors="coerce")
+            positive_ratio = float((pct > 0).mean()) if len(pct) else 0.0
+            strong_ratio = float((rps >= 70).mean()) if len(rps) else 0.0
+            limit_count = len(member_codes & limit_codes)
+            theme_limit_counts[theme] = limit_count
+            avg_pct = max(float(pct.fillna(0).mean()) if len(pct) else 0.0, 0.0)
+            heat = positive_ratio * 35 + strong_ratio * 35 + min(limit_count, 5) * 6 + min(avg_pct, 10) * 2
+            theme_heat[theme] = round(min(100.0, heat), 2)
+
+        for index, row in enriched.iterrows():
+            code = str(row.get("code"))
+            themes = themes_by_code.get(code, set())
+            enriched.at[index, "concept_count"] = len(themes)
+            enriched.at[index, "topic_count"] = len(themes)
+            if themes:
+                enriched.at[index, "theme_limit_count"] = max((theme_limit_counts.get(theme, 0) for theme in themes), default=0)
+                enriched.at[index, "topic_heat"] = max((theme_heat.get(theme, 0.0) for theme in themes), default=0.0)
+        return enriched
 
     def _persist_results(
         self,

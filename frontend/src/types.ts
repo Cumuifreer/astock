@@ -51,6 +51,7 @@ export interface IndicatorDefinition {
   usage: string[];
   default_missing_policy: string;
   analysis_ready: boolean;
+  paired_strategy_ids?: string[];
   strategy_key?: keyof StrategyConfig | string;
   control: IndicatorControl;
   group_id: string;
@@ -221,6 +222,9 @@ export interface StrategyConfig {
   max_pct_chg: number | null;
   volume_ratio_min: number | null;
   max_ma_distance: number | null;
+  min_topic_count: number | null;
+  min_topic_heat: number | null;
+  min_theme_limit_count: number | null;
   candidate_limit: number;
   sort_by: string;
   missing_float_market_value_policy: string;

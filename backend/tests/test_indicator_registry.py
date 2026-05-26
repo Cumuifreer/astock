@@ -21,6 +21,46 @@ def test_indicator_library_groups_a_share_indicators_by_domain():
     assert all(indicator["formula"] for indicator in library["indicators"])
 
 
+def test_observation_indicators_point_to_editable_strategy_params():
+    library = indicator_library()
+    indicators = {indicator["id"]: indicator for indicator in library["indicators"]}
+    theme_mode = next(mode for mode in library["signal_modes"] if mode["id"] == "theme_resonance_breakout")
+    theme_fields = {field["indicator_id"] for field in theme_mode["fields"]}
+
+    assert indicators["rps120"]["paired_strategy_ids"] == ["min_rps120"]
+    assert indicators["volume_ratio"]["paired_strategy_ids"] == ["volume_ratio_min", "platform_breakout_volume_ratio"]
+    assert indicators["topic_count"]["paired_strategy_ids"] == ["min_topic_count"]
+    assert indicators["topic_heat"]["paired_strategy_ids"] == ["min_topic_heat"]
+    assert indicators["theme_limit_count"]["paired_strategy_ids"] == ["min_theme_limit_count"]
+    assert {"min_topic_count", "min_topic_heat", "min_theme_limit_count"}.issubset(set(indicators))
+    assert {"topic_heat", "theme_limit_count", "min_topic_heat", "min_theme_limit_count"}.issubset(theme_fields)
+
+
+def test_existing_theme_mode_is_extended_with_new_theme_parameters():
+    library = indicator_library(
+        [
+            {
+                "id": "theme_resonance_breakout",
+                "name": "题材共振突破",
+                "description": "",
+                "note": "",
+                "runtime_signal_mode": "platform_breakout",
+                "fields": [
+                    {"indicator_id": "topic_heat", "role": "score"},
+                    {"indicator_id": "theme_limit_count", "role": "score"},
+                ],
+                "rule_groups": [],
+            }
+        ]
+    )
+    fields = {field["indicator_id"]: field["role"] for field in library["signal_modes"][0]["fields"]}
+
+    assert fields["min_topic_count"] == "filter"
+    assert fields["min_topic_heat"] == "score"
+    assert fields["min_theme_limit_count"] == "score"
+    assert fields["topic_count"] == "display"
+
+
 def test_signal_mode_templates_include_editable_interaction_rules():
     library = indicator_library()
     templates = {template["id"]: template for template in library["signal_modes"]}

@@ -31,6 +31,7 @@ def data_indicator(
     status: str = "active",
     missing: str = "neutral",
     analysis_ready: bool = True,
+    paired_strategy_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     return {
         "id": indicator_id,
@@ -44,6 +45,7 @@ def data_indicator(
         "usage": usage,
         "default_missing_policy": missing,
         "analysis_ready": analysis_ready,
+        "paired_strategy_ids": paired_strategy_ids or [],
         "control": {"type": "readonly"},
         "group_id": category_id,
         "group_label": next((item["label"] for item in INDICATOR_CATEGORIES if item["id"] == category_id), category_id),
@@ -125,6 +127,7 @@ DATA_INDICATORS: List[Dict[str, Any]] = [
         "用于过滤过低价格和展示当前交易位置。",
         ["filter", "display"],
         missing="skip",
+        paired_strategy_ids=["min_price"],
     ),
     data_indicator(
         "amount",
@@ -135,6 +138,7 @@ DATA_INDICATORS: List[Dict[str, Any]] = [
         "衡量流动性，低成交额股票容易滑点大、信号失真。",
         ["filter", "score"],
         missing="skip",
+        paired_strategy_ids=["min_amount"],
     ),
     data_indicator(
         "turnover_rate",
@@ -145,6 +149,7 @@ DATA_INDICATORS: List[Dict[str, Any]] = [
         "衡量筹码交换强度，过低代表不活跃，过高可能代表分歧或过热。",
         ["filter", "risk", "score"],
         missing="allow",
+        paired_strategy_ids=["min_turnover", "max_turnover"],
     ),
     data_indicator(
         "volume_ratio",
@@ -155,6 +160,7 @@ DATA_INDICATORS: List[Dict[str, Any]] = [
         "判断当前成交是否明显放大，是右侧突破和资金确认的重要指标。",
         ["filter", "score", "interaction"],
         missing="allow",
+        paired_strategy_ids=["volume_ratio_min", "platform_breakout_volume_ratio"],
     ),
     data_indicator(
         "float_market_value",
@@ -165,19 +171,20 @@ DATA_INDICATORS: List[Dict[str, Any]] = [
         "控制股票规模，避免过小或过大的标的进入同一套策略。",
         ["filter"],
         missing="allow",
+        paired_strategy_ids=["min_float_market_value", "max_float_market_value"],
     ),
-    data_indicator("rps20", "RPS20", "technical", "本地历史 K 线", "按最近 20 日收益率在全市场排序并映射到 0-100。", "短期相对强度。", ["filter", "score", "sort"], missing="skip"),
-    data_indicator("rps60", "RPS60", "technical", "本地历史 K 线", "按最近 60 日收益率在全市场排序并映射到 0-100。", "中期相对强度。", ["filter", "score", "sort"], missing="skip"),
-    data_indicator("rps120", "RPS120", "technical", "本地历史 K 线", "按最近 120 日收益率在全市场排序并映射到 0-100。", "中长期相对强度。", ["filter", "score", "sort"], missing="skip"),
+    data_indicator("rps20", "RPS20", "technical", "本地历史 K 线", "按最近 20 日收益率在全市场排序并映射到 0-100。", "短期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps20", "rps_window"]),
+    data_indicator("rps60", "RPS60", "technical", "本地历史 K 线", "按最近 60 日收益率在全市场排序并映射到 0-100。", "中期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps60", "rps_window"]),
+    data_indicator("rps120", "RPS120", "technical", "本地历史 K 线", "按最近 120 日收益率在全市场排序并映射到 0-100。", "中长期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps120"]),
     data_indicator("macd_state", "MACD 状态", "technical", "本地历史 K 线 / Tushare stk_factor", "DIF、DEA 和 0 轴关系。", "确认动能是否改善。", ["filter", "score", "interaction"], missing="allow"),
-    data_indicator("platform_range", "平台振幅", "platform", "本地历史 K 线", "平台窗口内最高价 / 最低价 - 1，或按收盘价区间计算。", "衡量横盘收敛程度。", ["filter", "score"], missing="skip"),
-    data_indicator("platform_breakout_clearance", "突破上沿距离", "platform", "本地历史 K 线", "最新收盘价 / 平台上沿 - 1。", "判断是否刚刚有效站上平台上沿。", ["filter", "score", "interaction"], missing="skip"),
-    data_indicator("platform_setup_distance_to_high", "距平台上沿", "platform", "本地历史 K 线", "平台上沿 / 最新收盘价 - 1。", "平台临界模式的核心位置指标。", ["filter", "score", "interaction"], missing="skip"),
+    data_indicator("platform_range", "平台振幅", "platform", "本地历史 K 线", "平台窗口内最高价 / 最低价 - 1，或按收盘价区间计算。", "衡量横盘收敛程度。", ["filter", "score"], missing="skip", paired_strategy_ids=["platform_max_range", "platform_max_range_mode"]),
+    data_indicator("platform_breakout_clearance", "突破上沿距离", "platform", "本地历史 K 线", "最新收盘价 / 平台上沿 - 1。", "判断是否刚刚有效站上平台上沿。", ["filter", "score", "interaction"], missing="skip", paired_strategy_ids=["platform_breakout_clearance", "platform_breakout_max_clearance"]),
+    data_indicator("platform_setup_distance_to_high", "距平台上沿", "platform", "本地历史 K 线", "平台上沿 / 最新收盘价 - 1。", "平台临界模式的核心位置指标。", ["filter", "score", "interaction"], missing="skip", paired_strategy_ids=["platform_setup_max_distance_to_high"]),
     data_indicator("main_net_amount", "主力净额", "capital_flow", "Tushare moneyflow", "大单与超大单买入金额 - 卖出金额。", "判断主动资金是否回流。", ["score", "interaction"], status="available", analysis_ready=False),
     data_indicator("net_mf_amount", "资金净流入", "capital_flow", "Tushare moneyflow", "全口径买入金额 - 卖出金额。", "辅助确认资金方向。", ["score"], status="available", analysis_ready=False),
-    data_indicator("topic_count", "题材数", "theme", "Tushare ths_member", "统计股票关联的同花顺概念/行业成分数量。", "表示股票挂在哪些题材里。", ["display", "score"], status="available", analysis_ready=False),
-    data_indicator("topic_heat", "题材热度", "theme", "ths_member + 当日行情 + 涨跌停", "成分股上涨比例、RPS 高分股数量、涨停数量和成交额扩张综合评分。", "判断个股是否站在活跃主线上。", ["score", "interaction", "sort"], status="planned", analysis_ready=False),
-    data_indicator("theme_limit_count", "题材涨停数", "theme", "ths_member + Tushare limit_list_d", "统计股票所属题材内最近交易日涨停成分股数量。", "衡量题材短线爆发力。", ["score", "interaction"], status="planned", analysis_ready=False),
+    data_indicator("topic_count", "题材数", "theme", "Tushare ths_member", "统计股票关联的同花顺概念/行业成分数量。", "表示股票挂在哪些题材里。", ["display", "score"], status="active", analysis_ready=True, paired_strategy_ids=["min_topic_count"]),
+    data_indicator("topic_heat", "题材热度", "theme", "ths_member + 当日行情 + 涨跌停", "成分股上涨比例、RPS 高分股数量、涨停数量和成交额扩张综合评分。", "判断个股是否站在活跃主线上。", ["score", "interaction", "sort"], status="active", analysis_ready=True, paired_strategy_ids=["min_topic_heat"]),
+    data_indicator("theme_limit_count", "题材涨停数", "theme", "ths_member + Tushare limit_list_d", "统计股票所属题材内最近交易日涨停成分股数量。", "衡量题材短线爆发力。", ["score", "interaction"], status="active", analysis_ready=True, paired_strategy_ids=["min_theme_limit_count"]),
     data_indicator("limit_event", "涨跌停 / 炸板", "event", "Tushare limit_list_d", "读取最近涨停、跌停或炸板事件及开板次数、封单金额。", "低覆盖事件指标。", ["risk", "score", "interaction"], status="available", analysis_ready=False),
     data_indicator("top_list_net_amount", "龙虎榜净额", "event", "Tushare top_list / top_inst / hm_detail", "取最近龙虎榜或游资明细中的净买入金额。", "短线资金偏好指标。", ["score", "interaction", "risk"], status="available", analysis_ready=False),
     data_indicator("cyq_winner_rate", "筹码胜率", "chips", "Tushare cyq_perf", "获利筹码占比。", "观察筹码位置与潜在抛压。", ["score", "risk"], status="available", analysis_ready=False),
@@ -270,6 +277,9 @@ STRATEGY_PARAM_INDICATORS: List[Dict[str, Any]] = [
     strategy_param("max_pct_chg", "最大涨跌幅", "quote", "price_volume", "量价触发", number_control(allow_blank=True, unit="%"), "高于该涨跌幅时过滤。"),
     strategy_param("volume_ratio_min", "成交量放大", "quote", "price_volume", "量价触发", number_control(allow_blank=True, unit="倍", min_value=0), "量比低于该值时过滤。"),
     strategy_param("max_ma_distance", "最大均线偏离", "technical", "price_volume", "量价触发", number_control(allow_blank=True, unit="比例", min_value=0), "距离短均线过远时过滤或扣分。"),
+    strategy_param("min_topic_count", "最少题材数", "theme", "theme_strength", "题材强度", number_control(allow_blank=True, min_value=0), "低于该题材覆盖数量时过滤。"),
+    strategy_param("min_topic_heat", "题材热度下限", "theme", "theme_strength", "题材强度", number_control(allow_blank=True, min_value=0, max_value=100), "低于该题材热度时过滤或降低排序优先级。", usage=["filter", "score"]),
+    strategy_param("min_theme_limit_count", "题材涨停数下限", "theme", "theme_strength", "题材强度", number_control(allow_blank=True, min_value=0), "所属题材内涨停家数不足时过滤。", usage=["filter", "score"]),
     strategy_param("candidate_limit", "候选上限", "stock_pool", "output", "输出设置", number_control(min_value=1, max_value=500), "每次分析最多输出的候选数量。"),
     strategy_param("sort_by", "排序", "stock_pool", "output", "输出设置", select_control([("signal_score", "信号分数"), ("rps20", "RPS20"), ("amount", "成交额"), ("pct_chg", "涨跌幅")]), "候选排序字段。", usage=["sort"]),
     strategy_param("macd_filter_enabled", "启用 MACD 过滤", "technical", "legacy", "兼容参数", boolean_control(), "兼容旧策略中的 MACD 总开关。", usage=["switch"]),
@@ -473,7 +483,24 @@ DEFAULT_SIGNAL_MODES: List[Dict[str, Any]] = [
         "description": "平台突破叠加题材热度与量能确认。",
         "note": "偏 A 股主线题材的突破确认。",
         "runtime_signal_mode": "platform_breakout",
-        "fields": mode_fields(BASE_STOCK_POOL_FIELDS + ["platform_breakout_clearance", "platform_breakout_volume_ratio", "topic_heat", "theme_limit_count", "max_turnover", "candidate_limit", "sort_by"]),
+        "fields": mode_fields(
+            BASE_STOCK_POOL_FIELDS
+            + [
+                "platform_breakout_clearance",
+                "platform_breakout_volume_ratio",
+                "min_topic_count",
+                "min_topic_heat",
+                "min_theme_limit_count",
+                "max_turnover",
+                "candidate_limit",
+                "sort_by",
+            ]
+        )
+        + [
+            mode_field("topic_count", "display"),
+            mode_field("topic_heat", "score"),
+            mode_field("theme_limit_count", "score"),
+        ],
         "rule_groups": [
             {
                 "id": "interaction",
@@ -494,6 +521,16 @@ DEFAULT_SIGNAL_MODES: List[Dict[str, Any]] = [
         ],
     },
 ]
+
+
+DEFAULT_MODE_FIELD_EXTENSIONS = {
+    "theme_resonance_breakout": [
+        ("min_topic_count", "filter"),
+        ("min_topic_heat", "score"),
+        ("min_theme_limit_count", "score"),
+        ("topic_count", "display"),
+    ],
+}
 
 
 def blank_signal_mode(name: str = "新信号模式") -> Dict[str, Any]:
@@ -531,6 +568,10 @@ def normalize_signal_mode(mode: Dict[str, Any]) -> Dict[str, Any]:
                 "group_label": field.get("group_label") or indicator["group_label"],
             }
         )
+    for indicator_id, role in DEFAULT_MODE_FIELD_EXTENSIONS.get(str(normalized.get("id") or ""), []):
+        if indicator_id in indicator_ids and indicator_id not in seen:
+            seen.add(indicator_id)
+            fields.append(mode_field(indicator_id, role))
     normalized["fields"] = fields or mode_fields(BASE_STOCK_POOL_FIELDS)
     rule_groups = []
     for group in normalized.get("rule_groups") or []:

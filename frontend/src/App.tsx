@@ -70,6 +70,7 @@ type CandidateSortKey =
   | 'score_volume'
   | 'score_pattern'
   | 'score_trend'
+  | 'score_theme'
   | 'score_freshness'
   | 'score_risk'
   | 'amount'
@@ -83,6 +84,7 @@ const candidateSortOptions: Array<{ value: CandidateSortKey; label: string }> = 
   { value: 'score_volume', label: '量能分' },
   { value: 'score_pattern', label: '形态分' },
   { value: 'score_trend', label: '趋势分' },
+  { value: 'score_theme', label: '题材分' },
   { value: 'score_freshness', label: '新鲜度' },
   { value: 'score_risk', label: '风险扣分' },
   { value: 'amount', label: '成交额' },
@@ -1073,6 +1075,10 @@ function IndicatorLibraryPage({
     () => Object.fromEntries(library.categories.map((item) => [item.id, item])),
     [library.categories],
   );
+  const indicatorById = useMemo(
+    () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
+    [library.indicators],
+  );
   const indicators = useMemo(() => {
     const query = search.trim().toLowerCase();
     return library.indicators.filter((indicator) => {
@@ -1168,11 +1174,22 @@ function IndicatorLibraryPage({
                 <p>{selected.description}</p>
               </div>
               <div className="indicator-detail-grid">
+                <span><em>类型</em><b>{indicatorKindLabel(selected)}</b></span>
                 <span><em>分类</em><b>{categoryMap[selected.category_id]?.label || selected.category_id}</b></span>
                 <span><em>用途</em><b>{indicatorUsageLabel(selected.usage)}</b></span>
                 <span><em>缺失处理</em><b>{missingPolicyLabel(selected.default_missing_policy)}</b></span>
                 <span><em>分析状态</em><b>{selected.analysis_ready ? '已参与分析' : '可用于后续规则'}</b></span>
               </div>
+              {pairedStrategyIndicators(selected, indicatorById).length > 0 && (
+                <div className="indicator-explain paired">
+                  <strong>可填写参数</strong>
+                  <div className="indicator-pair-list">
+                    {pairedStrategyIndicators(selected, indicatorById).map((indicator) => (
+                      <span key={indicator.id}>{indicator.name}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="indicator-explain">
                 <strong>怎么算</strong>
                 <p>{selected.formula}</p>
@@ -1247,7 +1264,12 @@ function SignalModeManager({
       .sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN')),
     [activeIndicatorIds, library.indicators],
   );
+  const addableStrategyParams = addableIndicators.filter((indicator) => indicator.kind === 'strategy_param');
+  const addableObservationIndicators = addableIndicators.filter((indicator) => indicator.kind !== 'strategy_param');
   const selectedAddId = addIndicatorId || addableIndicators[0]?.id || '';
+  const selectedAddIndicator = indicatorById[selectedAddId];
+  const selectedPairIndicators = pairedStrategyIndicators(selectedAddIndicator, indicatorById)
+    .filter((indicator) => !activeIndicatorIds.has(indicator.id));
   const fieldGroups = useMemo(() => {
     const groups = new Map<string, { id: string; label: string; fields: SignalModeField[] }>();
     (draft?.fields || []).forEach((field) => {
@@ -1286,9 +1308,9 @@ function SignalModeManager({
         .filter((group) => group.rules.length > 0),
     });
   };
-  const addField = () => {
-    if (!draft || !selectedAddId || activeIndicatorIds.has(selectedAddId)) return;
-    const indicator = indicatorById[selectedAddId];
+  const addFieldById = (indicatorId: string, role = addRole) => {
+    if (!draft || !indicatorId || activeIndicatorIds.has(indicatorId)) return;
+    const indicator = indicatorById[indicatorId];
     if (!indicator) return;
     setDraft({
       ...draft,
@@ -1296,7 +1318,7 @@ function SignalModeManager({
         ...draft.fields,
         {
           indicator_id: indicator.id,
-          role: addRole,
+          role,
           group_id: indicator.group_id,
           group_label: indicator.group_label,
         },
@@ -1304,6 +1326,7 @@ function SignalModeManager({
     });
     setAddIndicatorId('');
   };
+  const addField = () => addFieldById(selectedAddId, addRole);
   const patchRule = (groupId: string, ruleId: string, patch: Partial<IndicatorRule>) => {
     if (!draft) return;
     setDraft({
@@ -1483,21 +1506,56 @@ function SignalModeManager({
                 <strong>模式指标</strong>
                 <span>{formatInt(draft.fields.length)} 个</span>
               </div>
-              <div className="indicator-add-controls">
-                <select value={selectedAddId} onChange={(event) => setAddIndicatorId(event.target.value)}>
-                  {addableIndicators.map((indicator) => (
-                    <option key={indicator.id} value={indicator.id}>
-                      {indicator.group_label} / {indicator.name}
-                    </option>
-                  ))}
-                </select>
-                <select value={addRole} onChange={(event) => setAddRole(event.target.value)}>
-                  {signalFieldRoles.map((role) => <option key={role.id} value={role.id}>{role.label}</option>)}
-                </select>
-                <button className="ghost compact" type="button" disabled={!selectedAddId} onClick={addField}>
-                  <Plus size={13} />
-                  加入
-                </button>
+              <div className="indicator-add-stack">
+                <div className="indicator-add-controls">
+                  <select value={selectedAddId} onChange={(event) => setAddIndicatorId(event.target.value)}>
+                    {addableStrategyParams.length > 0 && (
+                      <optgroup label="可填写参数">
+                        {addableStrategyParams.map((indicator) => (
+                          <option key={indicator.id} value={indicator.id}>
+                            {indicator.group_label} / {indicator.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {addableObservationIndicators.length > 0 && (
+                      <optgroup label="观察指标">
+                        {addableObservationIndicators.map((indicator) => (
+                          <option key={indicator.id} value={indicator.id}>
+                            {indicator.group_label} / {indicator.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                  <select value={addRole} onChange={(event) => setAddRole(event.target.value)}>
+                    {signalFieldRoles.map((role) => <option key={role.id} value={role.id}>{role.label}</option>)}
+                  </select>
+                  <button className="ghost compact" type="button" disabled={!selectedAddId} onClick={addField}>
+                    <Plus size={13} />
+                    加入
+                  </button>
+                </div>
+                {selectedAddIndicator && selectedAddIndicator.kind !== 'strategy_param' && (
+                  <div className="indicator-pair-hint">
+                    <span>
+                      <strong>{selectedAddIndicator.name}</strong>
+                      观察值
+                    </span>
+                    {selectedPairIndicators.length > 0 ? (
+                      <div>
+                        {selectedPairIndicators.map((indicator) => (
+                          <button key={indicator.id} className="tiny-action" type="button" onClick={() => addFieldById(indicator.id, addRole)}>
+                            <Plus size={12} />
+                            {indicator.name}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <em>无需填写参数</em>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
             <div className="mode-field-groups">
@@ -1511,11 +1569,15 @@ function SignalModeManager({
                     {group.fields.map((field) => {
                       const indicator = indicatorById[field.indicator_id];
                       if (!indicator) return null;
+                      const pairNames = pairedStrategyIndicators(indicator, indicatorById)
+                        .filter((item) => !activeIndicatorIds.has(item.id))
+                        .map((item) => item.name);
                       return (
                         <article key={field.indicator_id} className="mode-field-item">
                           <div>
                             <strong>{indicator.name}</strong>
-                            <span>{indicator.kind === 'strategy_param' ? '策略参数' : indicator.source}</span>
+                            <span>{indicator.kind === 'strategy_param' ? '可填写参数' : indicator.source}</span>
+                            {pairNames.length > 0 && <small>可配：{pairNames.join('、')}</small>}
                           </div>
                           <select value={field.role || 'filter'} onChange={(event) => patchField(field.indicator_id, { role: event.target.value })}>
                             {signalFieldRoles.map((role) => <option key={role.id} value={role.id}>{role.label}</option>)}
@@ -1863,9 +1925,10 @@ function SignalModeFieldForm({
     });
     return Array.from(next.values());
   }, [indicatorById, profile.fields]);
-  const referenceIndicators = (profile.fields || [])
-    .map((field) => indicatorById[field.indicator_id])
-    .filter((indicator) => indicator && indicator.kind !== 'strategy_param');
+  const activeFieldIds = new Set((profile.fields || []).map((field) => field.indicator_id));
+  const referenceFields = (profile.fields || [])
+    .map((field) => ({ field, indicator: indicatorById[field.indicator_id] }))
+    .filter((item): item is { field: SignalModeField; indicator: IndicatorDefinition } => Boolean(item.indicator && item.indicator.kind !== 'strategy_param'));
   const rules = profile.rule_groups.flatMap((group) => group.rules.map((rule) => ({ ...rule, groupLabel: group.label })));
 
   return (
@@ -1891,16 +1954,28 @@ function SignalModeFieldForm({
           ))}
         </Fragment>
       ))}
-      {(referenceIndicators.length > 0 || rules.length > 0) && (
+      {(referenceFields.length > 0 || rules.length > 0) && (
         <div className="strategy-signal-context wide">
-          {referenceIndicators.length > 0 && (
+          {referenceFields.length > 0 && (
             <div>
-              <strong>参考指标</strong>
+              <strong>观察指标</strong>
               <div className="context-chip-row">
-                {referenceIndicators.map((indicator) => (
-                  <span key={indicator.id}>{indicator.name}</span>
+                {referenceFields.map(({ field, indicator }) => (
+                  <span key={indicator.id}>
+                    <b>{indicator.name}</b>
+                    <em>{signalFieldRoleLabel(field.role)}</em>
+                  </span>
                 ))}
               </div>
+              {referenceFields.some(({ indicator }) => pairedStrategyIndicators(indicator, indicatorById).some((item) => !activeFieldIds.has(item.id))) && (
+                <div className="context-pair-row">
+                  {referenceFields.flatMap(({ indicator }) => pairedStrategyIndicators(indicator, indicatorById)
+                    .filter((item) => !activeFieldIds.has(item.id))
+                    .map((item) => (
+                      <span key={`${indicator.id}-${item.id}`}>{indicator.name} 可配 {item.name}</span>
+                    )))}
+                </div>
+              )}
             </div>
           )}
           {rules.length > 0 && (
@@ -2281,6 +2356,7 @@ function CandidateScoreDetails({ row }: { row: Candidate }) {
     { key: 'volume', label: '量能', note: '成交额与放量质量' },
     { key: 'pattern', label: '形态', note: '平台、K线和结构' },
     { key: 'trend', label: '趋势', note: 'RPS、均线与 MACD' },
+    { key: 'theme', label: '题材', note: '题材热度和涨停扩散' },
     { key: 'freshness', label: '新鲜度', note: '越靠近触发点越高' },
     { key: 'risk', label: '风险扣分', note: '过热、偏离和追高' },
   ];
@@ -4256,6 +4332,24 @@ function indicatorUsageLabel(values: string[] = []) {
   return values.map((value) => labels[value] || value).join(' / ') || '-';
 }
 
+function indicatorKindLabel(indicator: IndicatorDefinition) {
+  return indicator.kind === 'strategy_param' ? '可填写参数' : '观察指标';
+}
+
+function signalFieldRoleLabel(role: string | undefined) {
+  return signalFieldRoles.find((item) => item.id === (role || 'filter'))?.label || role || '过滤';
+}
+
+function pairedStrategyIndicators(
+  indicator: IndicatorDefinition | undefined,
+  indicatorById: Record<string, IndicatorDefinition>,
+) {
+  if (!indicator?.paired_strategy_ids?.length) return [];
+  return indicator.paired_strategy_ids
+    .map((id) => indicatorById[id])
+    .filter((item): item is IndicatorDefinition => Boolean(item && item.kind === 'strategy_param'));
+}
+
 function missingPolicyLabel(value: string) {
   const labels: Record<string, string> = {
     allow: '允许缺失',
@@ -4388,6 +4482,7 @@ function candidateSortValue(row: Candidate, key: CandidateSortKey) {
   if (key === 'score_volume') return finiteNumber(breakdown.volume);
   if (key === 'score_pattern') return finiteNumber(breakdown.pattern);
   if (key === 'score_trend') return finiteNumber(breakdown.trend);
+  if (key === 'score_theme') return finiteNumber(breakdown.theme);
   if (key === 'score_freshness') return finiteNumber(breakdown.freshness);
   if (key === 'score_risk') return finiteNumber(breakdown.risk);
   return 0;
@@ -4401,6 +4496,7 @@ function candidateScoreBreakdown(row: Candidate) {
     volume: nullableNumber(raw.volume),
     pattern: nullableNumber(raw.pattern),
     trend: nullableNumber(raw.trend),
+    theme: nullableNumber(raw.theme),
     freshness: nullableNumber(raw.freshness),
     risk: nullableNumber(raw.risk),
   };
