@@ -99,3 +99,15 @@ def test_stock_warehouse_filters_by_exchange_and_board(tmp_path):
     assert [row["code"] for row in sz["rows"]] == ["000001.SZ", "300750.SZ"]
     assert [row["code"] for row in star["rows"]] == ["688981.SH"]
     assert [row["code"] for row in main["rows"]] == ["000001.SZ", "600519.SH"]
+
+
+def test_capabilities_count_snapshot_float_market_value(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    seed_stock_basics(db)
+
+    capabilities = DataService(db).capabilities()
+    float_market_value = next(row for row in capabilities if row["capability"] == "流通市值")
+
+    assert float_market_value["coverage_count"] == 1
+    assert str(float_market_value["latest_update"]).startswith("2026-05-24")

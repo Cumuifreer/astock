@@ -563,6 +563,36 @@ class DataService:
         total_stocks = self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0
         latest_history = self.db.scalar("SELECT MAX(date) FROM historical_bars")
         latest_snapshot = self.db.scalar("SELECT MAX(date) FROM daily_snapshots")
+        latest_float_market_value = self.db.scalar(
+            """
+            SELECT MAX(date)
+            FROM (
+                SELECT date FROM float_market_values WHERE float_market_value IS NOT NULL
+                UNION ALL
+                SELECT date FROM daily_snapshots WHERE float_market_value IS NOT NULL
+            )
+            """
+        )
+        float_market_value_count = 0
+        if latest_float_market_value:
+            float_market_value_count = (
+                self.db.scalar(
+                    """
+                    SELECT COUNT(DISTINCT code)
+                    FROM (
+                        SELECT code
+                        FROM float_market_values
+                        WHERE date = ? AND float_market_value IS NOT NULL
+                        UNION
+                        SELECT code
+                        FROM daily_snapshots
+                        WHERE date = ? AND float_market_value IS NOT NULL
+                    )
+                    """,
+                    [latest_float_market_value, latest_float_market_value],
+                )
+                or 0
+            )
         status_failures = self.db.query(
             """
             SELECT capability, failure_reason
@@ -581,10 +611,7 @@ class DataService:
             )
             or 0,
             "股票基础信息": total_stocks,
-            "流通市值": self.db.scalar(
-                "SELECT COUNT(DISTINCT code) FROM float_market_values WHERE float_market_value IS NOT NULL"
-            )
-            or 0,
+            "流通市值": float_market_value_count,
             "换手率": self.db.scalar("SELECT COUNT(DISTINCT code) FROM historical_bars WHERE turn IS NOT NULL") or 0,
             "RPS": self.db.scalar(
                 "SELECT COUNT(*) FROM (SELECT code, COUNT(*) AS n FROM historical_bars GROUP BY code HAVING n >= 21)"
@@ -613,6 +640,9 @@ class DataService:
         for capability, definition in CAPABILITY_DEFINITIONS.items():
             coverage = int(counts.get(capability, 0))
             denominator = total_stocks if total_stocks else coverage
+            latest_update = latest_snapshot if capability == "当天行情快照" else latest_history
+            if capability == "流通市值":
+                latest_update = latest_float_market_value
             rows.append(
                 {
                     "capability": capability,
@@ -620,7 +650,7 @@ class DataService:
                     "fallback_sources": definition["fallback_sources"],
                     "coverage_count": coverage,
                     "missing_count": max(0, int(denominator) - coverage),
-                    "latest_update": latest_snapshot if capability == "当天行情快照" else latest_history,
+                    "latest_update": latest_update,
                     "last_failure_reason": failure_by_cap.get(capability),
                     "uses_cache": True,
                     "can_backfill": definition["can_backfill"],
