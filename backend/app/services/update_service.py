@@ -18,7 +18,6 @@ from backend.app.services.daily_brief_service import DailyBriefService
 from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.market_utils import safe_float
 from backend.app.services.strategy_service import normalize_strategy_config
-from backend.app.sources.adata_source import ADataSource
 from backend.app.sources.akshare_source import AkShareSource
 from backend.app.sources.baostock_source import BaostockSource
 from backend.app.sources.base import SourceGuard
@@ -359,10 +358,6 @@ class UpdateService:
         options = options or {}
         include_bj = bool(options.get("include_bj", settings.include_bj))
         exclude_star = bool(options.get("exclude_star_board", settings.exclude_star_board))
-        sample_codes = [
-            item["code"].split(".")[0]
-            for item in self.db.query("SELECT code FROM stock_basic ORDER BY code LIMIT 20")
-        ] or ["000001", "600000"]
         results = []
         probes = [
             (
@@ -382,22 +377,6 @@ class UpdateService:
                 "AkShare 腾讯",
                 "当天行情快照",
                 lambda: AkShareSource().fetch_tencent_snapshot(include_bj=include_bj, exclude_star=exclude_star),
-            ),
-            (
-                self.public_guard,
-                "AData",
-                "股票基础信息",
-                lambda: ADataSource().fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
-            ),
-            (
-                self.public_guard,
-                "AData",
-                "当天行情快照",
-                lambda: ADataSource().fetch_snapshot(
-                    include_bj=include_bj,
-                    exclude_star=exclude_star,
-                    code_list=sample_codes,
-                ),
             ),
         ]
         if _tushare_realtime_configured():
@@ -525,6 +504,7 @@ class UpdateService:
 
             self._patch_task(task_id, stage="刷新流通市值", source="本地缓存")
             float_count = self._update_float_values_from_snapshots()
+            cleanup_counts = self.cleanup_intraday_history()
 
             self.data_service.refresh_capabilities()
             status = "completed_full" if failed_sources == 0 and not warnings else "completed_partial"
@@ -547,6 +527,7 @@ class UpdateService:
                     "history_skipped": history_skipped,
                     "target_history_date": target_history_date.isoformat(),
                     "float_market_value_count": float_count,
+                    "intraday_cleanup": cleanup_counts,
                     "warnings": warnings,
                     "success_sources": success_sources,
                     "failed_sources": failed_sources,
@@ -563,6 +544,42 @@ class UpdateService:
                 warning=str(exc),
                 finished_at=datetime.utcnow(),
             )
+
+    def cleanup_intraday_history(
+        self,
+        retention_days: Optional[int] = None,
+        now: Optional[datetime] = None,
+    ) -> Dict[str, int]:
+        keep_days = settings.intraday_retention_days if retention_days is None else retention_days
+        if keep_days < 0:
+            return {
+                "intraday_snapshots": 0,
+                "intraday_radar_candidates": 0,
+                "intraday_radar_rankings": 0,
+            }
+        current = now or datetime.now(CHINA_TZ)
+        current = current.astimezone(CHINA_TZ).replace(tzinfo=None) if current.tzinfo else current
+        cutoff = current.date() - timedelta(days=keep_days)
+        deleted: Dict[str, int] = {}
+        for table in ["intraday_radar_rankings", "intraday_radar_candidates", "intraday_snapshots"]:
+            before = self.db.scalar(f"SELECT COUNT(*) FROM {table}") or 0
+            self.db.execute(
+                f"""
+                DELETE FROM {table}
+                WHERE trade_date < ?
+                  AND EXISTS (
+                    SELECT 1
+                    FROM historical_bars h
+                    WHERE h.code = {table}.code
+                      AND h.date = {table}.trade_date
+                  )
+                """,
+                [cutoff],
+                write=True,
+            )
+            after = self.db.scalar(f"SELECT COUNT(*) FROM {table}") or 0
+            deleted[table] = int(before) - int(after)
+        return deleted
 
     def _run_intraday_sample(self, task_id: str, options: Dict[str, Any]) -> None:
         include_bj = bool(options.get("include_bj", settings.include_bj))
@@ -705,23 +722,6 @@ class UpdateService:
         if chosen.status != "available":
             if chosen.message:
                 warnings.append(f"腾讯盘中快照跳过：{chosen.message}")
-            adata = ADataSource()
-            codes = [
-                item["code"].split(".")[0]
-                for item in self.db.query("SELECT code FROM stock_basic ORDER BY code LIMIT 500")
-            ]
-            chosen = self.public_guard.call(
-                "AData",
-                "盘中行情快照",
-                lambda: adata.fetch_snapshot(
-                    include_bj=include_bj,
-                    exclude_star=exclude_star,
-                    code_list=codes,
-                ),
-                ttl_minutes=15,
-                max_attempts=1,
-                timeout_seconds=120,
-            )
         if chosen.status != "available":
             raise RuntimeError(chosen.message or "盘中快照不可用。")
         return chosen.frame
@@ -788,18 +788,6 @@ class UpdateService:
             warnings.append(f"Baostock 股票池失败：{exc}")
             self.baostock_guard.record("Baostock", "股票基础信息", "failed", message=str(exc))
 
-        adata = ADataSource()
-        result = self.public_guard.call(
-            "AData",
-            "股票基础信息",
-            lambda: adata.fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
-            ttl_minutes=settings.source_probe_ttl_minutes,
-            max_attempts=1,
-        )
-        if result.status == "available":
-            rows_written += self._merge_basic_names(result.frame)
-        elif result.message:
-            warnings.append(f"AData 股票基础信息跳过：{result.message}")
         return rows_written or int(existing)
 
     def _update_snapshots(
@@ -841,22 +829,6 @@ class UpdateService:
         if chosen.status != "available":
             if chosen.message:
                 warnings.append(f"腾讯快照跳过：{chosen.message}")
-            adata = ADataSource()
-            codes = [
-                item["code"].split(".")[0]
-                for item in self.db.query("SELECT code FROM stock_basic ORDER BY code LIMIT 500")
-            ]
-            chosen = self.public_guard.call(
-                "AData",
-                "当天行情快照",
-                lambda: adata.fetch_snapshot(
-                    include_bj=include_bj,
-                    exclude_star=exclude_star,
-                    code_list=codes,
-                ),
-                ttl_minutes=settings.source_probe_ttl_minutes,
-                max_attempts=1,
-            )
         if chosen.status == "available":
             records = chosen.frame.to_dict("records")
             count = self.db.upsert("daily_snapshots", records, ["code", "date"])
@@ -910,7 +882,6 @@ class UpdateService:
         target_history_date: Optional[date] = None,
     ) -> tuple:
         baostock = BaostockSource()
-        adata = ADataSource()
         success = 0
         failed = 0
         skipped = 0
@@ -951,27 +922,15 @@ class UpdateService:
                     raise RuntimeError("Baostock 历史行情为空")
                 self.db.upsert("historical_bars", frame.to_dict("records"), ["code", "date"])
                 success += 1
-            except Exception:
-                try:
-                    self.public_guard.sleep()
-                    frame = adata.fetch_history(code, fetch_start, end)
-                    self.db.upsert("historical_bars", frame.to_dict("records"), ["code", "date"])
-                    self.public_guard.record(
-                        "AData",
-                        "历史 K 线",
-                        "available",
-                        payload={"code": code, "rows": len(frame)},
-                    )
-                    success += 1
-                except Exception as fallback_exc:
-                    failed += 1
-                    self.baostock_guard.record(
-                        "Baostock",
-                        "历史 K 线",
-                        "failed",
-                        message=f"{code}: {fallback_exc}",
-                        ttl_minutes=15,
-                    )
+            except Exception as exc:
+                failed += 1
+                self.baostock_guard.record(
+                    "Baostock",
+                    "历史 K 线",
+                    "failed",
+                    message=f"{code}: {exc}",
+                    ttl_minutes=15,
+                )
             self._patch_task(
                 task_id,
                 current_stock=code,

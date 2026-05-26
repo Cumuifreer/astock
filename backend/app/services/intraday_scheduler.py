@@ -6,21 +6,10 @@ from datetime import datetime, timedelta
 from typing import Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
+from backend.app.services.intraday_schedule import DEFAULT_INTRADAY_SLOTS
 from backend.app.services.update_service import UpdateService
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
-DEFAULT_INTRADAY_SLOTS: Tuple[Tuple[int, int], ...] = (
-    (9, 35),
-    (10, 0),
-    (10, 30),
-    (11, 0),
-    (11, 25),
-    (13, 0),
-    (13, 30),
-    (14, 0),
-    (14, 30),
-    (14, 55),
-)
 
 
 class IntradayScheduler:
@@ -69,8 +58,9 @@ class IntradayScheduler:
         if current.weekday() >= 5:
             return None
         window = timedelta(minutes=self.catchup_minutes)
+        due_slot = None
         for hour, minute in self.slots:
             slot = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if slot <= current < slot + window:
-                return slot.replace(tzinfo=None)
-        return None
+                due_slot = slot
+        return due_slot.replace(tzinfo=None) if due_slot else None

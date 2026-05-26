@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.app.api.routes import router, update_service
 from backend.app.config import settings
 from backend.app.services.daily_brief_scheduler import DailyBriefScheduler
+from backend.app.services.intraday_schedule import parse_intraday_schedule
 from backend.app.services.intraday_scheduler import IntradayScheduler
 
 
@@ -18,6 +19,7 @@ intraday_scheduler = IntradayScheduler(
     update_service,
     poll_seconds=settings.intraday_scheduler_poll_seconds,
     catchup_minutes=settings.intraday_scheduler_catchup_minutes,
+    slots=parse_intraday_schedule(settings.intraday_schedule),
 )
 daily_brief_scheduler = DailyBriefScheduler(
     update_service,

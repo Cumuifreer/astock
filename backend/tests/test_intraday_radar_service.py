@@ -650,3 +650,93 @@ def test_intraday_snapshot_prefers_tushare_realtime(tmp_path, monkeypatch):
     frame = service._fetch_intraday_snapshot_frame(include_bj=False, exclude_star=False, warnings=[])
 
     assert frame.iloc[0]["source"] == "Tushare 实时日线"
+
+
+def test_intraday_cleanup_deletes_old_rows_after_history_exists(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    old_sample = datetime(2026, 5, 10, 10, 0)
+    recent_sample = datetime(2026, 5, 24, 10, 0)
+    for sample_at in [old_sample, recent_sample]:
+        db.upsert(
+            "intraday_snapshots",
+            [
+                {
+                    "code": "000001.SZ",
+                    "trade_date": sample_at.date(),
+                    "sample_at": sample_at,
+                    "name": "平安银行",
+                    "latest_price": 10.0,
+                    "pct_chg": 1.0,
+                    "high": 10.2,
+                    "low": 9.9,
+                    "volume": 100,
+                    "amount": 1000000,
+                    "source": "test",
+                    "created_at": sample_at,
+                }
+            ],
+            ["code", "sample_at"],
+        )
+        ranking = {
+            "sample_at": sample_at,
+            "trade_date": sample_at.date(),
+            "rank": 1,
+            "code": "000001.SZ",
+            "name": "平安银行",
+            "status": "test",
+            "radar_score": 80,
+            "latest_price": 10.0,
+            "pct_chg": 1.0,
+            "amount": 1000000,
+            "volume": 100,
+            "distance_to_upper": 0,
+            "breakout_clearance": 0,
+            "amount_delta": 0,
+            "volume_delta": 0,
+            "amount_ratio": 1,
+            "price_change": 0,
+            "source": "test",
+            "reasons_json": "[]",
+            "metrics_json": "{}",
+            "created_at": sample_at,
+        }
+        db.upsert("intraday_radar_candidates", [ranking], ["sample_at", "code"])
+        db.upsert(
+            "intraday_radar_rankings",
+            [{**ranking, "radar_mode": "score"}],
+            ["sample_at", "radar_mode", "code"],
+        )
+    db.upsert(
+        "historical_bars",
+        [
+            {
+                "code": "000001.SZ",
+                "date": old_sample.date(),
+                "open": 10,
+                "high": 10,
+                "low": 9,
+                "close": 10,
+                "prev_close": 9.8,
+                "volume": 100,
+                "amount": 1000000,
+                "turn": 1,
+                "pct_chg": 1,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "test",
+                "updated_at": old_sample,
+            }
+        ],
+        ["code", "date"],
+    )
+
+    deleted = service.cleanup_intraday_history(retention_days=10, now=datetime(2026, 5, 25, 8, 0))
+
+    assert deleted["intraday_snapshots"] == 1
+    assert deleted["intraday_radar_candidates"] == 1
+    assert deleted["intraday_radar_rankings"] == 1
+    assert db.scalar("SELECT COUNT(*) FROM intraday_snapshots WHERE sample_at = ?", [old_sample]) == 0
+    assert db.scalar("SELECT COUNT(*) FROM intraday_snapshots WHERE sample_at = ?", [recent_sample]) == 1
+    assert db.scalar("SELECT COUNT(*) FROM intraday_radar_rankings WHERE sample_at = ?", [old_sample]) == 0

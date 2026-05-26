@@ -6,21 +6,10 @@ from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from backend.app.db import Database
+from backend.app.services.intraday_schedule import parse_intraday_schedule
 
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
-DEFAULT_INTRADAY_SLOTS = (
-    (9, 35),
-    (10, 0),
-    (10, 30),
-    (11, 0),
-    (11, 25),
-    (13, 0),
-    (13, 30),
-    (14, 0),
-    (14, 30),
-    (14, 55),
-)
 
 
 STOCK_BOARD_CASE = """
@@ -65,22 +54,22 @@ def _format_brief_published(value: Any) -> str:
 
 CAPABILITY_DEFINITIONS = {
     "历史 K 线": {
-        "fallback_sources": ["Baostock", "AData", "本地缓存"],
+        "fallback_sources": ["Baostock", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
     },
     "当天行情快照": {
-        "fallback_sources": ["AkShare 新浪", "AkShare 腾讯", "AData", "本地缓存"],
+        "fallback_sources": ["Tushare 实时日线", "AkShare 新浪", "AkShare 腾讯", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
     },
     "股票基础信息": {
-        "fallback_sources": ["Baostock", "AData", "AkShare 快照", "本地缓存"],
+        "fallback_sources": ["Baostock", "AkShare 快照", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
     },
     "流通市值": {
-        "fallback_sources": ["AkShare 新浪", "AData", "本地缓存"],
+        "fallback_sources": ["Tushare daily_basic", "AkShare 新浪", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
     },
@@ -114,6 +103,41 @@ CAPABILITY_DEFINITIONS = {
         "can_backfill": False,
         "participates_in_analysis": False,
     },
+    "每日指标": {
+        "fallback_sources": ["Tushare daily_basic"],
+        "can_backfill": True,
+        "participates_in_analysis": True,
+    },
+    "技术因子": {
+        "fallback_sources": ["Tushare stk_factor"],
+        "can_backfill": True,
+        "participates_in_analysis": True,
+    },
+    "资金流向": {
+        "fallback_sources": ["Tushare moneyflow"],
+        "can_backfill": True,
+        "participates_in_analysis": False,
+    },
+    "涨跌停": {
+        "fallback_sources": ["Tushare limit_list_d"],
+        "can_backfill": True,
+        "participates_in_analysis": False,
+    },
+    "筹码分布": {
+        "fallback_sources": ["Tushare cyq_perf", "Tushare cyq_chips"],
+        "can_backfill": True,
+        "participates_in_analysis": False,
+    },
+    "概念/行业成分": {
+        "fallback_sources": ["Tushare ths_member"],
+        "can_backfill": True,
+        "participates_in_analysis": False,
+    },
+    "龙虎榜/游资": {
+        "fallback_sources": ["Tushare top_list", "Tushare top_inst", "Tushare hm_detail"],
+        "can_backfill": True,
+        "participates_in_analysis": False,
+    },
 }
 
 
@@ -135,6 +159,17 @@ def _slot_status(
     if slot <= current < slot + timedelta(minutes=catchup_minutes):
         return "due"
     return "missed"
+
+
+def _latest_scheduled_task_slot(tasks_by_id: Dict[str, Dict[str, Any]]) -> Optional[datetime]:
+    slots: List[datetime] = []
+    for task_id in tasks_by_id:
+        try:
+            _, _, yyyymmdd, hhmm = task_id.split("-", 3)
+            slots.append(datetime.strptime(f"{yyyymmdd}{hhmm}", "%Y%m%d%H%M").replace(tzinfo=CHINA_TZ))
+        except ValueError:
+            continue
+    return max(slots) if slots else None
 
 
 class DataService:
@@ -177,6 +212,7 @@ class DataService:
         scheduler_enabled: bool = True,
         poll_seconds: int = 30,
         catchup_minutes: int = 8,
+        schedule: str = "",
     ) -> Dict[str, Any]:
         current = now or datetime.now(CHINA_TZ)
         current = current.astimezone(CHINA_TZ) if current.tzinfo else current.replace(tzinfo=CHINA_TZ)
@@ -192,12 +228,15 @@ class DataService:
             [f"intraday-auto-{today:%Y%m%d}-%"],
         )
         tasks_by_id = {row["id"]: row for row in task_rows}
+        latest_task_slot = _latest_scheduled_task_slot(tasks_by_id)
         slots = []
-        for hour, minute in DEFAULT_INTRADAY_SLOTS:
+        for hour, minute in parse_intraday_schedule(schedule):
             slot = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
             task_id = f"intraday-auto-{slot:%Y%m%d-%H%M}"
             task = tasks_by_id.get(task_id)
             status = _slot_status(current, slot, task, scheduler_enabled, catchup_minutes)
+            if status == "due" and latest_task_slot and slot < latest_task_slot:
+                status = "missed"
             sample_at = slot.replace(tzinfo=None)
             slots.append(
                 {
@@ -221,6 +260,13 @@ class DataService:
         queued = self.db.scalar("SELECT COUNT(*) FROM task_runs WHERE status = 'queued'") or 0
         running = self.db.scalar("SELECT COUNT(*) FROM task_runs WHERE status = 'running'") or 0
         next_slot = next((slot for slot in slots if slot["status"] in {"pending", "due"}), None)
+        completed_slots = [
+            slot
+            for slot in slots
+            if slot["status"] in {"completed_full", "completed_partial", "queued", "running"}
+        ]
+        latest_slot = completed_slots[-1] if completed_slots else None
+        remaining_count = len([slot for slot in slots if slot["status"] in {"pending", "due"}])
         latest_sample = self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots")
         return {
             "data": {
@@ -246,6 +292,10 @@ class DataService:
                 "poll_seconds": poll_seconds,
                 "catchup_minutes": catchup_minutes,
                 "next_slot": next_slot,
+                "slot_count": len(slots),
+                "completed_count": len(completed_slots),
+                "remaining_count": remaining_count,
+                "latest_slot": latest_slot,
                 "slots": slots,
             },
         }
@@ -625,6 +675,13 @@ class DataService:
             "ST / 停牌状态": self.db.scalar("SELECT COUNT(DISTINCT code) FROM historical_bars WHERE is_st IS NOT NULL OR tradestatus IS NOT NULL")
             or 0,
             "市场环境": 0,
+            "每日指标": 0,
+            "技术因子": 0,
+            "资金流向": 0,
+            "涨跌停": 0,
+            "筹码分布": 0,
+            "概念/行业成分": 0,
+            "龙虎榜/游资": 0,
         }
         source_rows = self.db.query(
             """

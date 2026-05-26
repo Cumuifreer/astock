@@ -498,6 +498,10 @@ export interface RuntimeHealth {
     poll_seconds: number;
     catchup_minutes: number;
     next_slot: RuntimeSlot | null;
+    slot_count: number;
+    completed_count: number;
+    remaining_count: number;
+    latest_slot: RuntimeSlot | null;
     slots: RuntimeSlot[];
   };
 }

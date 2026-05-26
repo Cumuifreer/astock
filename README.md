@@ -14,10 +14,9 @@ A-Share Signal 是一个私人使用的 A 股技术分析 Web 应用。它只做
 ## 数据源
 
 - Baostock：历史 K 线主源，使用前复权，保存成交量、成交额、换手率 `turn`、ST、停牌状态。
-- Tushare 实时日线：可选增强源。配置 token 后，盘中雷达会优先用 Tushare 中转实时 K 线采样，并同步写入当天快照；不可用时自动回退到 AkShare / AData。
-- AkShare 新浪：当天行情快照主源，保存最新价、涨跌幅、最高、最低、成交量、成交额、名称，能取到流通市值时一并缓存。
-- AkShare 腾讯：当天行情快照备用源。系统会检测当前 AkShare 是否暴露兼容接口；不可用时会记录原因并在数据地图显示。
-- AData：可选备用源。安装后自动检测，用于股票基础信息、快照、历史行情 fallback；接口返回空或不可用不会影响主流程。
+- Tushare 实时日线：盘中行情主源。配置 token 后，盘中雷达优先用 Tushare 中转实时 K 线采样，并同步写入当天快照。
+- AkShare 新浪：盘中行情应急备用源。Tushare 不可用或未配置时，保存最新价、涨跌幅、最高、最低、成交量、成交额、名称等快照字段。
+- AkShare 腾讯：盘中行情第二备用源。系统会检测当前 AkShare 是否暴露兼容接口；不可用时会记录原因并在数据地图显示。
 - 本地缓存：页面刷新、服务重启、外部源失败时都从 DuckDB 恢复已有状态。
 
 项目不接入东财 / EM 相关接口；数据源名称和数据地图中也不会把它列为可用来源。
@@ -27,7 +26,7 @@ A-Share Signal 是一个私人使用的 A 股技术分析 Web 应用。它只做
 - 换手率：优先来自 Baostock 历史 K 线字段 `turn`；缺失会计入覆盖率，策略可选择跳过或降级。
 - RPS：直接用本地历史收盘价计算 RPS20、RPS60、RPS120。计算方式为近 N 日涨幅在本地股票池中的百分位排名乘以 100。
 - 振幅：直接用本地 K 线计算，`(high - low) / prev_close`。
-- 流通市值：优先使用本地缓存；AkShare 新浪快照提供流通市值字段时写入缓存。缺失时按策略配置跳过或降级，不会导致分析失败。
+- 流通市值：优先使用本地缓存；Tushare 实时日线或 AkShare 快照提供流通市值字段时写入缓存。缺失时按策略配置跳过或降级，不会导致分析失败。
 
 ## 盘中雷达
 
@@ -48,15 +47,23 @@ curl -sS http://127.0.0.1:8000/api/status/intraday
 curl -sS http://127.0.0.1:8000/api/intraday
 ```
 
-适合的采样时间可以从 09:35、10:00、10:30、11:00、11:25、13:00、13:30、14:00、14:30、14:55 开始。轻量服务器上不建议全市场 5 分钟一次。
+默认盘中采样时间为 10 分钟一档：
 
-如果配置了 Tushare 实时日线，盘中雷达会优先使用它；失败时仍会回退到 AkShare 新浪、AkShare 腾讯、AData 和本地缓存。Tushare 初始化集中在 `backend/app/sources/tushare_client.py`，密钥只从环境变量读取，不要写进代码：
+`09:35,09:45,09:55,10:05,10:15,10:25,10:35,10:45,10:55,11:05,11:15,11:25,13:00,13:10,13:20,13:30,13:40,13:50,14:00,14:10,14:20,14:30,14:40,14:50,14:55`
+
+`ASHARE_INTRADAY_SCHEDULE` 是脚本、后端 scheduler 和状态页共同使用的时间表。轻量服务器上不建议全市场 5 分钟一次。
+
+如果配置了 Tushare 实时日线，盘中雷达会优先使用它；失败时回退到 AkShare 新浪、AkShare 腾讯和本地缓存。Tushare 初始化集中在 `backend/app/sources/tushare_client.py`，密钥只从环境变量读取，不要写进代码：
 
 ```bash
 export ASHARE_TUSHARE_TOKEN=your-token
 export ASHARE_TUSHARE_HTTP_URL=http://101.35.233.113:8020/
 export ASHARE_TUSHARE_REALTIME=1
+export ASHARE_INTRADAY_SCHEDULE=09:35,09:45,09:55,10:05,10:15,10:25,10:35,10:45,10:55,11:05,11:15,11:25,13:00,13:10,13:20,13:30,13:40,13:50,14:00,14:10,14:20,14:30,14:40,14:50,14:55
+export ASHARE_INTRADAY_RETENTION_DAYS=10
 ```
+
+轻量日更补齐历史 K 线后，会按 `ASHARE_INTRADAY_RETENTION_DAYS` 清理已落入历史 K 线的旧盘中快照和盘中排名。设为 `0` 会清掉所有符合条件的历史盘中行，设为负数会关闭清理。
 
 如果用 systemd 定时触发，可以让 timer 在这些时间运行：
 
@@ -68,6 +75,7 @@ Description=A-Share Signal Intraday Snapshot
 Type=oneshot
 WorkingDirectory=/opt/ashare-signal
 Environment=ASHARE_BASE_URL=http://127.0.0.1:8000
+Environment=ASHARE_INTRADAY_SCHEDULE=09:35,09:45,09:55,10:05,10:15,10:25,10:35,10:45,10:55,11:05,11:15,11:25,13:00,13:10,13:20,13:30,13:40,13:50,14:00,14:10,14:20,14:30,14:40,14:50,14:55
 ExecStart=/opt/ashare-signal/.venv/bin/python scripts/run_intraday_snapshot.py
 ```
 
@@ -76,7 +84,7 @@ ExecStart=/opt/ashare-signal/.venv/bin/python scripts/run_intraday_snapshot.py
 Description=A-Share Signal Intraday Snapshot Timer
 
 [Timer]
-OnCalendar=Mon..Fri 09:35,10:00,10:30,11:00,11:25,13:00,13:30,14:00,14:30,14:55
+OnCalendar=Mon..Fri 09:35,09:45,09:55,10:05,10:15,10:25,10:35,10:45,10:55,11:05,11:15,11:25,13:00,13:10,13:20,13:30,13:40,13:50,14:00,14:10,14:20,14:30,14:40,14:50,14:55
 Persistent=false
 
 [Install]
@@ -170,6 +178,8 @@ Environment="ASHARE_DAILY_BRIEF_TIME=08:20,18:20"
 Environment="ASHARE_TUSHARE_TOKEN=replace-with-your-token"
 Environment="ASHARE_TUSHARE_HTTP_URL=http://101.35.233.113:8020/"
 Environment="ASHARE_TUSHARE_REALTIME=1"
+Environment="ASHARE_INTRADAY_SCHEDULE=09:35,09:45,09:55,10:05,10:15,10:25,10:35,10:45,10:55,11:05,11:15,11:25,13:00,13:10,13:20,13:30,13:40,13:50,14:00,14:10,14:20,14:30,14:40,14:50,14:55"
+Environment="ASHARE_INTRADAY_RETENTION_DAYS=10"
 ExecStart=/opt/ashare-signal/.venv/bin/python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5

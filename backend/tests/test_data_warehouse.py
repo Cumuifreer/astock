@@ -111,3 +111,18 @@ def test_capabilities_count_snapshot_float_market_value(tmp_path):
 
     assert float_market_value["coverage_count"] == 1
     assert str(float_market_value["latest_update"]).startswith("2026-05-24")
+
+
+def test_capabilities_include_tushare_enrichment_layers(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    seed_stock_basics(db)
+
+    capabilities = DataService(db).capabilities()
+    by_name = {row["capability"]: row for row in capabilities}
+
+    for name in ["每日指标", "技术因子", "资金流向", "涨跌停", "筹码分布", "概念/行业成分", "龙虎榜/游资"]:
+        assert name in by_name
+        assert "Tushare" in " ".join(by_name[name]["fallback_sources"])
+    assert by_name["每日指标"]["participates_in_analysis"] is True
+    assert by_name["龙虎榜/游资"]["participates_in_analysis"] is False

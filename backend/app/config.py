@@ -30,6 +30,8 @@ class Settings:
     intraday_scheduler_enabled: bool = os.getenv("ASHARE_INTRADAY_SCHEDULER", "1") == "1"
     intraday_scheduler_poll_seconds: int = int(os.getenv("ASHARE_INTRADAY_SCHEDULER_POLL_SECONDS", "30"))
     intraday_scheduler_catchup_minutes: int = int(os.getenv("ASHARE_INTRADAY_SCHEDULER_CATCHUP_MINUTES", "8"))
+    intraday_schedule: str = os.getenv("ASHARE_INTRADAY_SCHEDULE", "")
+    intraday_retention_days: int = int(os.getenv("ASHARE_INTRADAY_RETENTION_DAYS", "10"))
     daily_brief_scheduler_enabled: bool = os.getenv("ASHARE_DAILY_BRIEF_SCHEDULER", "1") == "1"
     daily_brief_scheduler_poll_seconds: int = int(os.getenv("ASHARE_DAILY_BRIEF_POLL_SECONDS", "60"))
     daily_brief_schedule_time: str = os.getenv("ASHARE_DAILY_BRIEF_TIME", "08:20")

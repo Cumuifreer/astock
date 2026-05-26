@@ -458,6 +458,38 @@ h1 {
   pointer-events: none;
 }
 
+.slot-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+}
+
+.intraday-slot-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.slot-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.runtime-slot-summary {
+  margin-top: 12px;
+}
+
+.slot-summary span {
+  border: 1px solid rgba(157, 196, 187, 0.16);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.slot-summary b {
+  color: var(--text);
+}
+
 .slot-card {
   position: relative;
   min-height: 78px;
@@ -538,6 +570,15 @@ h1 {
 .slot-card.missed i {
   border-color: rgba(255, 92, 122, 0.72);
   background: var(--red);
+}
+
+.slot-card.compressed-slot {
+  min-height: 68px;
+  align-content: center;
+  justify-items: center;
+  padding: 14px 9px;
+  color: var(--muted);
+  font-family: "SFMono-Regular", "Roboto Mono", monospace;
 }
 
 .wide-panel {

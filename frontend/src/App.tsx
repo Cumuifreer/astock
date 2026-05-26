@@ -44,6 +44,7 @@ import type {
   AnalysisReportSummary,
   FunnelStep,
   RuntimeHealth,
+  RuntimeSlot,
   StrategyConfig,
   StrategyPreset,
   StrategyVersion,
@@ -335,6 +336,7 @@ function App() {
         <IntradayRadarPage
           result={bootstrap.intraday}
           task={bootstrap.intraday_status}
+          runtime={bootstrap.runtime_health}
           startSample={startIntradaySnapshot}
           saveConfig={saveIntradayConfig}
           addToWatchlist={addToWatchlist}
@@ -2030,12 +2032,14 @@ function BacktestSignals({ signals }: { signals: BacktestSignal[] }) {
 function IntradayRadarPage({
   result,
   task,
+  runtime,
   startSample,
   saveConfig,
   addToWatchlist,
 }: {
   result: IntradayRadarResult;
   task: TaskRun | null;
+  runtime: RuntimeHealth;
   startSample: () => Promise<void>;
   saveConfig: (config: IntradayRadarConfig) => Promise<void>;
   addToWatchlist?: (payload: Record<string, unknown>) => Promise<void>;
@@ -2074,7 +2078,7 @@ function IntradayRadarPage({
             </button>
           </div>
         </div>
-        <IntradaySlotTimeline sampleAt={result.sample_at} task={task} />
+        <IntradaySlotTimeline slots={runtime.scheduler.slots} />
         <IntradayRunStrip task={task} />
       </section>
 
@@ -2153,30 +2157,47 @@ function IntradayRadarPage({
   );
 }
 
-const INTRADAY_RADAR_SLOTS = ['09:35', '10:00', '10:30', '11:00', '11:25', '13:00', '13:30', '14:00', '14:30', '14:55'];
+function compactSlotWindow(slots: RuntimeSlot[]) {
+  const nextIndex = slots.findIndex((slot) => slot.status === 'pending' || slot.status === 'due');
+  const latestIndex = slots.reduce((last, slot, index) => (isObservedSlotStatus(slot.status) ? index : last), -1);
+  const anchor = nextIndex >= 0 ? nextIndex : latestIndex >= 0 ? latestIndex : 0;
+  const start = Math.max(0, anchor - 2);
+  const end = Math.min(slots.length, anchor + 3);
+  return {
+    rows: slots.slice(start, end),
+    hiddenBefore: start,
+    hiddenAfter: Math.max(0, slots.length - end),
+    nextSlot: nextIndex >= 0 ? slots[nextIndex] : null,
+    latestSlot: latestIndex >= 0 ? slots[latestIndex] : null,
+    remaining: slots.filter((slot) => slot.status === 'pending' || slot.status === 'due').length,
+  };
+}
 
-function IntradaySlotTimeline({ sampleAt, task }: { sampleAt: string | null; task: TaskRun | null }) {
-  const sampleTime = sampleAt ? String(sampleAt).slice(11, 16) : null;
-  const latestIndex = sampleTime
-    ? INTRADAY_RADAR_SLOTS.reduce((last, slot, index) => (slot <= sampleTime ? index : last), -1)
-    : -1;
-  const active = isTaskActive(task);
-  const activeIndex = active ? Math.min(latestIndex + 1, INTRADAY_RADAR_SLOTS.length - 1) : -1;
+function isObservedSlotStatus(status: string) {
+  return status === 'completed_full' || status === 'completed_partial' || status === 'queued' || status === 'running';
+}
+
+function IntradaySlotTimeline({ slots }: { slots: RuntimeSlot[] }) {
+  const compact = compactSlotWindow(slots);
   return (
-    <div className="slot-grid intraday-slot-grid" aria-label="盘中雷达时间轴">
-      {INTRADAY_RADAR_SLOTS.map((slot, index) => {
-        const status = index <= latestIndex ? 'completed_full' : active && index === activeIndex ? task?.status || 'running' : 'idle';
-        const label = index <= latestIndex ? '已采样' : active && index === activeIndex ? '运行中' : '等待';
-        const detail = index === latestIndex && sampleTime ? `最近 ${sampleTime}` : '-';
-        return (
-          <span key={slot} className={`slot-card ${status}`}>
+    <div className="intraday-slot-panel">
+      <div className="slot-summary">
+        <span>最近 <b>{compact.latestSlot?.time || '-'}</b></span>
+        <span>下次 <b>{compact.nextSlot?.time || '-'}</b></span>
+        <span>今日还剩 <b>{formatInt(compact.remaining)}</b> 次</span>
+      </div>
+      <div className="slot-grid intraday-slot-grid compact" aria-label="盘中雷达时间轴">
+        {compact.hiddenBefore ? <span className="slot-card muted compressed-slot">+{formatInt(compact.hiddenBefore)}</span> : null}
+        {compact.rows.map((slot) => (
+          <span key={slot.time} className={`slot-card ${slot.status} ${compact.nextSlot?.time === slot.time ? 'next' : ''}`}>
             <i />
-            <b>{slot}</b>
-            <em>{label}</em>
-            <small>{detail}</small>
+            <b>{slot.time}</b>
+            <em>{slotStatusLabel(slot.status)}</em>
+            <small>{slot.sample_count ? `${formatInt(slot.sample_count)} 样本` : slot.task_status ? statusLabel(slot.task_status) : '-'}</small>
           </span>
-        );
-      })}
+        ))}
+        {compact.hiddenAfter ? <span className="slot-card muted compressed-slot">+{formatInt(compact.hiddenAfter)}</span> : null}
+      </div>
     </div>
   );
 }
@@ -2525,6 +2546,7 @@ function RuntimeHealthPanel({ runtime }: { runtime: RuntimeHealth }) {
   const activeStage = runtime.tasks.latest_intraday?.stage || runtime.tasks.latest_update?.stage || runtime.tasks.latest_analyze?.stage || runtime.tasks.latest_brief?.stage;
   const schedulerState = !runtime.scheduler.enabled ? '定时关闭' : runtime.scheduler.is_weekend ? '周末休眠' : '系统待命';
   const nextAction = runtime.scheduler.enabled ? `下一次盘中采样 ${nextSlot}` : '定时任务未启用';
+  const compact = compactSlotWindow(runtime.scheduler.slots);
   return (
     <section className="panel runtime-panel">
       <div className="runtime-head">
@@ -2557,8 +2579,15 @@ function RuntimeHealthPanel({ runtime }: { runtime: RuntimeHealth }) {
           </span>
         </div>
       </div>
-      <div className="slot-grid">
-        {runtime.scheduler.slots.map((slot) => (
+      <div className="slot-summary runtime-slot-summary">
+        <span>最近 <b>{compact.latestSlot?.time || '-'}</b></span>
+        <span>下次 <b>{compact.nextSlot?.time || '-'}</b></span>
+        <span>今日还剩 <b>{formatInt(runtime.scheduler.remaining_count)}</b> 次</span>
+        <span>共 <b>{formatInt(runtime.scheduler.slot_count)}</b> 个节点</span>
+      </div>
+      <div className="slot-grid compact">
+        {compact.hiddenBefore ? <span className="slot-card muted compressed-slot">+{formatInt(compact.hiddenBefore)}</span> : null}
+        {compact.rows.map((slot) => (
           <span key={slot.time} className={`slot-card ${slot.status} ${runtime.scheduler.next_slot?.time === slot.time ? 'next' : ''}`}>
             <i />
             <b>{slot.time}</b>
@@ -2567,6 +2596,7 @@ function RuntimeHealthPanel({ runtime }: { runtime: RuntimeHealth }) {
             {(slot.strict_count || slot.score_count) ? <small>{formatInt(slot.strict_count)} / {formatInt(slot.score_count)}</small> : null}
           </span>
         ))}
+        {compact.hiddenAfter ? <span className="slot-card muted compressed-slot">+{formatInt(compact.hiddenAfter)}</span> : null}
       </div>
     </section>
   );
@@ -3434,6 +3464,34 @@ const dataLedgerMeta: Record<string, { fields: string[]; expected: ExpectedDateK
   },
   市场环境: {
     fields: ['date', 'index_code', 'trend_score', 'risk_level'],
+    expected: 'as_needed',
+  },
+  每日指标: {
+    fields: ['code', 'date', 'turnover_rate', 'volume_ratio', 'circ_mv'],
+    expected: 'history',
+  },
+  技术因子: {
+    fields: ['code', 'date', 'macd', 'kdj', 'rsi', 'boll'],
+    expected: 'history',
+  },
+  资金流向: {
+    fields: ['code', 'date', 'net_mf_amount', 'buy_lg_amount'],
+    expected: 'history',
+  },
+  涨跌停: {
+    fields: ['code', 'trade_date', 'limit', 'open_times', 'fd_amount'],
+    expected: 'history',
+  },
+  筹码分布: {
+    fields: ['code', 'trade_date', 'winner_rate', 'cost_50pct'],
+    expected: 'history',
+  },
+  '概念/行业成分': {
+    fields: ['code', 'ts_code', 'con_name', 'source'],
+    expected: 'as_needed',
+  },
+  '龙虎榜/游资': {
+    fields: ['code', 'trade_date', 'net_amount', 'hm_name'],
     expected: 'as_needed',
   },
 };

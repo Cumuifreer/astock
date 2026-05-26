@@ -65,6 +65,7 @@ def bootstrap() -> Dict[str, Any]:
             scheduler_enabled=settings.intraday_scheduler_enabled,
             poll_seconds=settings.intraday_scheduler_poll_seconds,
             catchup_minutes=settings.intraday_scheduler_catchup_minutes,
+            schedule=settings.intraday_schedule,
         ),
     }
 
@@ -145,6 +146,7 @@ def runtime_health() -> Dict[str, Any]:
         scheduler_enabled=settings.intraday_scheduler_enabled,
         poll_seconds=settings.intraday_scheduler_poll_seconds,
         catchup_minutes=settings.intraday_scheduler_catchup_minutes,
+        schedule=settings.intraday_schedule,
     )
 
 

@@ -8,6 +8,12 @@ import urllib.request
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from backend.app.services.intraday_schedule import (
+    DEFAULT_INTRADAY_SCHEDULE_TEXT,
+    format_intraday_schedule,
+    parse_intraday_schedule,
+)
+
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -48,9 +54,9 @@ def main() -> int:
 def _schedule() -> set[str]:
     raw = os.getenv(
         "ASHARE_INTRADAY_SCHEDULE",
-        "09:35,10:00,10:30,11:00,11:25,13:00,13:30,14:00,14:30,14:55",
+        DEFAULT_INTRADAY_SCHEDULE_TEXT,
     )
-    return {item.strip() for item in raw.split(",") if item.strip()}
+    return set(format_intraday_schedule(parse_intraday_schedule(raw)))
 
 
 if __name__ == "__main__":

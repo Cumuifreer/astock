@@ -4,8 +4,24 @@ from zoneinfo import ZoneInfo
 from backend.app.db import Database
 from backend.app.schema import migrate
 from backend.app.services.data_service import DataService
+from backend.app.services.intraday_schedule import DEFAULT_INTRADAY_SCHEDULE_TEXT, parse_intraday_schedule
 from backend.app.services.intraday_scheduler import IntradayScheduler
 from backend.app.services.update_service import UpdateService
+
+
+def test_default_intraday_schedule_has_10_minute_slots():
+    slots = parse_intraday_schedule("")
+
+    assert len(slots) == 25
+    assert slots[0] == (9, 35)
+    assert slots[1] == (9, 45)
+    assert slots[-2:] == [(14, 50), (14, 55)]
+    assert DEFAULT_INTRADAY_SCHEDULE_TEXT.startswith("09:35,09:45,09:55")
+
+
+def test_intraday_schedule_parser_sorts_deduplicates_and_falls_back():
+    assert parse_intraday_schedule("10:00,09:35,10:00,bad,25:99") == [(9, 35), (10, 0)]
+    assert parse_intraday_schedule("bad,25:99") == parse_intraday_schedule("")
 
 
 def test_intraday_scheduler_enqueues_due_beijing_slot_once(tmp_path, monkeypatch):
@@ -76,6 +92,11 @@ def test_runtime_health_reports_scheduler_slots_and_data_dates(tmp_path, monkeyp
     assert health["scheduler"]["enabled"] is True
     assert health["scheduler"]["timezone"] == "Asia/Shanghai"
     assert health["scheduler"]["is_weekend"] is False
+    assert len(health["scheduler"]["slots"]) == 25
+    assert health["scheduler"]["slot_count"] == 25
+    assert health["scheduler"]["completed_count"] >= 0
+    assert health["scheduler"]["remaining_count"] == 0
+    assert health["scheduler"]["latest_slot"]["time"] == "14:55"
     assert slot_1455["status"] == "queued"
     assert slot_1455["task_id"] == "intraday-auto-20260522-1455"
     assert health["tasks"]["queued"] == 1
