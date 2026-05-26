@@ -617,11 +617,17 @@ h1 {
   align-items: center;
   gap: 10px;
   margin-bottom: 10px;
+  min-width: 0;
 }
 
 .task-strip small {
   margin-left: auto;
   color: var(--muted);
+  min-width: 0;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .task-strip.idle {
@@ -1408,11 +1414,11 @@ h1 {
 }
 
 .radar-table {
-  min-width: 1260px;
+  min-width: 1180px;
 }
 
 .candidate-table {
-  min-width: 1500px;
+  min-width: 1400px;
 }
 
 .candidate-sort-bar {
@@ -1813,7 +1819,7 @@ h1 {
 }
 
 .watchlist-table {
-  min-width: 1580px;
+  min-width: 1480px;
 }
 
 .watchlist-status,
@@ -2117,6 +2123,16 @@ h1 {
   background: rgba(59, 240, 193, 0.1);
 }
 
+.table-action.disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.chart-action {
+  flex: 0 0 auto;
+  text-decoration: none;
+}
+
 .table-action.danger {
   color: var(--red);
   border-color: rgba(255, 92, 122, 0.24);
@@ -2147,14 +2163,9 @@ th {
   background: #090e10;
 }
 
-.candidate-table th:last-child,
-.candidate-table td:last-child,
-.radar-table th:last-child,
-.radar-table td:last-child,
-.watchlist-table th:last-child,
-.watchlist-table td:last-child,
-.backtest-table th:last-child,
-.backtest-table td:last-child {
+.candidate-table .sticky-action,
+.radar-table .sticky-action,
+.watchlist-table .sticky-action {
   position: sticky;
   right: 0;
   z-index: 2;
@@ -2162,10 +2173,9 @@ th {
   box-shadow: -12px 0 18px rgba(0, 0, 0, 0.18);
 }
 
-.candidate-table td:last-child,
-.radar-table td:last-child,
-.watchlist-table td:last-child,
-.backtest-table td:last-child {
+.candidate-table td.sticky-action,
+.radar-table td.sticky-action,
+.watchlist-table td.sticky-action {
   background: #080d0f;
 }
 
@@ -2190,11 +2200,20 @@ tr.selected-row td {
 .name-cell {
   display: grid;
   gap: 3px;
+  min-width: 0;
 }
 
 .name-cell span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.name-action-cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 8px;
+  align-items: center;
+  min-width: 190px;
 }
 
 .up {
@@ -2782,12 +2801,25 @@ tr.selected-row td {
   border: 1px solid var(--line);
   padding: 10px;
   color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.task-stats em {
+  display: block;
+  color: var(--muted);
+  font-style: normal;
 }
 
 .task-stats b {
   display: block;
   color: var(--text);
   margin-top: 5px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .history-heartbeat {

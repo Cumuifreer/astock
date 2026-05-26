@@ -1511,8 +1511,7 @@ function CandidatePanel({
                 <th>阶段</th>
                 <th>分数</th>
                 <th>细分</th>
-                <th>看图</th>
-                {onAddRows && <th>入池</th>}
+                {onAddRows && <th className="sticky-action">入池</th>}
               </tr>
             </thead>
             <tbody>
@@ -1525,9 +1524,12 @@ function CandidatePanel({
                       <td>{index + 1}</td>
                       <td className="mono">{row.code}</td>
                       <td>
-                        <div className="name-cell">
-                          <strong>{row.name}</strong>
-                          <span>{row.reasons?.slice(0, 2).join(' / ')}</span>
+                        <div className="name-action-cell">
+                          <div className="name-cell">
+                            <strong>{row.name}</strong>
+                            <span>{row.reasons?.slice(0, 2).join(' / ')}</span>
+                          </div>
+                          <ChartAction href={row.chart_url} title="看图" />
                         </div>
                       </td>
                       <td>{formatPrice(row.latest_price)}</td>
@@ -1554,9 +1556,8 @@ function CandidatePanel({
                           <BarChart3 size={14} />
                         </button>
                       </td>
-                      <td><a href={row.chart_url} target="_blank" rel="noreferrer">打开</a></td>
                       {onAddRows && (
-                        <td>
+                        <td className="sticky-action">
                           <button className="table-action" onClick={() => void onAddRows([row])} title="加入观察池">
                             <Plus size={14} />
                           </button>
@@ -1565,7 +1566,7 @@ function CandidatePanel({
                     </tr>
                     {expanded && (
                       <tr className="candidate-expanded">
-                        <td colSpan={onAddRows ? 17 : 16}>
+                        <td colSpan={onAddRows ? 16 : 15}>
                           <CandidateScoreDetails row={row} />
                         </td>
                       </tr>
@@ -1659,6 +1660,28 @@ function CandidateScoreDetails({ row }: { row: Candidate }) {
         </>
       )}
     </div>
+  );
+}
+
+function ChartAction({ href, title }: { href?: string | null; title: string }) {
+  if (!href) {
+    return (
+      <span className="table-action disabled" title="暂无看盘链接">
+        <CandlestickChart size={14} />
+      </span>
+    );
+  }
+  return (
+    <a
+      className="table-action chart-action"
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={title}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <CandlestickChart size={14} />
+    </a>
   );
 }
 
@@ -1893,8 +1916,7 @@ function WatchlistPage({
                     <th>天数</th>
                     <th>状态</th>
                     <th>备注</th>
-                    <th>看盘</th>
-                    <th>删除</th>
+                    <th className="sticky-action">删除</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1902,9 +1924,12 @@ function WatchlistPage({
                     <tr key={`${batch.id}-${item.code}`}>
                       <td className="mono">{item.code}</td>
                       <td>
-                        <div className="name-cell">
-                          <strong>{item.name}</strong>
-                          <span>{item.signal_type || batch.source_label} · {item.reasons?.slice(0, 2).join(' / ') || '观察记录'}</span>
+                        <div className="name-action-cell">
+                          <div className="name-cell">
+                            <strong>{item.name}</strong>
+                            <span>{item.signal_type || batch.source_label} · {item.reasons?.slice(0, 2).join(' / ') || '观察记录'}</span>
+                          </div>
+                          <ChartAction href={item.chart_url} title="看盘" />
                         </div>
                       </td>
                       <td>{formatPrice(item.entry_price)}</td>
@@ -1952,8 +1977,7 @@ function WatchlistPage({
                           }}
                         />
                       </td>
-                      <td><a href={item.chart_url} target="_blank" rel="noreferrer">打开</a></td>
-                      <td>
+                      <td className="sticky-action">
                         <button
                           className="table-action danger"
                           disabled={busyKey === `${item.batch_id}-${item.code}`}
@@ -2503,8 +2527,7 @@ function IntradayRadarTable({
                 <th>量能</th>
                 <th>分数</th>
                 <th>时间线</th>
-                <th>看盘</th>
-                {onAddRows && <th>入池</th>}
+                {onAddRows && <th className="sticky-action">入池</th>}
               </tr>
             </thead>
             <tbody>
@@ -2517,9 +2540,12 @@ function IntradayRadarTable({
                       <td>{row.rank}</td>
                       <td className="mono">{row.code}</td>
                       <td>
-                        <div className="name-cell">
-                          <strong>{row.name}</strong>
-                          <span>{row.reasons?.slice(0, 2).join(' / ')}</span>
+                        <div className="name-action-cell">
+                          <div className="name-cell">
+                            <strong>{row.name}</strong>
+                            <span>{row.reasons?.slice(0, 2).join(' / ')}</span>
+                          </div>
+                          <ChartAction href={row.chart_url} title="看盘" />
                         </div>
                       </td>
                       <td><span className="signal radar-signal">{row.status}</span></td>
@@ -2536,9 +2562,8 @@ function IntradayRadarTable({
                           <History size={14} />
                         </button>
                       </td>
-                      <td><a href={row.chart_url} target="_blank" rel="noreferrer">打开</a></td>
                       {onAddRows && (
-                        <td>
+                        <td className="sticky-action">
                           <button className="table-action" onClick={() => void onAddRows([row])} title="加入观察池">
                             <Plus size={14} />
                           </button>
@@ -2547,7 +2572,7 @@ function IntradayRadarTable({
                     </tr>
                     {expanded && (
                       <tr className="timeline-expanded">
-                        <td colSpan={onAddRows ? 15 : 14}>
+                        <td colSpan={onAddRows ? 14 : 13}>
                           <RadarTimeline timeline={timeline} loading={timelineLoading} />
                         </td>
                       </tr>
@@ -2859,6 +2884,8 @@ function TaskDetail({ task }: { task: TaskRun | null }) {
   const analyzeRunning = task.kind === 'analyze' && task.status === 'running';
   const historyProgress = taskHistoryProgress(task);
   const summaryStats = taskSummaryStats(task);
+  const sourceValue = compactTaskText(task.source || '本地缓存');
+  const currentValue = compactTaskText(historyProgress ? `${historyProgress.currentDate} · ${historyProgress.step}` : task.current_stock || '-');
   return (
     <div className="task-detail">
       <div className="status-line">
@@ -2867,30 +2894,30 @@ function TaskDetail({ task }: { task: TaskRun | null }) {
       </div>
       <Progress value={visual.value} indeterminate={visual.indeterminate} />
       <div className="task-stats">
-        <span>来源 <b>{task.source || '本地缓存'}</b></span>
+        <TaskStatCell label="来源" value={sourceValue.text} title={sourceValue.title} />
         {queued ? (
           <>
-            <span>当前 <b>等待前序任务</b></span>
-            <span>进度 <b>排队中</b></span>
-            <span>成功 <b>{formatInt(task.success)}</b></span>
-            <span>失败 <b>{formatInt(task.failed)}</b></span>
-            <span>跳过 <b>{formatInt(task.skipped)}</b></span>
+            <TaskStatCell label="当前" value="等待前序任务" />
+            <TaskStatCell label="进度" value="排队中" />
+            <TaskStatCell label="成功" value={formatInt(task.success)} />
+            <TaskStatCell label="失败" value={formatInt(task.failed)} />
+            <TaskStatCell label="跳过" value={formatInt(task.skipped)} />
           </>
         ) : analyzeRunning ? (
           <>
-            <span>当前阶段 <b>{task.stage || '准备分析'}</b></span>
-            <span>方式 <b>批量计算</b></span>
-            <span>进度 <b>自动刷新</b></span>
-            <span>结果 <b>完成后写入报告</b></span>
-            <span>状态 <b>运行中</b></span>
+            <TaskStatCell label="当前阶段" value={task.stage || '准备分析'} />
+            <TaskStatCell label="方式" value="批量计算" />
+            <TaskStatCell label="进度" value="自动刷新" />
+            <TaskStatCell label="结果" value="完成后写入报告" />
+            <TaskStatCell label="状态" value="运行中" />
           </>
         ) : (
           <>
-            <span>当前 <b>{historyProgress ? `${historyProgress.currentDate} · ${historyProgress.step}` : task.current_stock || '-'}</b></span>
-            <span>进度 <b>{historyProgress ? `${formatInt(historyProgress.dayIndex)} / ${formatInt(historyProgress.dayTotal)} 个日期` : `${formatInt(task.processed)} / ${formatInt(task.total)}`}</b></span>
-            <span>成功 <b>{formatInt(task.success)}</b></span>
-            <span>失败 <b>{formatInt(task.failed)}</b></span>
-            <span>跳过 <b>{formatInt(task.skipped)}</b></span>
+            <TaskStatCell label="当前" value={currentValue.text} title={currentValue.title} />
+            <TaskStatCell label="进度" value={historyProgress ? `${formatInt(historyProgress.dayIndex)} / ${formatInt(historyProgress.dayTotal)} 个日期` : `${formatInt(task.processed)} / ${formatInt(task.total)}`} />
+            <TaskStatCell label="成功" value={formatInt(task.success)} />
+            <TaskStatCell label="失败" value={formatInt(task.failed)} />
+            <TaskStatCell label="跳过" value={formatInt(task.skipped)} />
           </>
         )}
       </div>
@@ -2917,7 +2944,7 @@ function TaskDetail({ task }: { task: TaskRun | null }) {
       {summaryStats.length > 0 && (
         <div className="task-stats">
           {summaryStats.map((item) => (
-            <span key={item.label}>{item.label} <b>{item.value}</b></span>
+            <TaskStatCell key={item.label} label={item.label} value={compactTaskText(item.value).text} title={compactTaskText(item.value).title} />
           ))}
         </div>
       )}
@@ -2925,6 +2952,35 @@ function TaskDetail({ task }: { task: TaskRun | null }) {
       {task.error_message && <InlineError text={task.error_message} />}
     </div>
   );
+}
+
+function TaskStatCell({ label, value, title }: { label: string; value: ReactNode; title?: string }) {
+  return (
+    <span className="task-stat-cell">
+      <em>{label}</em>
+      <b title={title}>{value}</b>
+    </span>
+  );
+}
+
+function compactTaskText(value: unknown) {
+  const raw = String(value || '-').trim();
+  if (!raw || raw === '-') return { text: '-', title: undefined };
+  const parts = raw.split(/[,\s]+/).map((part) => part.trim()).filter(Boolean);
+  const looksLikeCodeList = parts.length > 2 && parts.every((part) => /^\d{6}\.(SH|SZ|BJ)$/.test(part));
+  if (looksLikeCodeList) {
+    return {
+      text: `${parts.slice(0, 2).join(', ')} 等 ${formatInt(parts.length)} 项`,
+      title: raw,
+    };
+  }
+  if (raw.length > 34) {
+    return {
+      text: `${raw.slice(0, 31)}...`,
+      title: raw,
+    };
+  }
+  return { text: raw, title: undefined };
 }
 
 function taskHistoryProgress(task: TaskRun) {
@@ -3119,12 +3175,13 @@ function PanelTitle({ icon, title }: { icon: ReactNode; title: string }) {
 function TaskStrip({ task, fallback }: { task: TaskRun | null; fallback: string }) {
   if (!task) return <div className="task-strip idle">{fallback}</div>;
   const visual = taskProgressVisual(task);
+  const detail = compactTaskText(task.status === 'queued' ? '等待前序任务' : task.kind === 'analyze' && task.status === 'running' ? '阶段推进中' : task.current_stock || task.source || '本地缓存');
   return (
     <div className="task-strip">
       <div>
         <span className={`status-badge ${task.status}`}>{statusLabel(task.status)}</span>
         <strong>{task.stage}</strong>
-        <small>{task.status === 'queued' ? '等待前序任务' : task.kind === 'analyze' && task.status === 'running' ? '阶段推进中' : task.current_stock || task.source || '本地缓存'}</small>
+        <small title={detail.title}>{detail.text}</small>
       </div>
       <Progress value={visual.value} indeterminate={visual.indeterminate} />
     </div>
