@@ -201,6 +201,49 @@ def test_save_preset_records_version_without_generic_version_upsert(tmp_path, mo
     assert [version["version_number"] for version in versions] == [1]
 
 
+def test_save_preset_preserves_signal_profile_rules(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = StrategyService(db)
+    profile = {
+        "id": "theme_resonance_breakout",
+        "name": "题材共振突破",
+        "base_signal_mode": "platform_breakout",
+        "description": "平台突破叠加题材和量能。",
+        "note": "可编辑组合规则。",
+        "rule_groups": [
+            {
+                "id": "interactions",
+                "label": "组合规则",
+                "rules": [
+                    {
+                        "id": "theme_volume_breakout",
+                        "name": "题材热度 x 放量突破",
+                        "kind": "interaction",
+                        "indicator_ids": ["platform_breakout_clearance", "volume_ratio", "topic_heat"],
+                        "expression": "突破幅度、量比和题材热度同时走强。",
+                        "effect": {"type": "score", "value": 15},
+                        "missing_policy": "neutral",
+                        "editable": True,
+                    }
+                ],
+            }
+        ],
+    }
+
+    preset = service.save_preset(
+        "题材共振突破",
+        {"signal_mode": "platform_breakout", "signal_profile": profile},
+    )
+    saved = service.get_preset(preset["id"])
+
+    assert saved is not None
+    saved_profile = saved["config"]["signal_profile"]
+    assert saved_profile["id"] == "theme_resonance_breakout"
+    assert saved_profile["rule_groups"][0]["rules"][0]["kind"] == "interaction"
+    assert saved_profile["rule_groups"][0]["rules"][0]["editable"] is True
+
+
 def test_migrate_backfills_initial_version_for_existing_custom_presets(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

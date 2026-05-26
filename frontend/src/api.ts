@@ -1,4 +1,4 @@
-import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, IntradayRadarConfig, IntradayRadarResult, IntradayTimeline, RuntimeHealth, StrategyConfig, StrategyPreset, StrategyVersion, WatchlistResult } from './types';
+import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, IndicatorLibrary, IntradayRadarConfig, IntradayRadarResult, IntradayTimeline, RuntimeHealth, StrategyConfig, StrategyPreset, StrategyVersion, WatchlistResult } from './types';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -22,6 +22,7 @@ export const api = {
   bootstrap: () => request<Bootstrap>('/api/bootstrap'),
   dataOverview: () => request('/api/data/overview'),
   capabilities: () => request('/api/data/capabilities'),
+  indicators: () => request<IndicatorLibrary>('/api/indicators'),
   probeSources: () => request('/api/data/probe', { method: 'POST', body: JSON.stringify({}) }),
   stocks: (limit: number, offset: number, search: string, filters: Record<string, string> = {}) => {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset), search });

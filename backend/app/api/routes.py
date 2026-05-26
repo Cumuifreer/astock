@@ -11,6 +11,7 @@ from backend.app.services.analysis_service import AnalysisService
 from backend.app.services.backtest_service import BacktestService
 from backend.app.services.data_service import DataService
 from backend.app.services.intraday_service import IntradayRadarService
+from backend.app.services.indicator_registry import indicator_library
 from backend.app.services.strategy_service import StrategyService
 from backend.app.services.update_service import TaskBusy, UpdateService
 from backend.app.services.watchlist_service import WatchlistService
@@ -47,6 +48,7 @@ def bootstrap() -> Dict[str, Any]:
     return {
         "overview": data_service.overview(),
         "capabilities": data_service.capabilities(),
+        "indicator_library": indicator_library(),
         "strategies": strategy_service.list_presets(),
         "default_strategy": strategy_service.default_config(),
         "update_status": data_service.latest_task("update"),
@@ -78,6 +80,11 @@ def data_overview() -> Dict[str, Any]:
 @router.get("/data/capabilities")
 def data_capabilities() -> Dict[str, Any]:
     return {"rows": data_service.capabilities()}
+
+
+@router.get("/indicators")
+def indicators() -> Dict[str, Any]:
+    return indicator_library()
 
 
 @router.post("/data/probe")

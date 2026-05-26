@@ -33,6 +33,64 @@ export interface Capability {
   participates_in_analysis: boolean;
 }
 
+export interface IndicatorCategory {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface IndicatorDefinition {
+  id: string;
+  name: string;
+  category_id: string;
+  status: 'active' | 'available' | 'planned';
+  source: string;
+  formula: string;
+  description: string;
+  usage: string[];
+  default_missing_policy: string;
+  analysis_ready: boolean;
+}
+
+export interface IndicatorRule {
+  id: string;
+  name: string;
+  kind: 'filter' | 'score' | 'risk' | 'interaction';
+  indicator_ids: string[];
+  expression: string;
+  effect: { type: string; value: string | number };
+  missing_policy: string;
+  editable: boolean;
+}
+
+export interface SignalModeTemplate {
+  id: string;
+  name: string;
+  base_signal_mode: string;
+  description: string;
+  note: string;
+  rule_groups: Array<{
+    id: string;
+    label: string;
+    rules: IndicatorRule[];
+  }>;
+}
+
+export interface IndicatorLibrary {
+  categories: IndicatorCategory[];
+  indicators: IndicatorDefinition[];
+  signal_modes: SignalModeTemplate[];
+  summary: {
+    category_count: number;
+    indicator_count: number;
+    active_count: number;
+    available_count: number;
+    planned_count: number;
+    signal_mode_count: number;
+    interaction_rule_count: number;
+  };
+}
+
 export interface StrategyPreset {
   id: string;
   name: string;
@@ -144,6 +202,7 @@ export interface StrategyConfig {
   missing_float_market_value_policy: string;
   include_bj: boolean;
   exclude_star_board: boolean;
+  signal_profile?: SignalModeTemplate | null;
 }
 
 export interface Overview {
@@ -533,6 +592,7 @@ export interface Candidate {
 export interface Bootstrap {
   overview: Overview;
   capabilities: Capability[];
+  indicator_library: IndicatorLibrary;
   strategies: StrategyPreset[];
   default_strategy: StrategyConfig;
   update_status: TaskRun | null;

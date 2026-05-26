@@ -37,6 +37,9 @@ import type {
   Capability,
   BriefItem,
   DailyBrief,
+  IndicatorDefinition,
+  IndicatorLibrary,
+  IndicatorRule,
   IntradayRadarCandidate,
   IntradayRadarConfig,
   IntradayRadarResult,
@@ -46,6 +49,7 @@ import type {
   FunnelStep,
   RuntimeHealth,
   RuntimeSlot,
+  SignalModeTemplate,
   StrategyConfig,
   StrategyPreset,
   StrategyVersion,
@@ -56,7 +60,7 @@ import type {
 } from './types';
 import './styles.css';
 
-type Tab = 'overview' | 'warehouse' | 'strategy' | 'intraday' | 'results' | 'watchlist' | 'backtest' | 'map' | 'status';
+type Tab = 'overview' | 'warehouse' | 'indicators' | 'strategy' | 'intraday' | 'results' | 'watchlist' | 'backtest' | 'map' | 'status';
 type UpdateMode = 'full' | 'daily_light';
 type CandidateSortKey =
   | 'none'
@@ -88,6 +92,7 @@ const candidateSortOptions: Array<{ value: CandidateSortKey; label: string }> = 
 const navItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: 'overview', label: '总览', icon: <Gauge size={17} /> },
   { id: 'warehouse', label: '数据仓库', icon: <Database size={17} /> },
+  { id: 'indicators', label: '指标库', icon: <LineChart size={17} /> },
   { id: 'strategy', label: '策略', icon: <SlidersHorizontal size={17} /> },
   { id: 'intraday', label: '盘中雷达', icon: <Activity size={17} /> },
   { id: 'results', label: '分析结果', icon: <BarChart3 size={17} /> },
@@ -296,9 +301,11 @@ function App() {
       );
     }
     if (tab === 'warehouse') return <Warehouse />;
+    if (tab === 'indicators') return <IndicatorLibraryPage library={bootstrap.indicator_library} />;
     if (tab === 'strategy') {
       return (
         <StrategyPanel
+          indicatorLibrary={bootstrap.indicator_library}
           presets={bootstrap.strategies}
           selectedPresetId={selectedPresetId}
           strategy={strategy}
@@ -987,7 +994,407 @@ function conceptProfileRows(concepts: Array<Record<string, unknown>>): Array<[Re
   ]);
 }
 
+function IndicatorLibraryPage({ library }: { library: IndicatorLibrary }) {
+  const [category, setCategory] = useState(library.categories[0]?.id || '');
+  const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState(library.indicators[0]?.id || '');
+  const categoryMap = useMemo(
+    () => Object.fromEntries(library.categories.map((item) => [item.id, item])),
+    [library.categories],
+  );
+  const indicators = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return library.indicators.filter((indicator) => {
+      const matchesCategory = !category || indicator.category_id === category;
+      const haystack = `${indicator.name} ${indicator.id} ${indicator.description} ${indicator.formula}`.toLowerCase();
+      return matchesCategory && (!query || haystack.includes(query));
+    });
+  }, [category, library.indicators, search]);
+  const selected = library.indicators.find((item) => item.id === selectedId) || indicators[0] || library.indicators[0];
+  const groupedTemplates = useMemo(
+    () => library.signal_modes.map((template) => ({
+      ...template,
+      interactionCount: template.rule_groups.reduce(
+        (sum, group) => sum + group.rules.filter((rule) => rule.kind === 'interaction').length,
+        0,
+      ),
+    })),
+    [library.signal_modes],
+  );
+
+  useEffect(() => {
+    if (!indicators.some((item) => item.id === selectedId) && indicators[0]) {
+      setSelectedId(indicators[0].id);
+    }
+  }, [indicators, selectedId]);
+
+  return (
+    <div className="indicator-page">
+      <section className="panel indicator-hero">
+        <div>
+          <PanelTitle icon={<LineChart size={18} />} title="指标库" />
+          <p>把行情、技术、资金、题材、事件和筹码都整理成可解释指标。策略以后引用这些指标，而不是把参数散落在各处。</p>
+        </div>
+        <div className="indicator-summary">
+          <span><b>{formatInt(library.summary.indicator_count)}</b><em>指标</em></span>
+          <span><b>{formatInt(library.summary.active_count)}</b><em>已进分析</em></span>
+          <span><b>{formatInt(library.summary.interaction_rule_count)}</b><em>组合规则</em></span>
+        </div>
+      </section>
+
+      <section className="indicator-layout">
+        <aside className="panel indicator-sidebar">
+          <input
+            className="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="搜索指标 / 公式 / 用途"
+          />
+          <div className="indicator-categories">
+            {library.categories.map((item) => {
+              const count = library.indicators.filter((indicator) => indicator.category_id === item.id).length;
+              return (
+                <button
+                  key={item.id}
+                  className={category === item.id ? 'active' : ''}
+                  onClick={() => setCategory(item.id)}
+                  type="button"
+                >
+                  <strong>{item.label}</strong>
+                  <small>{count} 个指标</small>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+
+        <section className="panel indicator-list-panel">
+          <div className="indicator-list-head">
+            <div>
+              <strong>{categoryMap[category]?.label || '全部指标'}</strong>
+              <span>{categoryMap[category]?.description || '按分类浏览指标定义。'}</span>
+            </div>
+            <b>{formatInt(indicators.length)}</b>
+          </div>
+          <div className="indicator-card-grid">
+            {indicators.map((indicator) => (
+              <button
+                key={indicator.id}
+                className={selected?.id === indicator.id ? 'indicator-card active' : 'indicator-card'}
+                onClick={() => setSelectedId(indicator.id)}
+                type="button"
+              >
+                <div>
+                  <strong>{indicator.name}</strong>
+                  <span>{categoryMap[indicator.category_id]?.label}</span>
+                </div>
+                <p>{indicator.description}</p>
+                <footer>
+                  <em className={`status-pill ${indicator.status}`}>{indicatorStatusLabel(indicator.status)}</em>
+                  <small>{indicatorUsageLabel(indicator.usage)}</small>
+                </footer>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <aside className="panel indicator-detail">
+          {selected ? (
+            <>
+              <div className="indicator-detail-head">
+                <span className={`status-pill ${selected.status}`}>{indicatorStatusLabel(selected.status)}</span>
+                <h2>{selected.name}</h2>
+                <p>{selected.description}</p>
+              </div>
+              <div className="indicator-detail-grid">
+                <span><em>分类</em><b>{categoryMap[selected.category_id]?.label || selected.category_id}</b></span>
+                <span><em>用途</em><b>{indicatorUsageLabel(selected.usage)}</b></span>
+                <span><em>缺失处理</em><b>{missingPolicyLabel(selected.default_missing_policy)}</b></span>
+                <span><em>分析状态</em><b>{selected.analysis_ready ? '已参与分析' : '可用于后续规则'}</b></span>
+              </div>
+              <div className="indicator-explain">
+                <strong>怎么算</strong>
+                <p>{selected.formula}</p>
+              </div>
+              <div className="indicator-explain">
+                <strong>数据源</strong>
+                <p>{selected.source}</p>
+              </div>
+            </>
+          ) : (
+            <EmptyState text="暂无指标定义。" />
+          )}
+        </aside>
+      </section>
+
+      <section className="panel signal-template-strip">
+        <div className="signal-template-head">
+          <div>
+            <PanelTitle icon={<SlidersHorizontal size={18} />} title="信号模式模板" />
+            <p>每个模板由基础形态、指标规则和组合规则组成。组合规则就是你说的 interaction terms。</p>
+          </div>
+        </div>
+        <div className="signal-template-grid">
+          {groupedTemplates.map((template) => (
+            <article key={template.id} className="signal-template-card">
+              <div>
+                <span>{signalModeLabel(template.base_signal_mode)}</span>
+                <strong>{template.name}</strong>
+                <p>{template.description}</p>
+              </div>
+              <footer>
+                <b>{formatInt(template.interactionCount)} 个组合规则</b>
+                <small>{template.note}</small>
+              </footer>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SignalModeStudio({
+  library,
+  strategy,
+  setStrategy,
+}: {
+  library: IndicatorLibrary;
+  strategy: StrategyConfig;
+  setStrategy: (config: StrategyConfig) => void;
+}) {
+  const indicatorById = useMemo(
+    () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
+    [library.indicators],
+  );
+  const activeProfile = useMemo(
+    () => activeSignalProfile(strategy, library),
+    [strategy.signal_mode, strategy.signal_profile, library],
+  );
+  const activeIndicatorIds = useMemo(() => {
+    if (!activeProfile) return new Set<string>();
+    return new Set(
+      activeProfile.rule_groups.flatMap((group) => group.rules.flatMap((rule) => rule.indicator_ids)),
+    );
+  }, [activeProfile]);
+  const addableIndicators = useMemo(
+    () => library.indicators
+      .filter((indicator) => indicator.status !== 'planned')
+      .filter((indicator) => indicator.usage.some((usage) => ['filter', 'score', 'risk', 'interaction', 'context'].includes(usage)))
+      .filter((indicator) => !activeIndicatorIds.has(indicator.id))
+      .slice(0, 10),
+    [activeIndicatorIds, library.indicators],
+  );
+
+  const setProfile = (profile: SignalModeTemplate | null) => {
+    setStrategy({
+      ...strategy,
+      signal_mode: profile?.base_signal_mode || strategy.signal_mode,
+      signal_profile: profile,
+    });
+  };
+  const ensureProfile = () => {
+    const profile = activeProfile ? cloneSignalProfile(activeProfile) : null;
+    if (profile && !strategy.signal_profile) {
+      setProfile(profile);
+    }
+    return profile;
+  };
+  const applyTemplate = (template: SignalModeTemplate) => {
+    setStrategy({
+      ...strategy,
+      signal_mode: template.base_signal_mode,
+      signal_profile: cloneSignalProfile(template),
+    });
+  };
+  const patchProfile = (patch: Partial<SignalModeTemplate>) => {
+    const profile = ensureProfile();
+    if (!profile) return;
+    setProfile({ ...profile, ...patch });
+  };
+  const patchRule = (groupId: string, ruleId: string, patch: Partial<IndicatorRule>) => {
+    const profile = ensureProfile();
+    if (!profile) return;
+    setProfile({
+      ...profile,
+      rule_groups: profile.rule_groups.map((group) => (
+        group.id === groupId
+          ? { ...group, rules: group.rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)) }
+          : group
+      )),
+    });
+  };
+  const removeRule = (groupId: string, ruleId: string) => {
+    const profile = ensureProfile();
+    if (!profile) return;
+    setProfile({
+      ...profile,
+      rule_groups: profile.rule_groups
+        .map((group) => (
+          group.id === groupId
+            ? { ...group, rules: group.rules.filter((rule) => rule.id !== ruleId) }
+            : group
+        ))
+        .filter((group) => group.rules.length > 0),
+    });
+  };
+  const addIndicatorRule = (indicator: IndicatorDefinition) => {
+    const profile = ensureProfile();
+    if (!profile) return;
+    const kind = indicator.usage.includes('risk')
+      ? 'risk'
+      : indicator.usage.includes('filter')
+        ? 'filter'
+        : indicator.usage.includes('interaction')
+          ? 'interaction'
+          : 'score';
+    const rule: IndicatorRule = {
+      id: `custom-${indicator.id}`,
+      name: indicator.name,
+      kind,
+      indicator_ids: [indicator.id],
+      expression: `${indicator.name}：${indicator.formula}`,
+      effect: {
+        type: kind === 'filter' ? 'gate' : kind === 'risk' ? 'risk' : 'score',
+        value: kind === 'filter' ? 'must' : kind === 'risk' ? -6 : 6,
+      },
+      missing_policy: indicator.default_missing_policy,
+      editable: true,
+    };
+    const customGroup = profile.rule_groups.find((group) => group.id === 'custom_rules');
+    const ruleGroups = customGroup
+      ? profile.rule_groups.map((group) => (
+        group.id === 'custom_rules' ? { ...group, rules: [...group.rules, rule] } : group
+      ))
+      : [...profile.rule_groups, { id: 'custom_rules', label: '自定义指标', rules: [rule] }];
+    setProfile({ ...profile, rule_groups: ruleGroups });
+  };
+
+  if (!activeProfile) {
+    return null;
+  }
+
+  const ruleCount = activeProfile.rule_groups.reduce((sum, group) => sum + group.rules.length, 0);
+  const interactionCount = activeProfile.rule_groups.reduce(
+    (sum, group) => sum + group.rules.filter((rule) => rule.kind === 'interaction').length,
+    0,
+  );
+
+  return (
+    <section className="signal-studio">
+      <div className="signal-studio-head">
+        <div>
+          <span className="section-kicker">Signal Profile</span>
+          <h3>信号模式预设</h3>
+        </div>
+        <div className="signal-studio-stats">
+          <span><b>{formatInt(ruleCount)}</b><em>规则</em></span>
+          <span><b>{formatInt(interactionCount)}</b><em>组合</em></span>
+        </div>
+      </div>
+
+      <div className="signal-preset-grid">
+        {library.signal_modes.map((template) => {
+          const isActive = activeProfile.id === template.id && activeProfile.base_signal_mode === template.base_signal_mode;
+          return (
+            <button
+              key={template.id}
+              type="button"
+              className={isActive ? 'signal-preset-card active' : 'signal-preset-card'}
+              onClick={() => applyTemplate(template)}
+            >
+              <span>{signalModeLabel(template.base_signal_mode)}</span>
+              <strong>{template.name}</strong>
+              <small>{template.description}</small>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="profile-editor-grid">
+        <label className="field">
+          <span>模式名称</span>
+          <input
+            value={activeProfile.name}
+            onChange={(event) => patchProfile({ name: event.target.value })}
+          />
+        </label>
+        <label className="field profile-note-field">
+          <span>备注</span>
+          <textarea
+            value={activeProfile.note}
+            onChange={(event) => patchProfile({ note: event.target.value })}
+            rows={2}
+          />
+        </label>
+      </div>
+
+      <div className="signal-rule-board">
+        {activeProfile.rule_groups.map((group) => (
+          <article key={group.id} className="signal-rule-group">
+            <header>
+              <strong>{group.label}</strong>
+              <span>{formatInt(group.rules.length)} 条</span>
+            </header>
+            <div className="signal-rule-list">
+              {group.rules.map((rule) => (
+                <div key={rule.id} className={`signal-rule-card ${rule.kind}`}>
+                  <div className="signal-rule-topline">
+                    <span className={`rule-kind ${rule.kind}`}>{signalRuleKindLabel(rule.kind)}</span>
+                    <strong>{rule.name}</strong>
+                    {rule.editable && (
+                      <button className="table-action" type="button" onClick={() => removeRule(group.id, rule.id)} title="移除规则">
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+                  <div className="rule-indicator-chips">
+                    {rule.indicator_ids.map((indicatorId) => (
+                      <span key={indicatorId}>
+                        {indicatorById[indicatorId]?.name || indicatorId}
+                      </span>
+                    ))}
+                  </div>
+                  {rule.editable ? (
+                    <textarea
+                      value={rule.expression}
+                      onChange={(event) => patchRule(group.id, rule.id, { expression: event.target.value })}
+                      rows={2}
+                    />
+                  ) : (
+                    <p>{rule.expression}</p>
+                  )}
+                  <footer>
+                    <span>{signalRuleEffectLabel(rule.effect)}</span>
+                    <em>{missingPolicyLabel(rule.missing_policy)}</em>
+                  </footer>
+                </div>
+              ))}
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="indicator-add-strip">
+        <div>
+          <strong>从指标库加入</strong>
+          <span>加入后会写入当前策略画像。</span>
+        </div>
+        <div>
+          {addableIndicators.map((indicator) => (
+            <button key={indicator.id} className="filter-chip" type="button" onClick={() => addIndicatorRule(indicator)}>
+              <Plus size={12} />
+              {indicator.name}
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function StrategyPanel(props: {
+  indicatorLibrary: IndicatorLibrary;
   presets: StrategyPreset[];
   selectedPresetId: string | null;
   strategy: StrategyConfig;
@@ -1140,7 +1547,7 @@ function StrategyPanel(props: {
               <button
                 key={mode.id}
                 className={mode.id === props.strategy.signal_mode ? 'active' : ''}
-                onClick={() => update('signal_mode', mode.id)}
+                onClick={() => props.setStrategy({ ...props.strategy, signal_mode: mode.id, signal_profile: null })}
                 type="button"
               >
                 <strong>{mode.label}</strong>
@@ -1160,6 +1567,13 @@ function StrategyPanel(props: {
                 <small>{mode.sub}</small>
               </button>
             ))}
+          </div>
+          <div className="wide-panel">
+            <SignalModeStudio
+              library={props.indicatorLibrary}
+              strategy={props.strategy}
+              setStrategy={props.setStrategy}
+            />
           </div>
           {props.strategy.signal_mode === 'breakout_or_pullback' && (
             <>
@@ -3556,6 +3970,64 @@ function limitTypeLabel(value: unknown) {
   if (text === 'D') return '跌停';
   if (text === 'Z') return '炸板';
   return text || '-';
+}
+
+function indicatorStatusLabel(status: string) {
+  if (status === 'active') return '已进分析';
+  if (status === 'available') return '数据可用';
+  if (status === 'planned') return '规划中';
+  return status || '-';
+}
+
+function indicatorUsageLabel(values: string[] = []) {
+  const labels: Record<string, string> = {
+    filter: '过滤',
+    score: '加分',
+    risk: '扣分',
+    sort: '排序',
+    display: '展示',
+    interaction: '组合',
+    context: '环境',
+  };
+  return values.map((value) => labels[value] || value).join(' / ') || '-';
+}
+
+function missingPolicyLabel(value: string) {
+  const labels: Record<string, string> = {
+    allow: '允许缺失',
+    skip: '缺失跳过',
+    neutral: '缺失中性',
+  };
+  return labels[value] || value || '-';
+}
+
+function activeSignalProfile(strategy: StrategyConfig, library: IndicatorLibrary): SignalModeTemplate | null {
+  if (strategy.signal_profile && strategy.signal_profile.base_signal_mode === strategy.signal_mode) {
+    return strategy.signal_profile;
+  }
+  return library.signal_modes.find((template) => template.base_signal_mode === strategy.signal_mode) || library.signal_modes[0] || null;
+}
+
+function cloneSignalProfile(profile: SignalModeTemplate): SignalModeTemplate {
+  return JSON.parse(JSON.stringify(profile)) as SignalModeTemplate;
+}
+
+function signalRuleKindLabel(kind: IndicatorRule['kind']) {
+  const labels: Record<IndicatorRule['kind'], string> = {
+    filter: '过滤',
+    score: '加分',
+    risk: '风控',
+    interaction: '组合',
+  };
+  return labels[kind] || kind;
+}
+
+function signalRuleEffectLabel(effect: IndicatorRule['effect']) {
+  if (!effect) return '-';
+  if (effect.type === 'gate') return `门槛 ${String(effect.value)}`;
+  if (effect.type === 'risk') return `风险 ${String(effect.value)}`;
+  if (effect.type === 'score') return `评分 ${String(effect.value)}`;
+  return `${effect.type} ${String(effect.value)}`;
 }
 
 function formatPercent(value: unknown) {
