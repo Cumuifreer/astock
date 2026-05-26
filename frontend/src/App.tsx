@@ -1913,6 +1913,10 @@ function SignalModeFieldForm({
     () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
     [library.indicators],
   );
+  const categoryLabelById = useMemo(
+    () => Object.fromEntries(library.categories.map((category) => [category.id, category.label])),
+    [library.categories],
+  );
   const groups = useMemo(() => {
     const next = new Map<string, { id: string; label: string; fields: Array<{ field: SignalModeField; indicator: IndicatorDefinition }> }>();
     (profile.fields || []).forEach((field) => {
@@ -1925,9 +1929,6 @@ function SignalModeFieldForm({
     });
     return Array.from(next.values());
   }, [indicatorById, profile.fields]);
-  const referenceFields = (profile.fields || [])
-    .map((field) => ({ field, indicator: indicatorById[field.indicator_id] }))
-    .filter((item): item is { field: SignalModeField; indicator: IndicatorDefinition } => Boolean(item.indicator && item.indicator.kind !== 'strategy_param'));
   const pairedEditableGroups = useMemo(() => {
     const explicitIds = new Set((profile.fields || []).map((field) => field.indicator_id));
     const seen = new Set(explicitIds);
@@ -1939,15 +1940,15 @@ function SignalModeFieldForm({
       pairedStrategyIndicators(source, indicatorById).forEach((indicator) => {
         if (!indicator.strategy_key || seen.has(indicator.id)) return;
         seen.add(indicator.id);
-        const id = indicator.group_id || 'paired';
-        const label = indicator.group_label || '观察指标参数';
+        const id = indicator.category_id || 'paired';
+        const label = categoryLabelById[indicator.category_id] || indicator.category_id || '其他';
         if (!next.has(id)) next.set(id, { id, label, fields: [] });
         next.get(id)?.fields.push({ indicator, source });
       });
     });
 
     return Array.from(next.values());
-  }, [indicatorById, profile.fields]);
+  }, [categoryLabelById, indicatorById, profile.fields]);
   const rules = profile.rule_groups.flatMap((group) => group.rules.map((rule) => ({ ...rule, groupLabel: group.label })));
 
   return (
@@ -1977,7 +1978,7 @@ function SignalModeFieldForm({
         <Fragment key={`paired-${group.id}`}>
           <div className="form-section wide paired-param-section">
             <span>{group.label}</span>
-            <small>观察指标参数 · {formatInt(group.fields.length)} 项</small>
+            <small>配套参数 · {formatInt(group.fields.length)} 项</small>
           </div>
           {group.fields.map(({ indicator, source }) => (
             <StrategyIndicatorField
@@ -1989,34 +1990,19 @@ function SignalModeFieldForm({
           ))}
         </Fragment>
       ))}
-      {(referenceFields.length > 0 || rules.length > 0) && (
+      {rules.length > 0 && (
         <div className="strategy-signal-context wide">
-          {referenceFields.length > 0 && (
-            <div>
-              <strong>观察指标</strong>
-              <div className="context-chip-row">
-                {referenceFields.map(({ field, indicator }) => (
-                  <span key={indicator.id}>
-                    <b>{indicator.name}</b>
-                    <em>{signalFieldRoleLabel(field.role)}</em>
-                  </span>
-                ))}
-              </div>
+          <div>
+            <strong>组合条件</strong>
+            <div className="context-rule-list">
+              {rules.map((rule) => (
+                <span key={`${rule.groupLabel}-${rule.id}`}>
+                  <em>{signalRuleKindLabel(rule.kind)}</em>
+                  {rule.name}
+                </span>
+              ))}
             </div>
-          )}
-          {rules.length > 0 && (
-            <div>
-              <strong>组合条件</strong>
-              <div className="context-rule-list">
-                {rules.map((rule) => (
-                  <span key={`${rule.groupLabel}-${rule.id}`}>
-                    <em>{signalRuleKindLabel(rule.kind)}</em>
-                    {rule.name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+          </div>
         </div>
       )}
     </>
@@ -4373,10 +4359,6 @@ function indicatorUsageLabel(values: string[] = []) {
 
 function indicatorKindLabel(indicator: IndicatorDefinition) {
   return indicator.kind === 'strategy_param' ? '可填写参数' : '观察指标';
-}
-
-function signalFieldRoleLabel(role: string | undefined) {
-  return signalFieldRoles.find((item) => item.id === (role || 'filter'))?.label || role || '过滤';
 }
 
 function pairedStrategyIndicators(
