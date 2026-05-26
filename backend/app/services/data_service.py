@@ -80,12 +80,12 @@ CAPABILITY_DEFINITIONS = {
     },
     "RPS": {
         "fallback_sources": ["本地历史 K 线"],
-        "can_backfill": False,
+        "can_backfill": True,
         "participates_in_analysis": True,
     },
     "振幅": {
         "fallback_sources": ["本地历史 K 线"],
-        "can_backfill": False,
+        "can_backfill": True,
         "participates_in_analysis": True,
     },
     "ST / 停牌状态": {
@@ -95,7 +95,7 @@ CAPABILITY_DEFINITIONS = {
     },
     "市场环境": {
         "fallback_sources": ["Tushare index_daily", "本地历史宽度", "Tushare limit_list_d"],
-        "can_backfill": False,
+        "can_backfill": True,
         "participates_in_analysis": False,
         "coverage_kind": "dataset",
     },

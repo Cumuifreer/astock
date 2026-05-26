@@ -262,3 +262,89 @@ def test_tushare_optional_fetch_retries_rate_limit_before_warning(tmp_path, monk
     assert len(frame) == 1
     assert warnings == []
     assert sleeps == [1.5, 3.0]
+
+
+def test_capability_backfill_daily_basic_only_updates_requested_layer(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ"), _stock("600000.SH")], ["code"])
+    monkeypatch.setattr(update_module, "TushareEnrichmentSource", FakeTushareEnrichmentSource)
+    service = UpdateService(db)
+    service._write_task("task-daily-basic", kind="update", status="running", stage="补齐每日指标")
+
+    service._run_capability_backfill(
+        "task-daily-basic",
+        {"capability": "每日指标", "target_date": "2026-05-22"},
+    )
+
+    task = db.query("SELECT * FROM task_runs WHERE id = 'task-daily-basic'")[0]
+    summary = update_module.json.loads(task["summary_json"])
+    assert task["status"] == "completed_full"
+    assert summary["mode"] == "capability_backfill"
+    assert summary["capability"] == "每日指标"
+    assert db.scalar("SELECT COUNT(*) FROM tushare_daily_basic") == 1
+    assert db.scalar("SELECT COUNT(*) FROM float_market_values") == 1
+    assert db.scalar("SELECT COUNT(*) FROM tushare_stk_factor") == 0
+
+
+def test_capability_backfill_cyq_loops_until_missing_codes_are_filled(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ"), _stock("600000.SH")], ["code"])
+    calls = []
+
+    class LoopingCyqSource:
+        def fetch_cyq_perf_for_codes(self, codes, trade_date, limit=0):
+            calls.append(("perf", list(codes)))
+            return pd.DataFrame(
+                [
+                    {
+                        "code": code,
+                        "trade_date": "2026-05-22",
+                        "winner_rate": 0.5,
+                        "source": "Tushare cyq_perf",
+                        "updated_at": "2026-05-22T18:30:00",
+                    }
+                    for code in codes
+                ]
+            )
+
+        def fetch_cyq_chips_for_codes(self, codes, trade_date, limit=0):
+            calls.append(("chips", list(codes)))
+            return pd.DataFrame(
+                [
+                    {
+                        "code": code,
+                        "trade_date": "2026-05-22",
+                        "price": 10.0,
+                        "percent": 0.1,
+                        "source": "Tushare cyq_chips",
+                        "updated_at": "2026-05-22T18:30:00",
+                    }
+                    for code in codes
+                ]
+            )
+
+    monkeypatch.setattr(update_module, "TushareEnrichmentSource", LoopingCyqSource)
+    service = UpdateService(db)
+    service._write_task("task-cyq", kind="update", status="running", stage="补齐筹码分布")
+
+    service._run_capability_backfill(
+        "task-cyq",
+        {"capability": "筹码分布", "target_date": "2026-05-22", "limit": 1},
+    )
+
+    task = db.query("SELECT * FROM task_runs WHERE id = 'task-cyq'")[0]
+    summary = update_module.json.loads(task["summary_json"])
+    assert task["status"] == "completed_full"
+    assert summary["capability"] == "筹码分布"
+    assert task["processed"] == 2
+    assert task["total"] == 2
+    assert db.scalar("SELECT COUNT(DISTINCT code) FROM tushare_cyq_perf") == 2
+    assert db.scalar("SELECT COUNT(DISTINCT code) FROM tushare_cyq_chips") == 2
+    assert calls == [
+        ("perf", ["000001.SZ"]),
+        ("chips", ["000001.SZ"]),
+        ("perf", ["600000.SH"]),
+        ("chips", ["600000.SH"]),
+    ]

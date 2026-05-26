@@ -28,6 +28,14 @@ CHINA_TZ = ZoneInfo("Asia/Shanghai")
 HISTORY_CLOSE_HOUR = 16
 logger = logging.getLogger(__name__)
 TUSHARE_RATE_LIMIT_RETRY_DELAYS = (1.5, 3.0, 6.0)
+HISTORY_BACKFILL_CAPABILITIES = {
+    "历史 K 线",
+    "RPS",
+    "ST / 停牌状态",
+    "振幅",
+    "换手率",
+}
+DAILY_BASIC_BACKFILL_CAPABILITIES = {"每日指标", "流通市值"}
 TUSHARE_TABLE_COLUMNS: Dict[str, List[str]] = {
     "tushare_daily_basic": [
         "code",
@@ -651,6 +659,10 @@ class UpdateService:
             )
 
     def _run_update(self, task_id: str, options: Dict[str, Any]) -> None:
+        if options.get("mode") == "capability_backfill":
+            self._run_capability_backfill(task_id, options)
+            return
+
         force = bool(options.get("force"))
         light = options.get("mode") == "daily_light" or bool(options.get("daily_light"))
         include_bj = bool(options.get("include_bj", settings.include_bj))
@@ -764,6 +776,564 @@ class UpdateService:
                 warning=str(exc),
                 finished_at=datetime.utcnow(),
             )
+
+    def _run_capability_backfill(self, task_id: str, options: Dict[str, Any]) -> None:
+        capability = str(options.get("capability") or "").strip()
+        if not capability:
+            raise RuntimeError("缺少补齐数据类。")
+        target_date = _date_option(options.get("target_date")) or self._target_history_date()
+        include_bj = bool(options.get("include_bj", settings.include_bj))
+        exclude_star = bool(options.get("exclude_star_board", settings.exclude_star_board))
+        batch_limit = _positive_int(options.get("limit"), settings.tushare_enrichment_code_limit or 200)
+        warnings: List[str] = []
+
+        try:
+            self._patch_capability_backfill_progress(
+                task_id,
+                capability=capability,
+                target_date=target_date,
+                step="准备",
+                processed=0,
+                total=0,
+                written=0,
+                skipped=0,
+            )
+            result = self._backfill_capability(
+                capability,
+                target_date,
+                include_bj=include_bj,
+                exclude_star=exclude_star,
+                batch_limit=batch_limit,
+                task_id=task_id,
+                warnings=warnings,
+            )
+            self.data_service.refresh_capabilities()
+            failed = int(result.get("failed", 0))
+            skipped = int(result.get("skipped", 0))
+            status = "completed_full" if not warnings and failed == 0 and skipped == 0 else "completed_partial"
+            self._patch_task(
+                task_id,
+                status=status,
+                stage=f"{capability}补齐完成" if status == "completed_full" else f"{capability}补齐部分完成",
+                source=str(result.get("source") or "本地仓库"),
+                current_stock=None,
+                total=int(result.get("total", 0)),
+                processed=int(result.get("processed", result.get("total", 0))),
+                success=int(result.get("success", 0)),
+                failed=failed,
+                skipped=skipped,
+                warning=warnings[-1] if warnings else None,
+                summary={
+                    "mode": "capability_backfill",
+                    "capability": capability,
+                    "target_date": target_date.isoformat(),
+                    "result": result,
+                    "warnings": warnings,
+                },
+                finished_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            self._patch_task(
+                task_id,
+                status="failed",
+                stage=f"{capability}补齐失败",
+                failed=1,
+                error_message=str(exc),
+                warning=str(exc),
+                finished_at=datetime.utcnow(),
+            )
+
+    def _backfill_capability(
+        self,
+        capability: str,
+        target_date: date,
+        include_bj: bool,
+        exclude_star: bool,
+        batch_limit: int,
+        task_id: str,
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        if capability in HISTORY_BACKFILL_CAPABILITIES:
+            return self._backfill_history_capability(
+                capability,
+                target_date,
+                include_bj=include_bj,
+                exclude_star=exclude_star,
+                batch_limit=batch_limit,
+                task_id=task_id,
+            )
+        if capability in DAILY_BASIC_BACKFILL_CAPABILITIES:
+            source = TushareEnrichmentSource()
+            self._patch_capability_backfill_progress(
+                task_id,
+                capability=capability,
+                target_date=target_date,
+                step="daily_basic",
+                processed=0,
+                total=1,
+                written=0,
+                skipped=0,
+                source="Tushare daily_basic",
+            )
+            count = self._update_tushare_daily_basic(target_date, source, warnings)
+            return {
+                "source": "Tushare daily_basic",
+                "success": count,
+                "failed": 0,
+                "skipped": 0,
+                "total": 1,
+                "processed": 1,
+                "rows": count,
+            }
+        if capability == "技术因子":
+            return self._backfill_simple_tushare_capability(
+                capability,
+                target_date,
+                "tushare_stk_factor",
+                "Tushare stk_factor",
+                lambda source: source.fetch_stk_factor(target_date),
+                ["code", "trade_date"],
+                task_id,
+                warnings,
+            )
+        if capability == "资金流向":
+            return self._backfill_simple_tushare_capability(
+                capability,
+                target_date,
+                "tushare_moneyflow",
+                "Tushare moneyflow",
+                lambda source: source.fetch_moneyflow(target_date),
+                ["code", "trade_date"],
+                task_id,
+                warnings,
+            )
+        if capability == "涨跌停":
+            return self._backfill_simple_tushare_capability(
+                capability,
+                target_date,
+                "tushare_limit_list_d",
+                "Tushare limit_list_d",
+                lambda source: source.fetch_limit_list_d(target_date),
+                ["code", "trade_date"],
+                task_id,
+                warnings,
+            )
+        if capability == "筹码分布":
+            return self._backfill_cyq_capability(
+                target_date,
+                include_bj=include_bj,
+                exclude_star=exclude_star,
+                batch_limit=batch_limit,
+                task_id=task_id,
+                warnings=warnings,
+            )
+        if capability == "概念/行业成分":
+            return self._backfill_ths_member_capability(
+                include_bj=include_bj,
+                exclude_star=exclude_star,
+                batch_limit=batch_limit,
+                task_id=task_id,
+                warnings=warnings,
+            )
+        if capability == "龙虎榜/游资":
+            return self._backfill_top_capability(target_date, task_id, warnings)
+        if capability == "市场环境":
+            count = self._update_market_environment(target_date)
+            return {
+                "source": "Tushare index_daily / 本地宽度",
+                "success": count,
+                "failed": 0,
+                "skipped": 0,
+                "total": 1,
+                "processed": 1,
+                "rows": count,
+            }
+        if capability == "当天行情快照":
+            count = self._update_snapshots(True, include_bj, exclude_star, warnings)
+            return {
+                "source": "Tushare 实时日线",
+                "success": count,
+                "failed": 0,
+                "skipped": 0,
+                "total": 1,
+                "processed": 1,
+                "rows": count,
+            }
+        if capability == "股票基础信息":
+            count = self._update_basics(True, include_bj, exclude_star, warnings)
+            return {
+                "source": "Baostock",
+                "success": count,
+                "failed": 0,
+                "skipped": 0,
+                "total": 1,
+                "processed": 1,
+                "rows": count,
+            }
+        raise RuntimeError(f"暂不支持补齐数据类：{capability}")
+
+    def _backfill_history_capability(
+        self,
+        capability: str,
+        target_date: date,
+        include_bj: bool,
+        exclude_star: bool,
+        batch_limit: int,
+        task_id: str,
+    ) -> Dict[str, Any]:
+        stocks = self._history_stocks_missing_for_target(
+            target_date,
+            include_bj=include_bj,
+            exclude_star=exclude_star,
+            limit=0,
+        )
+        total = len(stocks)
+        self._patch_capability_backfill_progress(
+            task_id,
+            capability=capability,
+            target_date=target_date,
+            step="历史 K 线",
+            processed=0,
+            total=total,
+            written=0,
+            skipped=0,
+            source="Tushare daily 前复权",
+        )
+        if not stocks:
+            return {
+                "source": "Tushare daily 前复权",
+                "success": 0,
+                "failed": 0,
+                "skipped": 0,
+                "total": 0,
+                "processed": 0,
+                "rows": 0,
+            }
+        start = target_date - timedelta(days=settings.default_history_days)
+        success, failed, skipped = self._update_history(
+            stocks,
+            start,
+            target_date,
+            False,
+            task_id,
+            incremental=True,
+            target_history_date=target_date,
+        )
+        return {
+            "source": "Tushare daily 前复权",
+            "success": success,
+            "failed": failed,
+            "skipped": skipped,
+            "total": total,
+            "processed": total,
+            "rows": success,
+        }
+
+    def _backfill_simple_tushare_capability(
+        self,
+        capability: str,
+        target_date: date,
+        table: str,
+        source_label: str,
+        fetcher_factory: Any,
+        key_columns: List[str],
+        task_id: str,
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        source = TushareEnrichmentSource()
+        self._patch_capability_backfill_progress(
+            task_id,
+            capability=capability,
+            target_date=target_date,
+            step=source_label.replace("Tushare ", ""),
+            processed=0,
+            total=1,
+            written=0,
+            skipped=0,
+            source=source_label,
+        )
+        frame = self._fetch_tushare_optional(
+            source_label,
+            capability,
+            lambda: fetcher_factory(source),
+            warnings,
+        )
+        count = self._persist_tushare_frame(table, frame, key_columns)
+        self._patch_capability_backfill_progress(
+            task_id,
+            capability=capability,
+            target_date=target_date,
+            step="写入",
+            processed=1,
+            total=1,
+            written=count,
+            skipped=0,
+            source=source_label,
+        )
+        return {
+            "source": source_label,
+            "success": count,
+            "failed": 0,
+            "skipped": 0,
+            "total": 1,
+            "processed": 1,
+            "rows": count,
+        }
+
+    def _backfill_cyq_capability(
+        self,
+        target_date: date,
+        include_bj: bool,
+        exclude_star: bool,
+        batch_limit: int,
+        task_id: str,
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        source = TushareEnrichmentSource()
+        perf_skipped: set[str] = set()
+        chip_skipped: set[str] = set()
+        initial_missing = set(
+            self._tushare_codes_missing_for_date(
+                "tushare_cyq_perf",
+                target_date,
+                0,
+                include_bj,
+                exclude_star,
+            )
+        ) | set(
+            self._tushare_codes_missing_for_date(
+                "tushare_cyq_chips",
+                target_date,
+                0,
+                include_bj,
+                exclude_star,
+            )
+        )
+        total = len(initial_missing)
+        processed_codes: set[str] = set()
+        written = 0
+        while True:
+            perf_codes = self._tushare_codes_missing_for_date(
+                "tushare_cyq_perf",
+                target_date,
+                batch_limit,
+                include_bj,
+                exclude_star,
+                exclude_codes=perf_skipped,
+            )
+            chip_codes = self._tushare_codes_missing_for_date(
+                "tushare_cyq_chips",
+                target_date,
+                batch_limit,
+                include_bj,
+                exclude_star,
+                exclude_codes=chip_skipped,
+            )
+            batch_codes = sorted(set(perf_codes) | set(chip_codes))[:batch_limit]
+            if not batch_codes:
+                break
+            perf_batch = [code for code in batch_codes if code in set(perf_codes)]
+            chip_batch = [code for code in batch_codes if code in set(chip_codes)]
+            self._patch_capability_backfill_progress(
+                task_id,
+                capability="筹码分布",
+                target_date=target_date,
+                step="筹码批次",
+                processed=len(processed_codes),
+                total=total,
+                written=written,
+                skipped=len(perf_skipped | chip_skipped),
+                source="Tushare cyq_perf / cyq_chips",
+                current=",".join(batch_codes[:3]),
+            )
+            returned_perf: set[str] = set()
+            if perf_batch:
+                frame = self._fetch_tushare_optional(
+                    "Tushare cyq_perf",
+                    "筹码分布",
+                    lambda: source.fetch_cyq_perf_for_codes(perf_batch, target_date, limit=len(perf_batch)),
+                    warnings,
+                )
+                returned_perf = {str(row.get("code")) for row in frame.to_dict("records") if row.get("code")}
+                written += self._persist_tushare_frame("tushare_cyq_perf", frame, ["code", "trade_date"])
+                perf_skipped.update(set(perf_batch) - returned_perf)
+            returned_chips: set[str] = set()
+            if chip_batch:
+                frame = self._fetch_tushare_optional(
+                    "Tushare cyq_chips",
+                    "筹码分布",
+                    lambda: source.fetch_cyq_chips_for_codes(chip_batch, target_date, limit=len(chip_batch)),
+                    warnings,
+                )
+                returned_chips = {str(row.get("code")) for row in frame.to_dict("records") if row.get("code")}
+                written += self._persist_tushare_frame(
+                    "tushare_cyq_chips",
+                    frame,
+                    ["code", "trade_date", "price"],
+                )
+                chip_skipped.update(set(chip_batch) - returned_chips)
+            processed_codes.update(batch_codes)
+        remaining = set(
+            self._tushare_codes_missing_for_date(
+                "tushare_cyq_perf",
+                target_date,
+                0,
+                include_bj,
+                exclude_star,
+            )
+        ) | set(
+            self._tushare_codes_missing_for_date(
+                "tushare_cyq_chips",
+                target_date,
+                0,
+                include_bj,
+                exclude_star,
+            )
+        )
+        skipped = len(remaining)
+        return {
+            "source": "Tushare cyq_perf / cyq_chips",
+            "success": written,
+            "failed": 0,
+            "skipped": skipped,
+            "total": total,
+            "processed": len(processed_codes),
+            "rows": written,
+        }
+
+    def _backfill_ths_member_capability(
+        self,
+        include_bj: bool,
+        exclude_star: bool,
+        batch_limit: int,
+        task_id: str,
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        source = TushareEnrichmentSource()
+        skipped_codes: set[str] = set()
+        total = len(
+            self._tushare_codes_missing_for_member(
+                0,
+                include_bj,
+                exclude_star,
+            )
+        )
+        processed_codes: set[str] = set()
+        written = 0
+        while True:
+            codes = self._tushare_codes_missing_for_member(
+                batch_limit,
+                include_bj,
+                exclude_star,
+                exclude_codes=skipped_codes,
+            )
+            if not codes:
+                break
+            self._patch_capability_backfill_progress(
+                task_id,
+                capability="概念/行业成分",
+                target_date=None,
+                step="ths_member",
+                processed=len(processed_codes),
+                total=total,
+                written=written,
+                skipped=len(skipped_codes),
+                source="Tushare ths_member",
+                current=",".join(codes[:3]),
+            )
+            frame = self._fetch_tushare_optional(
+                "Tushare ths_member",
+                "概念/行业成分",
+                lambda: source.fetch_ths_member_for_codes(codes, limit=len(codes)),
+                warnings,
+            )
+            returned = {str(row.get("code")) for row in frame.to_dict("records") if row.get("code")}
+            written += self._persist_tushare_frame("tushare_ths_member", frame, ["code", "con_code"])
+            skipped_codes.update(set(codes) - returned)
+            processed_codes.update(codes)
+        remaining = len(self._tushare_codes_missing_for_member(0, include_bj, exclude_star))
+        return {
+            "source": "Tushare ths_member",
+            "success": written,
+            "failed": 0,
+            "skipped": remaining,
+            "total": total,
+            "processed": len(processed_codes),
+            "rows": written,
+        }
+
+    def _backfill_top_capability(
+        self,
+        target_date: date,
+        task_id: str,
+        warnings: List[str],
+    ) -> Dict[str, Any]:
+        source = TushareEnrichmentSource()
+        specs = [
+            ("tushare_top_list", "Tushare top_list", lambda: source.fetch_top_list(target_date), ["code", "trade_date", "reason"]),
+            ("tushare_top_inst", "Tushare top_inst", lambda: source.fetch_top_inst(target_date), ["code", "trade_date", "exalter"]),
+            ("tushare_hm_detail", "Tushare hm_detail", lambda: source.fetch_hm_detail(target_date), ["code", "trade_date", "hm_name"]),
+        ]
+        written = 0
+        for index, (table, source_label, fetcher, keys) in enumerate(specs, start=1):
+            self._patch_capability_backfill_progress(
+                task_id,
+                capability="龙虎榜/游资",
+                target_date=target_date,
+                step=source_label.replace("Tushare ", ""),
+                processed=index - 1,
+                total=len(specs),
+                written=written,
+                skipped=0,
+                source=source_label,
+            )
+            frame = self._fetch_tushare_optional(source_label, "龙虎榜/游资", fetcher, warnings)
+            written += self._persist_tushare_frame(table, frame, keys)
+        return {
+            "source": "Tushare 龙虎榜/游资",
+            "success": written,
+            "failed": 0,
+            "skipped": 0,
+            "total": len(specs),
+            "processed": len(specs),
+            "rows": written,
+        }
+
+    def _patch_capability_backfill_progress(
+        self,
+        task_id: str,
+        capability: str,
+        target_date: Optional[date],
+        step: str,
+        processed: int,
+        total: int,
+        written: int,
+        skipped: int,
+        source: str = "本地仓库",
+        current: Optional[str] = None,
+    ) -> None:
+        summary = {
+            "backfill_progress": {
+                "mode": "capability_backfill",
+                "capability": capability,
+                "target_date": target_date.isoformat() if target_date else None,
+                "step": step,
+                "written_rows": written,
+                "skipped": skipped,
+                "last_heartbeat_at": datetime.utcnow().isoformat(timespec="seconds"),
+            }
+        }
+        self._patch_task(
+            task_id,
+            stage=f"补齐{capability}",
+            source=source,
+            current_stock=current or step,
+            total=total,
+            processed=processed,
+            success=written,
+            skipped=skipped,
+            summary=summary,
+        )
 
     def _update_tushare_enrichment(
         self,
@@ -1122,13 +1692,20 @@ class UpdateService:
         limit: int,
         include_bj: bool,
         exclude_star: bool,
+        exclude_codes: Optional[set[str]] = None,
     ) -> List[str]:
         filters = ["b.suspended IS DISTINCT FROM TRUE"]
-        params: List[Any] = [trade_date]
+        params: List[Any] = []
         if not include_bj:
             filters.append("b.code NOT ILIKE '%.BJ'")
         if exclude_star:
             filters.append("b.code NOT LIKE '688%.SH'")
+        excluded = sorted(exclude_codes or set())
+        if excluded:
+            placeholders = ", ".join(["?"] * len(excluded))
+            filters.append(f"b.code NOT IN ({placeholders})")
+            params.extend(excluded)
+        params.append(trade_date)
         sql = f"""
             SELECT b.code
             FROM stock_basic b
@@ -1148,6 +1725,7 @@ class UpdateService:
         limit: int,
         include_bj: bool,
         exclude_star: bool,
+        exclude_codes: Optional[set[str]] = None,
     ) -> List[str]:
         filters = ["b.suspended IS DISTINCT FROM TRUE"]
         params: List[Any] = []
@@ -1155,6 +1733,11 @@ class UpdateService:
             filters.append("b.code NOT ILIKE '%.BJ'")
         if exclude_star:
             filters.append("b.code NOT LIKE '688%.SH'")
+        excluded = sorted(exclude_codes or set())
+        if excluded:
+            placeholders = ", ".join(["?"] * len(excluded))
+            filters.append(f"b.code NOT IN ({placeholders})")
+            params.extend(excluded)
         sql = f"""
             SELECT b.code
             FROM stock_basic b
@@ -1509,6 +2092,33 @@ class UpdateService:
         """
         params: List[Any] = [target]
         if limit:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return self.db.query(sql, params)
+
+    def _history_stocks_missing_for_target(
+        self,
+        target: date,
+        include_bj: bool,
+        exclude_star: bool,
+        limit: int = 0,
+    ) -> List[Dict[str, Any]]:
+        filters = ["b.suspended IS DISTINCT FROM TRUE"]
+        params: List[Any] = [target]
+        if not include_bj:
+            filters.append("b.code NOT ILIKE '%.BJ'")
+        if exclude_star:
+            filters.append("b.code NOT LIKE '688%.SH'")
+        sql = f"""
+            SELECT b.code, MAX(h.date) AS latest_history_date
+            FROM stock_basic b
+            LEFT JOIN historical_bars h ON h.code = b.code
+            WHERE {' AND '.join(filters)}
+            GROUP BY b.code
+            HAVING latest_history_date IS NULL OR latest_history_date < ?
+            ORDER BY b.code
+        """
+        if limit > 0:
             sql += " LIMIT ?"
             params.append(limit)
         return self.db.query(sql, params)
@@ -1978,6 +2588,24 @@ def _date_span(start: date, end: date) -> List[date]:
         days.append(current)
         current += timedelta(days=1)
     return days
+
+
+def _date_option(value: Any) -> Optional[date]:
+    if not value:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    return date.fromisoformat(str(value)[:10])
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default)
+    return max(1, parsed)
 
 
 def _is_tushare_rate_limit_error(message: str) -> bool:

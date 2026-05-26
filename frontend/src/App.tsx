@@ -194,6 +194,18 @@ function App() {
     }
   }
 
+  async function startCapabilityBackfill(capability: string) {
+    try {
+      await api.startUpdate({ mode: 'capability_backfill', capability });
+      setNotice(`${capability}补齐已开始`);
+      await load(true);
+      setTab('status');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '无法启动补齐');
+      throw err;
+    }
+  }
+
   async function startAnalyze(current = strategy) {
     if (!current) return;
     try {
@@ -370,10 +382,17 @@ function App() {
       );
     }
     if (tab === 'map') {
-      return <DataMap capabilities={bootstrap.capabilities} afterProbe={() => load(true)} />;
+      return (
+        <DataMap
+          capabilities={bootstrap.capabilities}
+          afterProbe={() => load(true)}
+          backfillCapability={startCapabilityBackfill}
+          backfillDisabled={updateRunning}
+        />
+      );
     }
     return <StatusBoard runtime={bootstrap.runtime_health} update={bootstrap.update_status} analyze={bootstrap.analyze_status} backtest={bootstrap.backtest_status} intraday={bootstrap.intraday_status} brief={bootstrap.brief_status} latestAnalysis={bootstrap.latest_analysis} />;
-  }, [bootstrap, tab, strategy, strategyName, selectedPresetId]);
+  }, [bootstrap, tab, strategy, strategyName, selectedPresetId, updateRunning]);
 
   return (
     <main className="shell">
@@ -2494,8 +2513,19 @@ function RadarTimeline({ timeline, loading }: { timeline: IntradayTimeline | nul
   );
 }
 
-function DataMap({ capabilities, afterProbe }: { capabilities: Capability[]; afterProbe: () => Promise<void> }) {
+function DataMap({
+  capabilities,
+  afterProbe,
+  backfillCapability,
+  backfillDisabled,
+}: {
+  capabilities: Capability[];
+  afterProbe: () => Promise<void>;
+  backfillCapability: (capability: string) => Promise<void>;
+  backfillDisabled: boolean;
+}) {
   const [probing, setProbing] = useState(false);
+  const [backfilling, setBackfilling] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const rows = useMemo(() => buildDataLedgerRows(capabilities), [capabilities]);
   const summary = useMemo(
@@ -2518,6 +2548,17 @@ function DataMap({ capabilities, afterProbe }: { capabilities: Capability[]; aft
       setMessage(err instanceof Error ? err.message : '探测失败');
     } finally {
       setProbing(false);
+    }
+  }
+  async function backfill(capability: string) {
+    try {
+      setBackfilling(capability);
+      await backfillCapability(capability);
+      setMessage(`${capability}补齐任务已排队`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : '补齐启动失败');
+    } finally {
+      setBackfilling(null);
     }
   }
   return (
@@ -2560,7 +2601,7 @@ function DataMap({ capabilities, afterProbe }: { capabilities: Capability[]; aft
             <span>当前最新</span>
             <span>应该最新</span>
             <span>覆盖</span>
-            <span>状态</span>
+            <span>状态 / 操作</span>
           </div>
           {rows.map((row) => (
             <div key={row.key} className="data-ledger-row">
@@ -2574,7 +2615,18 @@ function DataMap({ capabilities, afterProbe }: { capabilities: Capability[]; aft
                 <span>{row.coverageText}</span>
                 <Progress value={row.percent} />
               </div>
-              <span className={`ledger-status ${row.status}`}>{row.statusLabel}</span>
+              <div className="ledger-actions">
+                <span className={`ledger-status ${row.status}`}>{row.statusLabel}</span>
+                <button
+                  className="mini-action"
+                  disabled={!row.canBackfill || backfillDisabled || backfilling === row.key}
+                  onClick={() => backfill(row.key)}
+                  title={`${row.label}补齐`}
+                >
+                  <RotateCcw size={13} />
+                  补齐
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -3633,6 +3685,7 @@ interface DataLedgerRow {
   coverageText: string;
   status: DataLedgerStatus;
   statusLabel: string;
+  canBackfill: boolean;
 }
 
 const dataLedgerMeta: Record<string, { fields: string[]; expected: ExpectedDateKind; coverageKind?: CoverageKind }> = {
@@ -3729,6 +3782,7 @@ function buildDataLedgerRows(capabilities: Capability[]): DataLedgerRow[] {
       coverageText: ledgerCoverageText(capability.coverage_count, total, coverageKind),
       status,
       statusLabel: ledgerStatusLabel(status),
+      canBackfill: capability.can_backfill || (capability.capability in dataLedgerMeta),
     };
   });
 }
