@@ -1978,7 +1978,6 @@ function SignalModeFieldForm({
         <Fragment key={`paired-${group.id}`}>
           <div className="form-section wide paired-param-section">
             <span>{group.label}</span>
-            <small>配套参数 · {formatInt(group.fields.length)} 项</small>
           </div>
           {group.fields.map(({ indicator, source }) => (
             <StrategyIndicatorField
