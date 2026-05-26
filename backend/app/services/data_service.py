@@ -54,7 +54,7 @@ def _format_brief_published(value: Any) -> str:
 
 CAPABILITY_DEFINITIONS = {
     "历史 K 线": {
-        "fallback_sources": ["Baostock", "本地缓存"],
+        "fallback_sources": ["Tushare daily 前复权", "Baostock", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
     },
@@ -74,7 +74,7 @@ CAPABILITY_DEFINITIONS = {
         "participates_in_analysis": True,
     },
     "换手率": {
-        "fallback_sources": ["Baostock", "AkShare 新浪", "本地缓存"],
+        "fallback_sources": ["Tushare daily_basic", "Baostock", "AkShare 新浪", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
     },
@@ -89,7 +89,7 @@ CAPABILITY_DEFINITIONS = {
         "participates_in_analysis": True,
     },
     "ST / 停牌状态": {
-        "fallback_sources": ["Baostock", "本地缓存"],
+        "fallback_sources": ["股票基础信息", "Tushare 日线缺行", "Baostock", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
     },

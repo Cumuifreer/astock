@@ -52,16 +52,58 @@ def test_tushare_realtime_daily_normalizes_snapshot_fields():
 
 
 class FakeTushareEnrichmentPro:
+    def daily(self, trade_date="", fields=""):
+        assert "pre_close" in fields
+        rows = {
+            "20260521": [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260521",
+                    "open": 10.0,
+                    "high": 12.0,
+                    "low": 9.0,
+                    "close": 11.0,
+                    "pre_close": 9.0,
+                    "pct_chg": 22.22,
+                    "vol": 1000.0,
+                    "amount": 1200.0,
+                }
+            ],
+            "20260522": [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260522",
+                    "open": 6.0,
+                    "high": 8.0,
+                    "low": 5.0,
+                    "close": 7.0,
+                    "pre_close": 5.5,
+                    "pct_chg": 27.27,
+                    "vol": 2000.0,
+                    "amount": 1600.0,
+                }
+            ],
+        }
+        return pd.DataFrame(rows.get(trade_date, []))
+
+    def adj_factor(self, trade_date="", fields=""):
+        assert "adj_factor" in fields
+        rows = {
+            "20260521": [{"ts_code": "000001.SZ", "trade_date": "20260521", "adj_factor": 1.0}],
+            "20260522": [{"ts_code": "000001.SZ", "trade_date": "20260522", "adj_factor": 2.0}],
+        }
+        return pd.DataFrame(rows.get(trade_date, []))
+
     def daily_basic(self, trade_date="", fields=""):
-        assert trade_date == "20260522"
-        assert "circ_mv" in fields
-        return pd.DataFrame(
-            [
+        assert "turnover_rate" in fields
+        rows = {
+            "20260521": [{"ts_code": "000001.SZ", "trade_date": "20260521", "turnover_rate": 2.5}],
+            "20260522": [
                 {
                     "ts_code": "000001.SZ",
                     "trade_date": "20260522",
                     "close": 12.3,
-                    "turnover_rate": 2.5,
+                    "turnover_rate": 3.5,
                     "turnover_rate_f": 3.1,
                     "volume_ratio": 1.8,
                     "total_share": 200.0,
@@ -70,8 +112,9 @@ class FakeTushareEnrichmentPro:
                     "total_mv": 2460.0,
                     "circ_mv": 1230.0,
                 }
-            ]
-        )
+            ],
+        }
+        return pd.DataFrame(rows.get(trade_date, []))
 
     def stk_factor(self, trade_date="", fields=""):
         assert trade_date == "20260522"
@@ -156,3 +199,28 @@ def test_tushare_enrichment_source_normalizes_daily_batch_endpoints():
     assert limits.iloc[0]["limit"] == "U"
     assert members.iloc[0]["code"] == "000001.SZ"
     assert members.iloc[0]["con_code"] == "885800.TI"
+
+
+def test_tushare_history_bars_are_front_adjusted_and_use_local_units():
+    source = TushareEnrichmentSource(pro=FakeTushareEnrichmentPro(), loop_delay=0)
+
+    frame = source.fetch_history_bars(
+        "2026-05-21",
+        "2026-05-22",
+        codes=["000001.SZ"],
+    )
+
+    first = frame[frame["date"] == "2026-05-21"].iloc[0].to_dict()
+    latest = frame[frame["date"] == "2026-05-22"].iloc[0].to_dict()
+    assert first["open"] == 5.0
+    assert first["high"] == 6.0
+    assert first["low"] == 4.5
+    assert first["close"] == 5.5
+    assert first["prev_close"] == 4.5
+    assert first["volume"] == 100_000.0
+    assert first["amount"] == 1_200_000.0
+    assert first["turn"] == 2.5
+    assert latest["open"] == 6.0
+    assert latest["close"] == 7.0
+    assert latest["turn"] == 3.5
+    assert first["source"] == "Tushare daily 前复权"

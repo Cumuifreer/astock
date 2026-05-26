@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -166,6 +166,9 @@ def _normalize_tushare_amount(value: Any, amount_unit: str) -> Optional[float]:
 class TushareEnrichmentSource:
     name = "Tushare Pro"
 
+    HISTORY_DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
+    HISTORY_DAILY_BASIC_FIELDS = "ts_code,trade_date,turnover_rate"
+    ADJ_FACTOR_FIELDS = "ts_code,trade_date,adj_factor"
     DAILY_BASIC_FIELDS = (
         "ts_code,trade_date,close,turnover_rate,turnover_rate_f,volume_ratio,"
         "pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv"
@@ -212,6 +215,105 @@ class TushareEnrichmentSource:
         if self._pro is None:
             self._ts_module, self._pro = create_tushare_pro(self._token, self._http_url)
         return self._ts_module, self._pro
+
+    def fetch_history_bars(self, start_date: Any, end_date: Any, codes: Optional[List[str]] = None) -> pd.DataFrame:
+        start = _date_from_arg(start_date)
+        end = _date_from_arg(end_date)
+        if start > end:
+            return pd.DataFrame()
+
+        requested = set(codes or [])
+        daily_rows: List[Dict[str, Any]] = []
+        factors: Dict[tuple[str, str], float] = {}
+        latest_factor_by_code: Dict[str, float] = {}
+        turns: Dict[tuple[str, str], Optional[float]] = {}
+
+        for day in _date_span(start, end):
+            if day.weekday() >= 5:
+                continue
+            trade_date = _trade_date_arg(day)
+            daily_frame = self._call_api("daily", trade_date=trade_date, fields=self.HISTORY_DAILY_FIELDS)
+            self._sleep_between_codes()
+            day_daily_rows = _records(daily_frame)
+            if not day_daily_rows:
+                continue
+
+            factor_frame = self._call_api("adj_factor", trade_date=trade_date, fields=self.ADJ_FACTOR_FIELDS)
+            self._sleep_between_codes()
+            try:
+                basic_frame = self._call_api(
+                    "daily_basic",
+                    trade_date=trade_date,
+                    fields=self.HISTORY_DAILY_BASIC_FIELDS,
+                )
+            except Exception:
+                basic_frame = pd.DataFrame()
+            self._sleep_between_codes()
+
+            for item in _records(factor_frame):
+                code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE"]), include_bj=True)
+                trade_day = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
+                factor = safe_float(first_present(item, ["adj_factor", "ADJ_FACTOR"]))
+                if not code or not trade_day or factor is None:
+                    continue
+                if requested and code not in requested:
+                    continue
+                factors[(code, trade_day)] = factor
+                latest_factor_by_code[code] = factor
+
+            for item in _records(basic_frame):
+                code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE"]), include_bj=True)
+                trade_day = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
+                if not code or not trade_day:
+                    continue
+                if requested and code not in requested:
+                    continue
+                turns[(code, trade_day)] = safe_float(first_present(item, ["turnover_rate", "TURNOVER_RATE"]))
+
+            for item in day_daily_rows:
+                code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE"]), include_bj=True)
+                trade_day = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
+                if not code or not trade_day:
+                    continue
+                if requested and code not in requested:
+                    continue
+                daily_rows.append({"code": code, "date": trade_day, "raw": item})
+
+        rows: List[Dict[str, Any]] = []
+        for item in daily_rows:
+            code = item["code"]
+            trade_day = item["date"]
+            raw = item["raw"]
+            factor = factors.get((code, trade_day))
+            latest_factor = latest_factor_by_code.get(code)
+            if factor is None or latest_factor in (None, 0):
+                continue
+            scale = factor / latest_factor
+            rows.append(
+                {
+                    "code": code,
+                    "date": trade_day,
+                    "open": _scaled_float(first_present(raw, ["open", "OPEN"]), scale),
+                    "high": _scaled_float(first_present(raw, ["high", "HIGH"]), scale),
+                    "low": _scaled_float(first_present(raw, ["low", "LOW"]), scale),
+                    "close": _scaled_float(first_present(raw, ["close", "CLOSE"]), scale),
+                    "prev_close": _scaled_float(first_present(raw, ["pre_close", "PRE_CLOSE"]), scale),
+                    "volume": _hands_to_shares(first_present(raw, ["vol", "VOL", "volume", "VOLUME"])),
+                    "amount": _normalize_tushare_amount(
+                        first_present(raw, ["amount", "AMOUNT"]),
+                        amount_unit="thousand_yuan",
+                    ),
+                    "turn": turns.get((code, trade_day)),
+                    "pct_chg": safe_float(first_present(raw, ["pct_chg", "PCT_CHG"])),
+                    "tradestatus": "1",
+                    "is_st": None,
+                    "source": "Tushare daily 前复权",
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+        if daily_rows and not rows:
+            raise SourceUnavailable("Tushare adj_factor 为空，无法生成前复权历史 K 线。")
+        return _clean_frame(rows, required=["code", "date"])
 
     def fetch_daily_basic(self, trade_date: Any) -> pd.DataFrame:
         frame = self._call_api("daily_basic", trade_date=_trade_date_arg(trade_date), fields=self.DAILY_BASIC_FIELDS)
@@ -563,6 +665,28 @@ def _trade_date_arg(value: Any) -> str:
     return text
 
 
+def _date_from_arg(value: Any) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        return date.fromisoformat(text[:10])
+    if len(text) == 8 and text.isdigit():
+        return date.fromisoformat(f"{text[:4]}-{text[4:6]}-{text[6:]}")
+    return date.fromisoformat(text)
+
+
+def _date_span(start: date, end: date) -> List[date]:
+    days = []
+    current = start
+    while current <= end:
+        days.append(current)
+        current += timedelta(days=1)
+    return days
+
+
 def _records(frame: pd.DataFrame) -> List[Dict[str, Any]]:
     if frame is None or frame.empty:
         return []
@@ -606,6 +730,20 @@ def _safe_int(value: Any) -> Optional[int]:
     if number is None:
         return None
     return int(number)
+
+
+def _scaled_float(value: Any, scale: float) -> Optional[float]:
+    number = safe_float(value)
+    if number is None:
+        return None
+    return round(number * scale, 6)
+
+
+def _hands_to_shares(value: Any) -> Optional[float]:
+    number = safe_float(value)
+    if number is None:
+        return None
+    return number * 100
 
 
 def _limited_codes(codes: List[str], limit: int) -> List[str]:

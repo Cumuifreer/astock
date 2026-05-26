@@ -13,7 +13,8 @@ A-Share Signal 是一个私人使用的 A 股技术分析 Web 应用。它只做
 
 ## 数据源
 
-- Baostock：历史 K 线主源，使用前复权，保存成交量、成交额、换手率 `turn`、ST、停牌状态。
+- Tushare 历史日线：历史 K 线主源。通过 `daily`、`adj_factor` 和 `daily_basic` 批量生成前复权 K 线，保存成交量、成交额和换手率 `turn`；Tushare 不可用时回退 Baostock。
+- Baostock：股票基础信息主源，也是历史 K 线兜底源。
 - Tushare 实时日线：当天/盘中行情主源。配置 token 后，数据更新和盘中雷达都会优先用 Tushare 中转实时 K 线采样，并同步写入当天快照。
 - AkShare 新浪：盘中行情应急备用源。Tushare 不可用或未配置时，保存最新价、涨跌幅、最高、最低、成交量、成交额、名称等快照字段。
 - AkShare 腾讯：盘中行情第二备用源。系统会检测当前 AkShare 是否暴露兼容接口；不可用时会记录原因并在数据地图显示。
@@ -23,7 +24,7 @@ A-Share Signal 是一个私人使用的 A 股技术分析 Web 应用。它只做
 
 ## 指标
 
-- 换手率：优先来自 Baostock 历史 K 线字段 `turn`；缺失会计入覆盖率，策略可选择跳过或降级。
+- 换手率：优先来自 Tushare `daily_basic` 并写入历史 K 线字段 `turn`；缺失会计入覆盖率，策略可选择跳过或降级。
 - RPS：直接用本地历史收盘价计算 RPS20、RPS60、RPS120。计算方式为近 N 日涨幅在本地股票池中的百分位排名乘以 100。
 - 振幅：直接用本地 K 线计算，`(high - low) / prev_close`。
 - 流通市值：优先使用本地缓存；Tushare 实时日线或 AkShare 快照提供流通市值字段时写入缓存。缺失时按策略配置跳过或降级，不会导致分析失败。
@@ -59,6 +60,8 @@ curl -sS http://127.0.0.1:8000/api/intraday
 export ASHARE_TUSHARE_TOKEN=your-token
 export ASHARE_TUSHARE_HTTP_URL=http://101.35.233.113:8020/
 export ASHARE_TUSHARE_REALTIME=1
+export ASHARE_TUSHARE_HISTORY=1
+export ASHARE_TUSHARE_HISTORY_TIMEOUT=900
 export ASHARE_TUSHARE_ENRICHMENT=1
 export ASHARE_TUSHARE_ENRICHMENT_CODE_LIMIT=200
 export ASHARE_INTRADAY_SCHEDULE=09:35,09:45,09:55,10:05,10:15,10:25,10:35,10:45,10:55,11:05,11:15,11:25,13:00,13:10,13:20,13:30,13:40,13:50,14:00,14:10,14:20,14:30,14:40,14:50,14:55
@@ -66,6 +69,8 @@ export ASHARE_INTRADAY_RETENTION_DAYS=0
 ```
 
 轻量日更补齐历史 K 线后，会按 `ASHARE_INTRADAY_RETENTION_DAYS` 清理已落入历史 K 线的旧盘中快照和盘中排名。设为 `0` 会清掉所有符合条件的历史盘中行，设为负数会关闭清理。
+
+Tushare 历史 K 线会在轻量日更时刷新最近 `ASHARE_HISTORY_DAYS` 天的前复权窗口，用最新 `adj_factor` 重新写入近期 OHLC，避免除权后只补当天导致历史口径漂移。
 
 轻量/完整更新会在历史 K 线后接入 Tushare 增强数据：`daily_basic`、`stk_factor`、`moneyflow`、`limit_list_d`、`cyq_perf`、`cyq_chips`、`ths_member`、`top_list`、`top_inst`、`hm_detail`。其中 `daily_basic` 会直接写入流通市值缓存；筹码和同花顺成分会按 `ASHARE_TUSHARE_ENRICHMENT_CODE_LIMIT` 分批补齐。
 

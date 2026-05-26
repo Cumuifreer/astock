@@ -193,6 +193,10 @@ def _tushare_enrichment_configured() -> bool:
     return bool(settings.tushare_enrichment_enabled and settings.tushare_token)
 
 
+def _tushare_history_configured() -> bool:
+    return bool(settings.tushare_history_enabled and settings.tushare_token)
+
+
 def _snapshot_date(value: Any, fallback: Optional[date] = None) -> date:
     if isinstance(value, datetime):
         return value.date()
@@ -681,7 +685,7 @@ class UpdateService:
             self._patch_task(
                 task_id,
                 stage="轻量补齐历史 K 线" if incremental_history else "刷新历史 K 线",
-                source="Baostock",
+                source="Tushare daily 前复权" if _tushare_history_configured() else "Baostock",
                 total=total,
             )
             history_success, history_failed, history_skipped = self._update_history(
@@ -1500,6 +1504,23 @@ class UpdateService:
         incremental: bool = False,
         target_history_date: Optional[date] = None,
     ) -> tuple:
+        if _tushare_history_configured():
+            try:
+                return self._update_tushare_history(stocks, start, end, task_id)
+            except Exception as exc:
+                self.public_guard.record(
+                    "Tushare daily 前复权",
+                    "历史 K 线",
+                    "failed",
+                    message=str(exc),
+                    ttl_minutes=15,
+                )
+                self._patch_task(
+                    task_id,
+                    source="Baostock",
+                    warning=f"Tushare 历史 K 线失败，回退 Baostock：{exc}",
+                )
+
         baostock = BaostockSource()
         success = 0
         failed = 0
@@ -1567,6 +1588,65 @@ class UpdateService:
                 payload={"success": success, "failed": failed, "skipped": skipped},
             )
         return success, failed, skipped
+
+    def _update_tushare_history(
+        self,
+        stocks: List[Dict[str, Any]],
+        start: date,
+        end: date,
+        task_id: str,
+    ) -> tuple:
+        if not stocks:
+            return 0, 0, 0
+
+        codes = [str(row["code"]) for row in stocks if row.get("code")]
+        total = len(codes)
+        if not codes:
+            return 0, 0, 0
+
+        source = TushareEnrichmentSource()
+        frame = SourceGuard._call_with_timeout(
+            lambda: source.fetch_history_bars(start, end, codes=codes),
+            settings.tushare_history_timeout_seconds,
+        )
+        if frame is None or frame.empty:
+            raise RuntimeError("Tushare 历史 K 线为空")
+
+        st_rows = self.db.query("SELECT code, is_st FROM stock_basic")
+        is_st_by_code = {str(row["code"]): bool(row.get("is_st")) for row in st_rows}
+        rows = []
+        for item in frame.to_dict("records"):
+            row = dict(item)
+            code = str(row.get("code") or "")
+            if row.get("is_st") is None:
+                row["is_st"] = is_st_by_code.get(code, False)
+            rows.append(row)
+
+        self.db.upsert("historical_bars", rows, ["code", "date"])
+        end_text = end.isoformat()
+        success_codes = {
+            str(row["code"])
+            for row in rows
+            if row.get("code") and str(row.get("date"))[:10] >= end_text
+        }
+        success = len(success_codes)
+        skipped = max(0, total - success)
+        self.public_guard.record(
+            "Tushare daily 前复权",
+            "历史 K 线",
+            "available",
+            payload={"success": success, "skipped": skipped, "rows": len(rows)},
+        )
+        self._patch_task(
+            task_id,
+            current_stock="Tushare 批量前复权",
+            total=total,
+            processed=total,
+            success=success,
+            failed=0,
+            skipped=skipped,
+        )
+        return success, 0, skipped
 
     @staticmethod
     def _target_history_date(now: Optional[datetime] = None) -> date:
