@@ -1104,7 +1104,7 @@ function IndicatorLibraryPage({
         </div>
         <div className="indicator-summary">
           <span><b>{formatInt(library.summary.indicator_count)}</b><em>指标</em></span>
-          <span><b>{formatInt(library.summary.active_count)}</b><em>已进分析</em></span>
+          <span><b>{formatInt(library.summary.active_count)}</b><em>分析可用</em></span>
           <span><b>{formatInt(library.summary.interaction_rule_count)}</b><em>组合规则</em></span>
         </div>
       </section>
@@ -1157,7 +1157,7 @@ function IndicatorLibraryPage({
                 </div>
                 <p>{indicator.description}</p>
                 <footer>
-                  <em className={`status-pill ${indicator.status}`}>{indicatorStatusLabel(indicator.status)}</em>
+                  <em className={`status-pill ${indicatorStatusClass(indicator)}`}>{indicatorStatusLabel(indicator)}</em>
                   <small>{indicatorUsageLabel(indicator.usage)}</small>
                 </footer>
               </button>
@@ -1169,7 +1169,7 @@ function IndicatorLibraryPage({
           {selected ? (
             <>
               <div className="indicator-detail-head">
-                <span className={`status-pill ${selected.status}`}>{indicatorStatusLabel(selected.status)}</span>
+                <span className={`status-pill ${indicatorStatusClass(selected)}`}>{indicatorStatusLabel(selected)}</span>
                 <h2>{selected.name}</h2>
                 <p>{selected.description}</p>
               </div>
@@ -1178,7 +1178,7 @@ function IndicatorLibraryPage({
                 <span><em>分类</em><b>{categoryMap[selected.category_id]?.label || selected.category_id}</b></span>
                 <span><em>用途</em><b>{indicatorUsageLabel(selected.usage)}</b></span>
                 <span><em>缺失处理</em><b>{missingPolicyLabel(selected.default_missing_policy)}</b></span>
-                <span><em>分析状态</em><b>{selected.analysis_ready ? '已参与分析' : '可用于后续规则'}</b></span>
+                <span><em>分析状态</em><b>{indicatorReadinessLabel(selected)}</b></span>
               </div>
               {pairedStrategyIndicators(selected, indicatorById).length > 0 && (
                 <div className="indicator-explain paired">
@@ -1925,10 +1925,29 @@ function SignalModeFieldForm({
     });
     return Array.from(next.values());
   }, [indicatorById, profile.fields]);
-  const activeFieldIds = new Set((profile.fields || []).map((field) => field.indicator_id));
   const referenceFields = (profile.fields || [])
     .map((field) => ({ field, indicator: indicatorById[field.indicator_id] }))
     .filter((item): item is { field: SignalModeField; indicator: IndicatorDefinition } => Boolean(item.indicator && item.indicator.kind !== 'strategy_param'));
+  const pairedEditableGroups = useMemo(() => {
+    const explicitIds = new Set((profile.fields || []).map((field) => field.indicator_id));
+    const seen = new Set(explicitIds);
+    const next = new Map<string, { id: string; label: string; fields: Array<{ indicator: IndicatorDefinition; source: IndicatorDefinition }> }>();
+
+    (profile.fields || []).forEach((field) => {
+      const source = indicatorById[field.indicator_id];
+      if (!source || source.kind === 'strategy_param') return;
+      pairedStrategyIndicators(source, indicatorById).forEach((indicator) => {
+        if (!indicator.strategy_key || seen.has(indicator.id)) return;
+        seen.add(indicator.id);
+        const id = indicator.group_id || 'paired';
+        const label = indicator.group_label || '观察指标参数';
+        if (!next.has(id)) next.set(id, { id, label, fields: [] });
+        next.get(id)?.fields.push({ indicator, source });
+      });
+    });
+
+    return Array.from(next.values());
+  }, [indicatorById, profile.fields]);
   const rules = profile.rule_groups.flatMap((group) => group.rules.map((rule) => ({ ...rule, groupLabel: group.label })));
 
   return (
@@ -1937,7 +1956,7 @@ function SignalModeFieldForm({
         <strong>{profile.name}</strong>
         <span>{profile.description || profile.note || '按这个信号模式填写下方参数。'}</span>
       </div>
-      {groups.length === 0 && <div className="field-note wide">这个信号模式目前只有基础股票池，暂时没有需要填写的策略参数。</div>}
+      {groups.length === 0 && pairedEditableGroups.length === 0 && <div className="field-note wide">这个信号模式目前只有基础股票池，暂时没有需要填写的策略参数。</div>}
       {groups.map((group) => (
         <Fragment key={group.id}>
           <div className="form-section wide">
@@ -1947,6 +1966,22 @@ function SignalModeFieldForm({
           {group.fields.map(({ field, indicator }) => (
             <StrategyIndicatorField
               key={`${profile.id}-${field.indicator_id}`}
+              indicator={indicator}
+              strategy={strategy}
+              update={update}
+            />
+          ))}
+        </Fragment>
+      ))}
+      {pairedEditableGroups.map((group) => (
+        <Fragment key={`paired-${group.id}`}>
+          <div className="form-section wide paired-param-section">
+            <span>{group.label}</span>
+            <small>观察指标参数 · {formatInt(group.fields.length)} 项</small>
+          </div>
+          {group.fields.map(({ indicator, source }) => (
+            <StrategyIndicatorField
+              key={`${profile.id}-${source.id}-${indicator.id}`}
               indicator={indicator}
               strategy={strategy}
               update={update}
@@ -1967,15 +2002,6 @@ function SignalModeFieldForm({
                   </span>
                 ))}
               </div>
-              {referenceFields.some(({ indicator }) => pairedStrategyIndicators(indicator, indicatorById).some((item) => !activeFieldIds.has(item.id))) && (
-                <div className="context-pair-row">
-                  {referenceFields.flatMap(({ indicator }) => pairedStrategyIndicators(indicator, indicatorById)
-                    .filter((item) => !activeFieldIds.has(item.id))
-                    .map((item) => (
-                      <span key={`${indicator.id}-${item.id}`}>{indicator.name} 可配 {item.name}</span>
-                    )))}
-                </div>
-              )}
             </div>
           )}
           {rules.length > 0 && (
@@ -4312,11 +4338,24 @@ function limitTypeLabel(value: unknown) {
   return text || '-';
 }
 
-function indicatorStatusLabel(status: string) {
-  if (status === 'active') return '已进分析';
-  if (status === 'available') return '数据可用';
-  if (status === 'planned') return '规划中';
-  return status || '-';
+function indicatorStatusClass(indicator: IndicatorDefinition) {
+  if (indicator.status === 'planned') return 'planned';
+  if (indicator.analysis_ready) return 'active';
+  return 'available';
+}
+
+function indicatorStatusLabel(indicator: IndicatorDefinition) {
+  if (indicator.status === 'planned') return '待接入';
+  if (indicator.kind === 'strategy_param') return '可填写';
+  if (indicator.analysis_ready) return '分析可用';
+  return '观察可用';
+}
+
+function indicatorReadinessLabel(indicator: IndicatorDefinition) {
+  if (indicator.status === 'planned') return '等待接入';
+  if (indicator.kind === 'strategy_param') return '运行时参数';
+  if (indicator.analysis_ready) return '已参与过滤/评分';
+  return '已接入，可观察配置';
 }
 
 function indicatorUsageLabel(values: string[] = []) {

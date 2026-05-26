@@ -1771,27 +1771,17 @@ h1 {
   padding-left: 6px;
 }
 
-.context-pair-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.context-pair-row span {
-  min-height: 26px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 8px;
-  border: 1px solid rgba(163, 228, 84, 0.2);
-  background: rgba(163, 228, 84, 0.05);
-  color: var(--lime);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
 .strategy-toggle {
   min-width: 0;
+}
+
+.paired-param-section {
+  border-color: rgba(59, 240, 193, 0.22);
+  background: rgba(59, 240, 193, 0.035);
+}
+
+.paired-param-section small {
+  color: var(--cyan);
 }
 
 .strategy-toggle span {
