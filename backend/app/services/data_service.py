@@ -613,6 +613,33 @@ class DataService:
         total_stocks = self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0
         latest_history = self.db.scalar("SELECT MAX(date) FROM historical_bars")
         latest_snapshot = self.db.scalar("SELECT MAX(date) FROM daily_snapshots")
+        latest_tushare_daily_basic = self.db.scalar("SELECT MAX(trade_date) FROM tushare_daily_basic")
+        latest_tushare_stk_factor = self.db.scalar("SELECT MAX(trade_date) FROM tushare_stk_factor")
+        latest_tushare_moneyflow = self.db.scalar("SELECT MAX(trade_date) FROM tushare_moneyflow")
+        latest_tushare_limit = self.db.scalar("SELECT MAX(trade_date) FROM tushare_limit_list_d")
+        latest_tushare_cyq = self.db.scalar(
+            """
+            SELECT MAX(trade_date)
+            FROM (
+                SELECT trade_date FROM tushare_cyq_perf
+                UNION ALL
+                SELECT trade_date FROM tushare_cyq_chips
+            )
+            """
+        )
+        latest_tushare_ths = self.db.scalar("SELECT MAX(updated_at) FROM tushare_ths_member")
+        latest_tushare_top = self.db.scalar(
+            """
+            SELECT MAX(trade_date)
+            FROM (
+                SELECT trade_date FROM tushare_top_list
+                UNION ALL
+                SELECT trade_date FROM tushare_top_inst
+                UNION ALL
+                SELECT trade_date FROM tushare_hm_detail
+            )
+            """
+        )
         latest_float_market_value = self.db.scalar(
             """
             SELECT MAX(date)
@@ -653,6 +680,52 @@ class DataService:
         )
         failure_by_cap = {row["capability"]: row["failure_reason"] for row in status_failures}
 
+        def latest_code_count(table: str, latest: Any) -> int:
+            if not latest:
+                return 0
+            return int(
+                self.db.scalar(
+                    f"SELECT COUNT(DISTINCT code) FROM {table} WHERE trade_date = ?",
+                    [latest],
+                )
+                or 0
+            )
+
+        latest_cyq_count = 0
+        if latest_tushare_cyq:
+            latest_cyq_count = int(
+                self.db.scalar(
+                    """
+                    SELECT COUNT(DISTINCT code)
+                    FROM (
+                        SELECT code FROM tushare_cyq_perf WHERE trade_date = ?
+                        UNION
+                        SELECT code FROM tushare_cyq_chips WHERE trade_date = ?
+                    )
+                    """,
+                    [latest_tushare_cyq, latest_tushare_cyq],
+                )
+                or 0
+            )
+        latest_top_count = 0
+        if latest_tushare_top:
+            latest_top_count = int(
+                self.db.scalar(
+                    """
+                    SELECT COUNT(DISTINCT code)
+                    FROM (
+                        SELECT code FROM tushare_top_list WHERE trade_date = ?
+                        UNION
+                        SELECT code FROM tushare_top_inst WHERE trade_date = ?
+                        UNION
+                        SELECT code FROM tushare_hm_detail WHERE trade_date = ?
+                    )
+                    """,
+                    [latest_tushare_top, latest_tushare_top, latest_tushare_top],
+                )
+                or 0
+            )
+
         rows = []
         counts = {
             "历史 K 线": self.db.scalar("SELECT COUNT(DISTINCT code) FROM historical_bars") or 0,
@@ -675,13 +748,13 @@ class DataService:
             "ST / 停牌状态": self.db.scalar("SELECT COUNT(DISTINCT code) FROM historical_bars WHERE is_st IS NOT NULL OR tradestatus IS NOT NULL")
             or 0,
             "市场环境": 0,
-            "每日指标": 0,
-            "技术因子": 0,
-            "资金流向": 0,
-            "涨跌停": 0,
-            "筹码分布": 0,
-            "概念/行业成分": 0,
-            "龙虎榜/游资": 0,
+            "每日指标": latest_code_count("tushare_daily_basic", latest_tushare_daily_basic),
+            "技术因子": latest_code_count("tushare_stk_factor", latest_tushare_stk_factor),
+            "资金流向": latest_code_count("tushare_moneyflow", latest_tushare_moneyflow),
+            "涨跌停": latest_code_count("tushare_limit_list_d", latest_tushare_limit),
+            "筹码分布": latest_cyq_count,
+            "概念/行业成分": self.db.scalar("SELECT COUNT(DISTINCT code) FROM tushare_ths_member") or 0,
+            "龙虎榜/游资": latest_top_count,
         }
         source_rows = self.db.query(
             """
@@ -700,6 +773,20 @@ class DataService:
             latest_update = latest_snapshot if capability == "当天行情快照" else latest_history
             if capability == "流通市值":
                 latest_update = latest_float_market_value
+            elif capability == "每日指标":
+                latest_update = latest_tushare_daily_basic
+            elif capability == "技术因子":
+                latest_update = latest_tushare_stk_factor
+            elif capability == "资金流向":
+                latest_update = latest_tushare_moneyflow
+            elif capability == "涨跌停":
+                latest_update = latest_tushare_limit
+            elif capability == "筹码分布":
+                latest_update = latest_tushare_cyq
+            elif capability == "概念/行业成分":
+                latest_update = latest_tushare_ths
+            elif capability == "龙虎榜/游资":
+                latest_update = latest_tushare_top
             rows.append(
                 {
                     "capability": capability,

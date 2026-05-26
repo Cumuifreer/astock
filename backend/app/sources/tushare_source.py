@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+import time
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from backend.app.config import settings
 from backend.app.services.market_utils import normalize_a_share_code, safe_float
 from backend.app.sources.base import SourceUnavailable, first_present
 from backend.app.sources.tushare_client import create_tushare_pro
@@ -159,3 +161,408 @@ def _normalize_tushare_amount(value: Any, amount_unit: str) -> Optional[float]:
     if amount_unit == "thousand_yuan":
         return amount * 1000
     return amount
+
+
+class TushareEnrichmentSource:
+    name = "Tushare Pro"
+
+    DAILY_BASIC_FIELDS = (
+        "ts_code,trade_date,close,turnover_rate,turnover_rate_f,volume_ratio,"
+        "pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv"
+    )
+    STK_FACTOR_FIELDS = (
+        "ts_code,trade_date,macd,kdj_k,kdj_d,kdj_j,rsi_6,rsi_12,rsi_24,"
+        "boll_upper,boll_mid,boll_lower,cci"
+    )
+    MONEYFLOW_FIELDS = (
+        "ts_code,trade_date,buy_sm_amount,sell_sm_amount,buy_md_amount,sell_md_amount,"
+        "buy_lg_amount,sell_lg_amount,buy_elg_amount,sell_elg_amount,net_mf_amount"
+    )
+    LIMIT_LIST_FIELDS = "trade_date,ts_code,name,close,pct_chg,up_stat,limit,fd_amount,first_time,last_time,open_times"
+    CYQ_PERF_FIELDS = (
+        "ts_code,trade_date,his_low,his_high,cost_5pct,cost_15pct,cost_50pct,"
+        "cost_85pct,cost_95pct,weight_avg,winner_rate"
+    )
+    CYQ_CHIPS_FIELDS = "ts_code,trade_date,price,percent"
+    THS_MEMBER_FIELDS = "ts_code,code,name,con_code,con_name,weight,in_date,out_date,is_new"
+    TOP_LIST_FIELDS = (
+        "trade_date,ts_code,name,close,pct_change,turnover_rate,amount,l_sell,l_buy,"
+        "l_amount,net_amount,net_rate,amount_rate,float_values,reason"
+    )
+    TOP_INST_FIELDS = "trade_date,ts_code,exalter,buy,buy_rate,sell,sell_rate,net_buy"
+    HM_DETAIL_FIELDS = "trade_date,ts_code,ts_name,name,hm_name,buy_amount,sell_amount,net_amount"
+
+    def __init__(
+        self,
+        pro: Optional[Any] = None,
+        ts_module: Optional[Any] = None,
+        token: Optional[str] = None,
+        http_url: Optional[str] = None,
+        loop_delay: Optional[float] = None,
+    ) -> None:
+        self._pro = pro
+        self._ts_module = ts_module
+        self._token = token
+        self._http_url = http_url
+        self._loop_delay = settings.tushare_enrichment_loop_delay if loop_delay is None else loop_delay
+
+    @property
+    def client(self) -> tuple[Any, Any]:
+        if self._pro is None:
+            self._ts_module, self._pro = create_tushare_pro(self._token, self._http_url)
+        return self._ts_module, self._pro
+
+    def fetch_daily_basic(self, trade_date: Any) -> pd.DataFrame:
+        frame = self._call_api("daily_basic", trade_date=_trade_date_arg(trade_date), fields=self.DAILY_BASIC_FIELDS)
+        rows = []
+        for item in _records(frame):
+            code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE"]))
+            if not code:
+                continue
+            rows.append(
+                {
+                    "code": code,
+                    "trade_date": _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"])),
+                    "close": safe_float(first_present(item, ["close", "CLOSE"])),
+                    "turnover_rate": safe_float(first_present(item, ["turnover_rate", "TURNOVER_RATE"])),
+                    "turnover_rate_f": safe_float(first_present(item, ["turnover_rate_f", "TURNOVER_RATE_F"])),
+                    "volume_ratio": safe_float(first_present(item, ["volume_ratio", "VOLUME_RATIO"])),
+                    "pe": safe_float(first_present(item, ["pe", "PE"])),
+                    "pe_ttm": safe_float(first_present(item, ["pe_ttm", "PE_TTM"])),
+                    "pb": safe_float(first_present(item, ["pb", "PB"])),
+                    "ps": safe_float(first_present(item, ["ps", "PS"])),
+                    "ps_ttm": safe_float(first_present(item, ["ps_ttm", "PS_TTM"])),
+                    "dv_ratio": safe_float(first_present(item, ["dv_ratio", "DV_RATIO"])),
+                    "dv_ttm": safe_float(first_present(item, ["dv_ttm", "DV_TTM"])),
+                    "total_share": _ten_thousand_unit(first_present(item, ["total_share", "TOTAL_SHARE"])),
+                    "float_share": _ten_thousand_unit(first_present(item, ["float_share", "FLOAT_SHARE"])),
+                    "free_share": _ten_thousand_unit(first_present(item, ["free_share", "FREE_SHARE"])),
+                    "total_mv": _ten_thousand_unit(first_present(item, ["total_mv", "TOTAL_MV"])),
+                    "circ_mv": _ten_thousand_unit(first_present(item, ["circ_mv", "CIRC_MV"])),
+                    "source": "Tushare daily_basic",
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+        return _clean_frame(rows, required=["code", "trade_date"])
+
+    def fetch_stk_factor(self, trade_date: Any) -> pd.DataFrame:
+        frame = self._call_api("stk_factor", trade_date=_trade_date_arg(trade_date), fields=self.STK_FACTOR_FIELDS)
+        rows = []
+        for item in _records(frame):
+            row = _base_dated_row(item, "Tushare stk_factor")
+            if not row:
+                continue
+            row.update(
+                {
+                    "macd": safe_float(first_present(item, ["macd", "MACD"])),
+                    "kdj_k": safe_float(first_present(item, ["kdj_k", "KDJ_K"])),
+                    "kdj_d": safe_float(first_present(item, ["kdj_d", "KDJ_D"])),
+                    "kdj_j": safe_float(first_present(item, ["kdj_j", "KDJ_J"])),
+                    "rsi_6": safe_float(first_present(item, ["rsi_6", "RSI_6"])),
+                    "rsi_12": safe_float(first_present(item, ["rsi_12", "RSI_12"])),
+                    "rsi_24": safe_float(first_present(item, ["rsi_24", "RSI_24"])),
+                    "boll_upper": safe_float(first_present(item, ["boll_upper", "BOLL_UPPER"])),
+                    "boll_mid": safe_float(first_present(item, ["boll_mid", "BOLL_MID"])),
+                    "boll_lower": safe_float(first_present(item, ["boll_lower", "BOLL_LOWER"])),
+                    "cci": safe_float(first_present(item, ["cci", "CCI"])),
+                }
+            )
+            rows.append(row)
+        return _clean_frame(rows, required=["code", "trade_date"])
+
+    def fetch_moneyflow(self, trade_date: Any) -> pd.DataFrame:
+        frame = self._call_api("moneyflow", trade_date=_trade_date_arg(trade_date), fields=self.MONEYFLOW_FIELDS)
+        rows = []
+        for item in _records(frame):
+            row = _base_dated_row(item, "Tushare moneyflow")
+            if not row:
+                continue
+            for field in [
+                "buy_sm_amount",
+                "sell_sm_amount",
+                "buy_md_amount",
+                "sell_md_amount",
+                "buy_lg_amount",
+                "sell_lg_amount",
+                "buy_elg_amount",
+                "sell_elg_amount",
+                "net_mf_amount",
+            ]:
+                row[field] = _ten_thousand_unit(first_present(item, [field, field.upper()]))
+            row["main_net_amount"] = _sum_optional(
+                row.get("buy_lg_amount"),
+                row.get("buy_elg_amount"),
+                -(row.get("sell_lg_amount") or 0),
+                -(row.get("sell_elg_amount") or 0),
+            )
+            rows.append(row)
+        return _clean_frame(rows, required=["code", "trade_date"])
+
+    def fetch_limit_list_d(self, trade_date: Any) -> pd.DataFrame:
+        frame = self._call_api("limit_list_d", trade_date=_trade_date_arg(trade_date), fields=self.LIMIT_LIST_FIELDS)
+        rows = []
+        for item in _records(frame):
+            row = _base_dated_row(item, "Tushare limit_list_d")
+            if not row:
+                continue
+            row.update(
+                {
+                    "name": first_present(item, ["name", "NAME"]) or row["code"],
+                    "close": safe_float(first_present(item, ["close", "CLOSE"])),
+                    "pct_chg": safe_float(first_present(item, ["pct_chg", "PCT_CHG"])),
+                    "limit": first_present(item, ["limit", "LIMIT"]),
+                    "up_stat": first_present(item, ["up_stat", "UP_STAT"]),
+                    "fd_amount": safe_float(first_present(item, ["fd_amount", "FD_AMOUNT"])),
+                    "first_time": first_present(item, ["first_time", "FIRST_TIME"]),
+                    "last_time": first_present(item, ["last_time", "LAST_TIME"]),
+                    "open_times": _safe_int(first_present(item, ["open_times", "OPEN_TIMES"])),
+                }
+            )
+            rows.append(row)
+        return _clean_frame(rows, required=["code", "trade_date"])
+
+    def fetch_cyq_perf_for_codes(self, codes: List[str], trade_date: Any, limit: int = 0) -> pd.DataFrame:
+        rows = []
+        errors = []
+        for code in _limited_codes(codes, limit):
+            try:
+                frame = self._call_api(
+                    "cyq_perf",
+                    ts_code=code,
+                    trade_date=_trade_date_arg(trade_date),
+                    fields=self.CYQ_PERF_FIELDS,
+                )
+            except Exception as exc:
+                errors.append(f"{code}: {exc}")
+                self._sleep_between_codes()
+                continue
+            for item in _records(frame):
+                row = _base_dated_row(item, "Tushare cyq_perf")
+                if not row:
+                    continue
+                for field in [
+                    "his_low",
+                    "his_high",
+                    "cost_5pct",
+                    "cost_15pct",
+                    "cost_50pct",
+                    "cost_85pct",
+                    "cost_95pct",
+                    "weight_avg",
+                    "winner_rate",
+                ]:
+                    row[field] = safe_float(first_present(item, [field, field.upper()]))
+                rows.append(row)
+            self._sleep_between_codes()
+        if not rows and errors:
+            raise SourceUnavailable(errors[0])
+        return _clean_frame(rows, required=["code", "trade_date"])
+
+    def fetch_cyq_chips_for_codes(self, codes: List[str], trade_date: Any, limit: int = 0) -> pd.DataFrame:
+        rows = []
+        errors = []
+        for code in _limited_codes(codes, limit):
+            try:
+                frame = self._call_api(
+                    "cyq_chips",
+                    ts_code=code,
+                    trade_date=_trade_date_arg(trade_date),
+                    fields=self.CYQ_CHIPS_FIELDS,
+                )
+            except Exception as exc:
+                errors.append(f"{code}: {exc}")
+                self._sleep_between_codes()
+                continue
+            for item in _records(frame):
+                row = _base_dated_row(item, "Tushare cyq_chips")
+                if not row:
+                    continue
+                row.update(
+                    {
+                        "price": safe_float(first_present(item, ["price", "PRICE"])),
+                        "percent": safe_float(first_present(item, ["percent", "PERCENT"])),
+                    }
+                )
+                rows.append(row)
+            self._sleep_between_codes()
+        if not rows and errors:
+            raise SourceUnavailable(errors[0])
+        return _clean_frame(rows, required=["code", "trade_date", "price"])
+
+    def fetch_ths_member_for_codes(self, codes: List[str], limit: int = 0) -> pd.DataFrame:
+        rows = []
+        errors = []
+        for requested_code in _limited_codes(codes, limit):
+            try:
+                frame = self._call_api("ths_member", con_code=requested_code, fields=self.THS_MEMBER_FIELDS)
+            except Exception as exc:
+                errors.append(f"{requested_code}: {exc}")
+                self._sleep_between_codes()
+                continue
+            for item in _records(frame):
+                stock_code = normalize_a_share_code(
+                    first_present(item, ["con_code", "CON_CODE", "code", "stock_code", "CODE", "STOCK_CODE"])
+                )
+                if not stock_code:
+                    continue
+                ths_code = first_present(item, ["ts_code", "TS_CODE"])
+                rows.append(
+                    {
+                        "code": stock_code,
+                        "name": first_present(item, ["con_name", "CON_NAME", "name", "NAME"]) or stock_code,
+                        "con_code": ths_code,
+                        "con_name": first_present(item, ["name", "NAME"]) or ths_code,
+                        "weight": safe_float(first_present(item, ["weight", "WEIGHT"])),
+                        "in_date": _normalize_trade_date(first_present(item, ["in_date", "IN_DATE"])),
+                        "out_date": _normalize_trade_date(first_present(item, ["out_date", "OUT_DATE"])),
+                        "is_new": first_present(item, ["is_new", "IS_NEW"]),
+                        "source": "Tushare ths_member",
+                        "updated_at": datetime.utcnow(),
+                    }
+                )
+            self._sleep_between_codes()
+        if not rows and errors:
+            raise SourceUnavailable(errors[0])
+        return _clean_frame(rows, required=["code", "con_code"])
+
+    def fetch_top_list(self, trade_date: Any) -> pd.DataFrame:
+        frame = self._call_api("top_list", trade_date=_trade_date_arg(trade_date), fields=self.TOP_LIST_FIELDS)
+        rows = []
+        for item in _records(frame):
+            row = _base_dated_row(item, "Tushare top_list")
+            if not row:
+                continue
+            row.update(
+                {
+                    "name": first_present(item, ["name", "NAME"]) or row["code"],
+                    "close": safe_float(first_present(item, ["close", "CLOSE"])),
+                    "pct_change": safe_float(first_present(item, ["pct_change", "PCT_CHANGE"])),
+                    "turnover_rate": safe_float(first_present(item, ["turnover_rate", "TURNOVER_RATE"])),
+                    "amount": safe_float(first_present(item, ["amount", "AMOUNT"])),
+                    "l_sell": safe_float(first_present(item, ["l_sell", "L_SELL"])),
+                    "l_buy": safe_float(first_present(item, ["l_buy", "L_BUY"])),
+                    "l_amount": safe_float(first_present(item, ["l_amount", "L_AMOUNT"])),
+                    "net_amount": safe_float(first_present(item, ["net_amount", "NET_AMOUNT"])),
+                    "net_rate": safe_float(first_present(item, ["net_rate", "NET_RATE"])),
+                    "amount_rate": safe_float(first_present(item, ["amount_rate", "AMOUNT_RATE"])),
+                    "float_values": safe_float(first_present(item, ["float_values", "FLOAT_VALUES"])),
+                    "reason": first_present(item, ["reason", "REASON"]) or "",
+                }
+            )
+            rows.append(row)
+        return _clean_frame(rows, required=["code", "trade_date"])
+
+    def fetch_top_inst(self, trade_date: Any) -> pd.DataFrame:
+        frame = self._call_api("top_inst", trade_date=_trade_date_arg(trade_date), fields=self.TOP_INST_FIELDS)
+        rows = []
+        for item in _records(frame):
+            row = _base_dated_row(item, "Tushare top_inst")
+            if not row:
+                continue
+            row.update(
+                {
+                    "exalter": first_present(item, ["exalter", "EXALTER"]) or "",
+                    "buy": safe_float(first_present(item, ["buy", "BUY"])),
+                    "buy_rate": safe_float(first_present(item, ["buy_rate", "BUY_RATE"])),
+                    "sell": safe_float(first_present(item, ["sell", "SELL"])),
+                    "sell_rate": safe_float(first_present(item, ["sell_rate", "SELL_RATE"])),
+                    "net_buy": safe_float(first_present(item, ["net_buy", "NET_BUY"])),
+                }
+            )
+            rows.append(row)
+        return _clean_frame(rows, required=["code", "trade_date"])
+
+    def fetch_hm_detail(self, trade_date: Any) -> pd.DataFrame:
+        frame = self._call_api("hm_detail", trade_date=_trade_date_arg(trade_date), fields=self.HM_DETAIL_FIELDS)
+        rows = []
+        for item in _records(frame):
+            row = _base_dated_row(item, "Tushare hm_detail")
+            if not row:
+                continue
+            row.update(
+                {
+                    "name": first_present(item, ["ts_name", "TS_NAME", "name", "NAME"]) or row["code"],
+                    "hm_name": first_present(item, ["hm_name", "HM_NAME", "name", "NAME"]) or "",
+                    "buy_amount": safe_float(first_present(item, ["buy_amount", "BUY_AMOUNT"])),
+                    "sell_amount": safe_float(first_present(item, ["sell_amount", "SELL_AMOUNT"])),
+                    "net_amount": safe_float(first_present(item, ["net_amount", "NET_AMOUNT"])),
+                }
+            )
+            rows.append(row)
+        return _clean_frame(rows, required=["code", "trade_date"])
+
+    def _call_api(self, api_name: str, **params: Any) -> pd.DataFrame:
+        _, pro = self.client
+        method = getattr(pro, api_name, None)
+        if callable(method):
+            return method(**params)
+        query = getattr(pro, "query", None)
+        if callable(query):
+            return query(api_name, **params)
+        raise SourceUnavailable(f"当前 Tushare 中转未提供 {api_name} 接口。")
+
+    def _sleep_between_codes(self) -> None:
+        if self._loop_delay > 0:
+            time.sleep(self._loop_delay)
+
+
+def _trade_date_arg(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%Y%m%d")
+    if isinstance(value, date):
+        return value.strftime("%Y%m%d")
+    text = str(value).strip()
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        return text[:10].replace("-", "")
+    return text
+
+
+def _records(frame: pd.DataFrame) -> List[Dict[str, Any]]:
+    if frame is None or frame.empty:
+        return []
+    return frame.to_dict("records")
+
+
+def _base_dated_row(item: Dict[str, Any], source: str) -> Optional[Dict[str, Any]]:
+    code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE", "code", "CODE"]))
+    trade_date = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
+    if not code or not trade_date:
+        return None
+    return {"code": code, "trade_date": trade_date, "source": source, "updated_at": datetime.utcnow()}
+
+
+def _clean_frame(rows: List[Dict[str, Any]], required: List[str]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame()
+    clean = []
+    for row in rows:
+        if all(row.get(key) not in (None, "") for key in required):
+            clean.append(row)
+    return pd.DataFrame(clean)
+
+
+def _ten_thousand_unit(value: Any) -> Optional[float]:
+    number = safe_float(value)
+    if number is None:
+        return None
+    return number * 10000
+
+
+def _sum_optional(*values: Optional[float]) -> Optional[float]:
+    present = [value for value in values if value is not None]
+    if not present:
+        return None
+    return float(sum(present))
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    number = safe_float(value)
+    if number is None:
+        return None
+    return int(number)
+
+
+def _limited_codes(codes: List[str], limit: int) -> List[str]:
+    if limit and limit > 0:
+        return codes[:limit]
+    return codes

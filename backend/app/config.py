@@ -32,6 +32,10 @@ class Settings:
     intraday_scheduler_catchup_minutes: int = int(os.getenv("ASHARE_INTRADAY_SCHEDULER_CATCHUP_MINUTES", "8"))
     intraday_schedule: str = os.getenv("ASHARE_INTRADAY_SCHEDULE", "")
     intraday_retention_days: int = int(os.getenv("ASHARE_INTRADAY_RETENTION_DAYS", "10"))
+    tushare_enrichment_enabled: bool = os.getenv("ASHARE_TUSHARE_ENRICHMENT", "1") == "1"
+    tushare_enrichment_code_limit: int = int(os.getenv("ASHARE_TUSHARE_ENRICHMENT_CODE_LIMIT", "200"))
+    tushare_enrichment_timeout_seconds: int = int(os.getenv("ASHARE_TUSHARE_ENRICHMENT_TIMEOUT", "240"))
+    tushare_enrichment_loop_delay: float = float(os.getenv("ASHARE_TUSHARE_ENRICHMENT_LOOP_DELAY", "0.13"))
     daily_brief_scheduler_enabled: bool = os.getenv("ASHARE_DAILY_BRIEF_SCHEDULER", "1") == "1"
     daily_brief_scheduler_poll_seconds: int = int(os.getenv("ASHARE_DAILY_BRIEF_POLL_SECONDS", "60"))
     daily_brief_schedule_time: str = os.getenv("ASHARE_DAILY_BRIEF_TIME", "08:20")

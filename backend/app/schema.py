@@ -15,7 +15,7 @@ from backend.app.services.strategy_service import (
 )
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 MIGRATIONS = [
@@ -84,6 +84,183 @@ MIGRATIONS = [
         source TEXT,
         updated_at TIMESTAMP,
         PRIMARY KEY (code, date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tushare_daily_basic (
+        code TEXT,
+        trade_date DATE,
+        close DOUBLE,
+        turnover_rate DOUBLE,
+        turnover_rate_f DOUBLE,
+        volume_ratio DOUBLE,
+        pe DOUBLE,
+        pe_ttm DOUBLE,
+        pb DOUBLE,
+        ps DOUBLE,
+        ps_ttm DOUBLE,
+        dv_ratio DOUBLE,
+        dv_ttm DOUBLE,
+        total_share DOUBLE,
+        float_share DOUBLE,
+        free_share DOUBLE,
+        total_mv DOUBLE,
+        circ_mv DOUBLE,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, trade_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tushare_stk_factor (
+        code TEXT,
+        trade_date DATE,
+        macd DOUBLE,
+        kdj_k DOUBLE,
+        kdj_d DOUBLE,
+        kdj_j DOUBLE,
+        rsi_6 DOUBLE,
+        rsi_12 DOUBLE,
+        rsi_24 DOUBLE,
+        boll_upper DOUBLE,
+        boll_mid DOUBLE,
+        boll_lower DOUBLE,
+        cci DOUBLE,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, trade_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tushare_moneyflow (
+        code TEXT,
+        trade_date DATE,
+        buy_sm_amount DOUBLE,
+        sell_sm_amount DOUBLE,
+        buy_md_amount DOUBLE,
+        sell_md_amount DOUBLE,
+        buy_lg_amount DOUBLE,
+        sell_lg_amount DOUBLE,
+        buy_elg_amount DOUBLE,
+        sell_elg_amount DOUBLE,
+        net_mf_amount DOUBLE,
+        main_net_amount DOUBLE,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, trade_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tushare_limit_list_d (
+        code TEXT,
+        trade_date DATE,
+        name TEXT,
+        close DOUBLE,
+        pct_chg DOUBLE,
+        limit_type TEXT,
+        up_stat TEXT,
+        fd_amount DOUBLE,
+        first_time TEXT,
+        last_time TEXT,
+        open_times INTEGER,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, trade_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tushare_cyq_perf (
+        code TEXT,
+        trade_date DATE,
+        his_low DOUBLE,
+        his_high DOUBLE,
+        cost_5pct DOUBLE,
+        cost_15pct DOUBLE,
+        cost_50pct DOUBLE,
+        cost_85pct DOUBLE,
+        cost_95pct DOUBLE,
+        weight_avg DOUBLE,
+        winner_rate DOUBLE,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, trade_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tushare_cyq_chips (
+        code TEXT,
+        trade_date DATE,
+        price DOUBLE,
+        percent DOUBLE,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, trade_date, price)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tushare_ths_member (
+        code TEXT,
+        name TEXT,
+        con_code TEXT,
+        con_name TEXT,
+        weight DOUBLE,
+        in_date DATE,
+        out_date DATE,
+        is_new TEXT,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, con_code)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tushare_top_list (
+        code TEXT,
+        trade_date DATE,
+        name TEXT,
+        close DOUBLE,
+        pct_change DOUBLE,
+        turnover_rate DOUBLE,
+        amount DOUBLE,
+        l_sell DOUBLE,
+        l_buy DOUBLE,
+        l_amount DOUBLE,
+        net_amount DOUBLE,
+        net_rate DOUBLE,
+        amount_rate DOUBLE,
+        float_values DOUBLE,
+        reason TEXT,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, trade_date, reason)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tushare_top_inst (
+        code TEXT,
+        trade_date DATE,
+        exalter TEXT,
+        buy DOUBLE,
+        buy_rate DOUBLE,
+        sell DOUBLE,
+        sell_rate DOUBLE,
+        net_buy DOUBLE,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, trade_date, exalter)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tushare_hm_detail (
+        code TEXT,
+        trade_date DATE,
+        name TEXT,
+        hm_name TEXT,
+        buy_amount DOUBLE,
+        sell_amount DOUBLE,
+        net_amount DOUBLE,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (code, trade_date, hm_name)
     )
     """,
     """

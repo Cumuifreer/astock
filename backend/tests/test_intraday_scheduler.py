@@ -51,6 +51,25 @@ def test_intraday_scheduler_enqueues_due_beijing_slot_once(tmp_path, monkeypatch
     assert '"schedule_key": "2026-05-22 14:55"' in rows[0]["payload_json"]
 
 
+def test_scheduled_intraday_sample_skips_when_previous_intraday_is_busy(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+
+    class NoopExecutor:
+        def submit(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(service, "executor", NoopExecutor())
+    service.start_scheduled_intraday_sample(datetime(2026, 5, 22, 9, 45))
+
+    next_task = service.start_scheduled_intraday_sample(datetime(2026, 5, 22, 9, 55))
+
+    rows = db.query("SELECT id, status FROM task_runs WHERE kind = 'intraday' ORDER BY id")
+    assert next_task is None
+    assert rows == [{"id": "intraday-auto-20260522-0945", "status": "queued"}]
+
+
 def test_intraday_scheduler_ignores_non_trading_hours(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

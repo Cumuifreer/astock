@@ -59,11 +59,15 @@ curl -sS http://127.0.0.1:8000/api/intraday
 export ASHARE_TUSHARE_TOKEN=your-token
 export ASHARE_TUSHARE_HTTP_URL=http://101.35.233.113:8020/
 export ASHARE_TUSHARE_REALTIME=1
+export ASHARE_TUSHARE_ENRICHMENT=1
+export ASHARE_TUSHARE_ENRICHMENT_CODE_LIMIT=200
 export ASHARE_INTRADAY_SCHEDULE=09:35,09:45,09:55,10:05,10:15,10:25,10:35,10:45,10:55,11:05,11:15,11:25,13:00,13:10,13:20,13:30,13:40,13:50,14:00,14:10,14:20,14:30,14:40,14:50,14:55
-export ASHARE_INTRADAY_RETENTION_DAYS=10
+export ASHARE_INTRADAY_RETENTION_DAYS=0
 ```
 
 轻量日更补齐历史 K 线后，会按 `ASHARE_INTRADAY_RETENTION_DAYS` 清理已落入历史 K 线的旧盘中快照和盘中排名。设为 `0` 会清掉所有符合条件的历史盘中行，设为负数会关闭清理。
+
+轻量/完整更新会在历史 K 线后接入 Tushare 增强数据：`daily_basic`、`stk_factor`、`moneyflow`、`limit_list_d`、`cyq_perf`、`cyq_chips`、`ths_member`、`top_list`、`top_inst`、`hm_detail`。其中 `daily_basic` 会直接写入流通市值缓存；筹码和同花顺成分会按 `ASHARE_TUSHARE_ENRICHMENT_CODE_LIMIT` 分批补齐。
 
 如果用 systemd 定时触发，可以让 timer 在这些时间运行：
 

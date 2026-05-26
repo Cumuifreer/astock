@@ -2607,6 +2607,7 @@ function TaskDetail({ task }: { task: TaskRun | null }) {
   const visual = taskProgressVisual(task);
   const queued = task.status === 'queued';
   const analyzeRunning = task.kind === 'analyze' && task.status === 'running';
+  const summaryStats = taskSummaryStats(task);
   return (
     <div className="task-detail">
       <div className="status-line">
@@ -2642,10 +2643,44 @@ function TaskDetail({ task }: { task: TaskRun | null }) {
           </>
         )}
       </div>
+      {summaryStats.length > 0 && (
+        <div className="task-stats">
+          {summaryStats.map((item) => (
+            <span key={item.label}>{item.label} <b>{item.value}</b></span>
+          ))}
+        </div>
+      )}
       {task.warning && <InlineError text={task.warning} />}
       {task.error_message && <InlineError text={task.error_message} />}
     </div>
   );
+}
+
+function taskSummaryStats(task: TaskRun): Array<{ label: string; value: string }> {
+  if (task.kind !== 'update') return [];
+  const summary = task.summary || {};
+  const stats: Array<{ label: string; value: string }> = [];
+  const cleanup = summary.intraday_cleanup;
+  if (isRecord(cleanup)) {
+    const total = numericObjectTotal(cleanup);
+    stats.push({ label: '盘中清理', value: `${formatInt(total)} 条` });
+  }
+  const enrichment = summary.tushare_enrichment;
+  if (isRecord(enrichment)) {
+    stats.push({ label: 'Tushare', value: `${formatInt(numericObjectTotal(enrichment))} 行` });
+  }
+  const floatCount = nullableNumber(summary.float_market_value_count);
+  if (floatCount !== null) {
+    stats.push({ label: '流通市值', value: `${formatInt(floatCount)} 行` });
+  }
+  return stats;
+}
+
+function numericObjectTotal(record: Record<string, unknown>) {
+  return Object.values(record).reduce<number>((total, value) => {
+    const number = nullableNumber(value);
+    return total + (number ?? 0);
+  }, 0);
 }
 
 function Funnel({
@@ -3479,7 +3514,7 @@ const dataLedgerMeta: Record<string, { fields: string[]; expected: ExpectedDateK
     expected: 'history',
   },
   涨跌停: {
-    fields: ['code', 'trade_date', 'limit', 'open_times', 'fd_amount'],
+    fields: ['code', 'trade_date', 'limit_type', 'open_times', 'fd_amount'],
     expected: 'history',
   },
   筹码分布: {
