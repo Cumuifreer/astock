@@ -233,3 +233,32 @@ def test_tushare_enrichment_update_persists_all_capability_tables(tmp_path, monk
     assert capabilities["筹码分布"]["coverage_count"] == 1
     assert capabilities["概念/行业成分"]["coverage_count"] == 1
     assert capabilities["龙虎榜/游资"]["coverage_count"] == 1
+
+
+def test_tushare_optional_fetch_retries_rate_limit_before_warning(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    warnings = []
+    attempts = {"count": 0}
+    sleeps = []
+
+    def fetcher():
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise RuntimeError("您请求速度过快")
+        return pd.DataFrame([{"code": "000001.SZ"}])
+
+    monkeypatch.setattr(update_module.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    frame = service._fetch_tushare_optional(
+        "Tushare hm_detail",
+        "龙虎榜/游资",
+        fetcher,
+        warnings,
+    )
+
+    assert attempts["count"] == 3
+    assert len(frame) == 1
+    assert warnings == []
+    assert sleeps == [1.5, 3.0]

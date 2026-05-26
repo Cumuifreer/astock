@@ -27,6 +27,7 @@ from backend.app.sources.tushare_source import TushareEnrichmentSource, TushareR
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 HISTORY_CLOSE_HOUR = 16
 logger = logging.getLogger(__name__)
+TUSHARE_RATE_LIMIT_RETRY_DELAYS = (1.5, 3.0, 6.0)
 TUSHARE_TABLE_COLUMNS: Dict[str, List[str]] = {
     "tushare_daily_basic": [
         "code",
@@ -1049,17 +1050,33 @@ class UpdateService:
         fetcher: Any,
         warnings: Optional[List[str]],
     ) -> pd.DataFrame:
+        attempt = 0
         try:
-            frame = SourceGuard._call_with_timeout(fetcher, settings.tushare_enrichment_timeout_seconds)
-            if frame is None:
-                frame = pd.DataFrame()
-            self.public_guard.record(
-                source_label,
-                capability,
-                "available",
-                payload={"rows": len(frame)},
-            )
-            return frame
+            while True:
+                try:
+                    frame = SourceGuard._call_with_timeout(fetcher, settings.tushare_enrichment_timeout_seconds)
+                    if frame is None:
+                        frame = pd.DataFrame()
+                    self.public_guard.record(
+                        source_label,
+                        capability,
+                        "available",
+                        payload={"rows": len(frame), "attempts": attempt + 1},
+                    )
+                    return frame
+                except Exception as exc:
+                    message = str(exc)
+                    if attempt >= len(TUSHARE_RATE_LIMIT_RETRY_DELAYS) or not _is_tushare_rate_limit_error(message):
+                        raise
+                    delay = TUSHARE_RATE_LIMIT_RETRY_DELAYS[attempt]
+                    attempt += 1
+                    logger.info(
+                        "Tushare rate limit for %s %s, retrying in %.1fs",
+                        source_label,
+                        capability,
+                        delay,
+                    )
+                    time.sleep(delay)
         except Exception as exc:
             message = str(exc)
             if warnings is not None:
@@ -1961,3 +1978,19 @@ def _date_span(start: date, end: date) -> List[date]:
         days.append(current)
         current += timedelta(days=1)
     return days
+
+
+def _is_tushare_rate_limit_error(message: str) -> bool:
+    text = (message or "").lower()
+    return any(
+        marker in text
+        for marker in [
+            "请求速度过快",
+            "请求过快",
+            "请求频率",
+            "too many",
+            "rate limit",
+            "ratelimit",
+            "429",
+        ]
+    )
