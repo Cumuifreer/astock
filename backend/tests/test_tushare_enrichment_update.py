@@ -113,19 +113,25 @@ class FakeFullTushareEnrichmentSource(FakeTushareEnrichmentSource):
             ]
         )
 
-    def fetch_ths_member_for_codes(self, codes, limit=0):
+    def fetch_ths_index(self, limit=0):
+        return pd.DataFrame([{"ts_code": "885800.TI", "name": "消费电子"}])
+
+    def fetch_ths_member_for_board(self, board_code, board_name=None, include_bj=False, exclude_star=False):
         return pd.DataFrame(
             [
                 {
-                    "code": codes[0],
+                    "code": "000001.SZ",
                     "name": "平安银行",
-                    "con_code": "885800.TI",
-                    "con_name": "消费电子",
+                    "con_code": board_code,
+                    "con_name": board_name or "消费电子",
                     "source": "Tushare ths_member",
                     "updated_at": "2026-05-22T18:30:00",
                 }
             ]
         )
+
+    def fetch_ths_member_for_codes(self, codes, limit=0):
+        raise AssertionError("概念/行业成分不应再按股票代码循环抓取")
 
     def fetch_top_list(self, trade_date):
         return pd.DataFrame(
@@ -348,3 +354,118 @@ def test_capability_backfill_cyq_loops_until_missing_codes_are_filled(tmp_path, 
         ("perf", ["600000.SH"]),
         ("chips", ["600000.SH"]),
     ]
+
+
+def test_capability_backfill_ths_member_uses_board_loop(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ"), _stock("600000.SH")], ["code"])
+    calls = []
+
+    class BoardThsSource:
+        def fetch_ths_index(self, limit=0):
+            calls.append(("index", limit))
+            return pd.DataFrame(
+                [
+                    {"ts_code": "885800.TI", "name": "消费电子"},
+                    {"ts_code": "881001.TI", "name": "半导体"},
+                ]
+            )
+
+        def fetch_ths_member_for_board(self, board_code, board_name=None, include_bj=False, exclude_star=False):
+            calls.append(("member", board_code, board_name))
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "000001.SZ" if board_code == "885800.TI" else "600000.SH",
+                        "name": "平安银行" if board_code == "885800.TI" else "浦发银行",
+                        "con_code": board_code,
+                        "con_name": board_name,
+                        "source": "Tushare ths_member",
+                        "updated_at": "2026-05-22T18:30:00",
+                    }
+                ]
+            )
+
+        def fetch_ths_member_for_codes(self, codes, limit=0):
+            raise AssertionError("补齐概念不应再按股票代码循环抓取")
+
+    monkeypatch.setattr(update_module, "TushareEnrichmentSource", BoardThsSource)
+    service = UpdateService(db)
+    service._write_task("task-ths", kind="update", status="running", stage="补齐概念/行业成分")
+
+    service._run_capability_backfill(
+        "task-ths",
+        {"capability": "概念/行业成分", "target_date": "2026-05-22", "limit": 1},
+    )
+
+    task = db.query("SELECT * FROM task_runs WHERE id = 'task-ths'")[0]
+    summary = update_module.json.loads(task["summary_json"])
+    assert task["status"] == "completed_full"
+    assert summary["capability"] == "概念/行业成分"
+    assert task["processed"] == 2
+    assert task["total"] == 2
+    assert db.scalar("SELECT COUNT(*) FROM tushare_ths_member") == 2
+    assert calls == [
+        ("index", 0),
+        ("member", "885800.TI", "消费电子"),
+        ("member", "881001.TI", "半导体"),
+    ]
+
+
+def test_tushare_member_incremental_update_skips_existing_boards(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "tushare_ths_member",
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "con_code": "885800.TI",
+                "con_name": "消费电子",
+                "source": "Tushare ths_member",
+                "updated_at": "2026-05-22T18:30:00",
+            }
+        ],
+        ["code", "con_code"],
+    )
+    calls = []
+
+    class IncrementalThsSource:
+        def fetch_ths_index(self, limit=0):
+            return pd.DataFrame(
+                [
+                    {"ts_code": "885800.TI", "name": "消费电子"},
+                    {"ts_code": "881001.TI", "name": "半导体"},
+                ]
+            )
+
+        def fetch_ths_member_for_board(self, board_code, board_name=None, include_bj=False, exclude_star=False):
+            calls.append(board_code)
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "600000.SH",
+                        "name": "浦发银行",
+                        "con_code": board_code,
+                        "con_name": board_name,
+                        "source": "Tushare ths_member",
+                        "updated_at": "2026-05-22T18:30:00",
+                    }
+                ]
+            )
+
+    service = UpdateService(db)
+    warnings = []
+    result = service._update_ths_members_from_boards(
+        IncrementalThsSource(),
+        warnings,
+        limit=0,
+        missing_only=True,
+    )
+
+    assert warnings == []
+    assert calls == ["881001.TI"]
+    assert result["success"] == 1
+    assert db.scalar("SELECT COUNT(*) FROM tushare_ths_member") == 2

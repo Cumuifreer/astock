@@ -1,5 +1,6 @@
 import pandas as pd
 
+from backend.app.sources import tushare_source as tushare_module
 from backend.app.sources.tushare_source import TushareEnrichmentSource, TushareRealtimeSource
 
 
@@ -167,28 +168,42 @@ class FakeTushareEnrichmentPro:
             ]
         )
 
-    def ths_member(self, con_code="", fields=""):
-        assert con_code == "000001.SZ"
+    def ths_index(self, exchange="", fields=""):
+        assert exchange == "A"
+        assert "ts_code" in fields
+        return pd.DataFrame(
+            [
+                {"ts_code": "885800.TI", "name": "消费电子"},
+                {"ts_code": "881001.TI", "name": "半导体"},
+            ]
+        )
+
+    def ths_member(self, ts_code="", con_code="", fields=""):
+        assert not con_code
+        assert ts_code in {"885800.TI", "881001.TI"}
         return pd.DataFrame(
             [
                 {
-                    "ts_code": "885800.TI",
-                    "con_code": "000001.SZ",
-                    "con_name": "平安银行",
+                    "ts_code": ts_code,
+                    "name": "消费电子" if ts_code == "885800.TI" else "半导体",
+                    "con_code": "000001.SZ" if ts_code == "885800.TI" else "688001.SH",
+                    "con_name": "平安银行" if ts_code == "885800.TI" else "华兴源创",
                     "is_new": "Y",
                 }
             ]
         )
 
 
-def test_tushare_enrichment_source_normalizes_daily_batch_endpoints():
+def test_tushare_enrichment_source_normalizes_daily_batch_endpoints(monkeypatch):
+    monkeypatch.setattr(tushare_module.time, "sleep", lambda seconds: None)
     source = TushareEnrichmentSource(pro=FakeTushareEnrichmentPro())
 
     daily_basic = source.fetch_daily_basic("2026-05-22")
     factors = source.fetch_stk_factor("2026-05-22")
     moneyflow = source.fetch_moneyflow("2026-05-22")
     limits = source.fetch_limit_list_d("2026-05-22")
-    members = source.fetch_ths_member_for_codes(["000001.SZ"], limit=1)
+    boards = source.fetch_ths_index()
+    members = source.fetch_ths_members_for_boards(boards, limit=1)
 
     assert daily_basic.iloc[0]["code"] == "000001.SZ"
     assert daily_basic.iloc[0]["trade_date"] == "2026-05-22"
@@ -197,8 +212,22 @@ def test_tushare_enrichment_source_normalizes_daily_batch_endpoints():
     assert factors.iloc[0]["macd"] == 0.12
     assert moneyflow.iloc[0]["main_net_amount"] == 400_000.0
     assert limits.iloc[0]["limit"] == "U"
+    assert list(boards["ts_code"]) == ["885800.TI", "881001.TI"]
     assert members.iloc[0]["code"] == "000001.SZ"
     assert members.iloc[0]["con_code"] == "885800.TI"
+
+
+def test_tushare_ths_member_uses_near_limit_endpoint_sleep(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(tushare_module.time, "sleep", lambda seconds: sleeps.append(seconds))
+    source = TushareEnrichmentSource(pro=FakeTushareEnrichmentPro(), loop_delay=0)
+
+    boards = source.fetch_ths_index()
+    members = source.fetch_ths_members_for_boards(boards, limit=2)
+
+    assert set(members["code"]) == {"000001.SZ", "688001.SH"}
+    assert len(sleeps) == 2
+    assert all(0.31 <= seconds <= 0.32 for seconds in sleeps)
 
 
 def test_tushare_history_bars_are_front_adjusted_and_use_local_units():

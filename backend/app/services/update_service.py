@@ -1210,55 +1210,91 @@ class UpdateService:
         warnings: List[str],
     ) -> Dict[str, Any]:
         source = TushareEnrichmentSource()
-        skipped_codes: set[str] = set()
-        total = len(
-            self._tushare_codes_missing_for_member(
-                0,
-                include_bj,
-                exclude_star,
-            )
+        return self._update_ths_members_from_boards(
+            source,
+            warnings,
+            task_id=task_id,
+            limit=0,
+            target_date=None,
+            include_bj=include_bj,
+            exclude_star=exclude_star,
         )
-        processed_codes: set[str] = set()
+
+    def _update_ths_members_from_boards(
+        self,
+        source: TushareEnrichmentSource,
+        warnings: List[str],
+        task_id: Optional[str] = None,
+        limit: int = 0,
+        target_date: Optional[date] = None,
+        missing_only: bool = False,
+        include_bj: bool = False,
+        exclude_star: bool = False,
+    ) -> Dict[str, Any]:
+        board_frame = self._fetch_tushare_optional(
+            "Tushare ths_index",
+            "概念/行业成分",
+            lambda: source.fetch_ths_index(limit=0),
+            warnings,
+        )
+        board_records = board_frame.to_dict("records") if board_frame is not None and not board_frame.empty else []
+        if missing_only:
+            existing_boards = {
+                str(row["con_code"])
+                for row in self.db.query("SELECT DISTINCT con_code FROM tushare_ths_member WHERE con_code IS NOT NULL")
+                if row.get("con_code")
+            }
+            board_records = [
+                board
+                for board in board_records
+                if str(board.get("ts_code") or board.get("code") or "").strip() not in existing_boards
+            ]
+        if limit > 0:
+            board_records = board_records[:limit]
+        total = len(board_records)
         written = 0
-        while True:
-            codes = self._tushare_codes_missing_for_member(
-                batch_limit,
-                include_bj,
-                exclude_star,
-                exclude_codes=skipped_codes,
-            )
-            if not codes:
-                break
-            self._patch_capability_backfill_progress(
-                task_id,
-                capability="概念/行业成分",
-                target_date=None,
-                step="ths_member",
-                processed=len(processed_codes),
-                total=total,
-                written=written,
-                skipped=len(skipped_codes),
-                source="Tushare ths_member",
-                current=",".join(codes[:3]),
-            )
+        skipped = 0
+        for index, board in enumerate(board_records, start=1):
+            board_code = str(board.get("ts_code") or board.get("code") or "").strip()
+            if not board_code:
+                skipped += 1
+                continue
+            board_name = str(board.get("name") or board_code)
+            if task_id:
+                self._patch_capability_backfill_progress(
+                    task_id,
+                    capability="概念/行业成分",
+                    target_date=target_date,
+                    step="ths_member",
+                    processed=index - 1,
+                    total=total,
+                    written=written,
+                    skipped=skipped,
+                    source="Tushare ths_member",
+                    current=f"{board_code} {board_name}",
+                )
             frame = self._fetch_tushare_optional(
                 "Tushare ths_member",
                 "概念/行业成分",
-                lambda: source.fetch_ths_member_for_codes(codes, limit=len(codes)),
+                lambda board_code=board_code, board_name=board_name: source.fetch_ths_member_for_board(
+                    board_code,
+                    board_name,
+                    include_bj=include_bj,
+                    exclude_star=exclude_star,
+                ),
                 warnings,
             )
-            returned = {str(row.get("code")) for row in frame.to_dict("records") if row.get("code")}
+            if frame is None or frame.empty:
+                skipped += 1
+                continue
             written += self._persist_tushare_frame("tushare_ths_member", frame, ["code", "con_code"])
-            skipped_codes.update(set(codes) - returned)
-            processed_codes.update(codes)
-        remaining = len(self._tushare_codes_missing_for_member(0, include_bj, exclude_star))
         return {
             "source": "Tushare ths_member",
             "success": written,
             "failed": 0,
-            "skipped": remaining,
+            "skipped": skipped,
             "total": total,
-            "processed": len(processed_codes),
+            "processed": total,
             "rows": written,
         }
 
@@ -1417,24 +1453,16 @@ class UpdateService:
             )
         else:
             counts["cyq_chips"] = 0
-        ths_codes = self._tushare_codes_missing_for_member(
-            limit,
+        ths_result = self._update_ths_members_from_boards(
+            source,
+            warnings,
+            limit=limit,
+            target_date=None,
+            missing_only=True,
             include_bj=include_bj,
             exclude_star=exclude_star,
         )
-        if ths_codes:
-            counts["ths_member"] = self._persist_tushare_frame(
-                "tushare_ths_member",
-                self._fetch_tushare_optional(
-                    "Tushare ths_member",
-                    "概念/行业成分",
-                    lambda: source.fetch_ths_member_for_codes(ths_codes, limit=limit),
-                    warnings,
-                ),
-                ["code", "con_code"],
-            )
-        else:
-            counts["ths_member"] = 0
+        counts["ths_member"] = int(ths_result.get("success", 0))
         counts["top_list"] = self._persist_tushare_frame(
             "tushare_top_list",
             self._fetch_tushare_optional(

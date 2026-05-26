@@ -187,6 +187,7 @@ class TushareEnrichmentSource:
         "cost_85pct,cost_95pct,weight_avg,winner_rate"
     )
     CYQ_CHIPS_FIELDS = "ts_code,trade_date,price,percent"
+    THS_INDEX_FIELDS = "ts_code,name,count,exchange,list_date,type"
     THS_MEMBER_FIELDS = "ts_code,code,name,con_code,con_name,weight,in_date,out_date,is_new"
     TOP_LIST_FIELDS = (
         "trade_date,ts_code,name,close,pct_change,turnover_rate,amount,l_sell,l_buy,"
@@ -195,6 +196,10 @@ class TushareEnrichmentSource:
     TOP_INST_FIELDS = "trade_date,ts_code,exalter,buy,buy_rate,sell,sell_rate,net_buy"
     HM_DETAIL_FIELDS = "trade_date,ts_code,ts_name,name,hm_name,buy_amount,sell_amount,net_amount"
     INDEX_DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
+    LOOP_API_TARGET_RPM = {
+        "ths_member": 190.0,
+        "cyq_chips": 190.0,
+    }
 
     def __init__(
         self,
@@ -245,7 +250,7 @@ class TushareEnrichmentSource:
                 continue
             trade_date = _trade_date_arg(day)
             factor_frame = self._call_api("adj_factor", trade_date=trade_date, fields=self.ADJ_FACTOR_FIELDS)
-            self._sleep_between_codes()
+            self._sleep_between_codes("adj_factor")
             factors = _factor_map(factor_frame, requested)
             if factors:
                 return factors, day.isoformat()
@@ -267,7 +272,7 @@ class TushareEnrichmentSource:
         if progress:
             progress("daily")
         daily_frame = self._call_api("daily", trade_date=trade_date, fields=self.HISTORY_DAILY_FIELDS)
-        self._sleep_between_codes()
+        self._sleep_between_codes("daily")
         day_daily_rows = _records(daily_frame)
         if not day_daily_rows:
             return pd.DataFrame()
@@ -275,7 +280,7 @@ class TushareEnrichmentSource:
         if progress:
             progress("adj_factor")
         factor_frame = self._call_api("adj_factor", trade_date=trade_date, fields=self.ADJ_FACTOR_FIELDS)
-        self._sleep_between_codes()
+        self._sleep_between_codes("adj_factor")
         factors = _factor_map(factor_frame, requested)
 
         if progress:
@@ -288,7 +293,7 @@ class TushareEnrichmentSource:
             )
         except Exception:
             basic_frame = pd.DataFrame()
-        self._sleep_between_codes()
+        self._sleep_between_codes("daily_basic")
         turns: Dict[tuple[str, str], Optional[float]] = {}
         for item in _records(basic_frame):
             code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE"]), include_bj=True)
@@ -466,7 +471,7 @@ class TushareEnrichmentSource:
                 )
             except Exception as exc:
                 errors.append(f"{code}: {exc}")
-                self._sleep_between_codes()
+                self._sleep_between_codes("cyq_perf")
                 continue
             for item in _records(frame):
                 row = _base_dated_row(item, "Tushare cyq_perf")
@@ -485,7 +490,7 @@ class TushareEnrichmentSource:
                 ]:
                     row[field] = safe_float(first_present(item, [field, field.upper()]))
                 rows.append(row)
-            self._sleep_between_codes()
+            self._sleep_between_codes("cyq_perf")
         if not rows and errors:
             raise SourceUnavailable(errors[0])
         return _clean_frame(rows, required=["code", "trade_date"])
@@ -503,7 +508,7 @@ class TushareEnrichmentSource:
                 )
             except Exception as exc:
                 errors.append(f"{code}: {exc}")
-                self._sleep_between_codes()
+                self._sleep_between_codes("cyq_chips")
                 continue
             for item in _records(frame):
                 row = _base_dated_row(item, "Tushare cyq_chips")
@@ -516,12 +521,87 @@ class TushareEnrichmentSource:
                     }
                 )
                 rows.append(row)
-            self._sleep_between_codes()
+            self._sleep_between_codes("cyq_chips")
         if not rows and errors:
             raise SourceUnavailable(errors[0])
         return _clean_frame(rows, required=["code", "trade_date", "price"])
 
-    def fetch_ths_member_for_codes(self, codes: List[str], limit: int = 0) -> pd.DataFrame:
+    def fetch_ths_index(self, limit: int = 0) -> pd.DataFrame:
+        frame = self._call_api("ths_index", exchange="A", fields=self.THS_INDEX_FIELDS)
+        self._sleep_between_codes("ths_index")
+        rows = []
+        for item in _records(frame):
+            board_code = first_present(item, ["ts_code", "TS_CODE", "code", "CODE"])
+            if not board_code:
+                continue
+            rows.append(
+                {
+                    "ts_code": str(board_code),
+                    "name": first_present(item, ["name", "NAME"]) or str(board_code),
+                    "source": "Tushare ths_index",
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+        return _clean_frame(_limited_codes(rows, limit), required=["ts_code"])
+
+    def fetch_ths_member_for_board(
+        self,
+        board_code: str,
+        board_name: Optional[str] = None,
+        include_bj: bool = False,
+        exclude_star: bool = False,
+    ) -> pd.DataFrame:
+        frame = self._call_api("ths_member", ts_code=board_code, fields=self.THS_MEMBER_FIELDS)
+        self._sleep_between_codes("ths_member")
+        return self._normalize_ths_member_frame(
+            frame,
+            board_code,
+            board_name,
+            include_bj=include_bj,
+            exclude_star=exclude_star,
+        )
+
+    def fetch_ths_members_for_boards(
+        self,
+        boards: Any,
+        limit: int = 0,
+        progress: Optional[Any] = None,
+        include_bj: bool = False,
+        exclude_star: bool = False,
+    ) -> pd.DataFrame:
+        if boards is None:
+            board_records = _records(self.fetch_ths_index())
+        elif isinstance(boards, pd.DataFrame):
+            board_records = _records(boards)
+        else:
+            board_records = list(boards)
+        selected = _limited_codes(board_records, limit)
+        frames = []
+        for index, board in enumerate(selected, start=1):
+            board_code = first_present(board, ["ts_code", "TS_CODE", "code", "CODE"])
+            if not board_code:
+                continue
+            board_name = first_present(board, ["name", "NAME", "con_name", "CON_NAME"]) or str(board_code)
+            if progress:
+                progress(str(board_code), str(board_name), index, len(selected))
+            frames.append(
+                self.fetch_ths_member_for_board(
+                    str(board_code),
+                    str(board_name),
+                    include_bj=include_bj,
+                    exclude_star=exclude_star,
+                )
+            )
+        frames = [frame for frame in frames if frame is not None and not frame.empty]
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    def fetch_ths_member_for_codes(
+        self,
+        codes: List[str],
+        limit: int = 0,
+        include_bj: bool = False,
+        exclude_star: bool = False,
+    ) -> pd.DataFrame:
         rows = []
         errors = []
         for requested_code in _limited_codes(codes, limit):
@@ -529,36 +609,23 @@ class TushareEnrichmentSource:
                 frame = self._call_api("ths_member", con_code=requested_code, fields=self.THS_MEMBER_FIELDS)
             except Exception as exc:
                 errors.append(f"{requested_code}: {exc}")
-                self._sleep_between_codes()
+                self._sleep_between_codes("ths_member")
                 continue
-            for item in _records(frame):
-                stock_code = normalize_a_share_code(
-                    first_present(item, ["con_code", "CON_CODE", "code", "stock_code", "CODE", "STOCK_CODE"])
-                )
-                if not stock_code:
-                    continue
-                ths_code = first_present(item, ["ts_code", "TS_CODE"])
-                rows.append(
-                    {
-                        "code": stock_code,
-                        "name": first_present(item, ["con_name", "CON_NAME", "name", "NAME"]) or stock_code,
-                        "con_code": ths_code,
-                        "con_name": first_present(item, ["name", "NAME"]) or ths_code,
-                        "weight": safe_float(first_present(item, ["weight", "WEIGHT"])),
-                        "in_date": _normalize_trade_date(first_present(item, ["in_date", "IN_DATE"])),
-                        "out_date": _normalize_trade_date(first_present(item, ["out_date", "OUT_DATE"])),
-                        "is_new": first_present(item, ["is_new", "IS_NEW"]),
-                        "source": "Tushare ths_member",
-                        "updated_at": datetime.utcnow(),
-                    }
-                )
-            self._sleep_between_codes()
+            rows.extend(
+                self._normalize_ths_member_frame(
+                    frame,
+                    include_bj=include_bj,
+                    exclude_star=exclude_star,
+                ).to_dict("records")
+            )
+            self._sleep_between_codes("ths_member")
         if not rows and errors:
             raise SourceUnavailable(errors[0])
         return _clean_frame(rows, required=["code", "con_code"])
 
     def fetch_top_list(self, trade_date: Any) -> pd.DataFrame:
         frame = self._call_api("top_list", trade_date=_trade_date_arg(trade_date), fields=self.TOP_LIST_FIELDS)
+        self._sleep_between_codes("top_list")
         rows = []
         for item in _records(frame):
             row = _base_dated_row(item, "Tushare top_list")
@@ -586,6 +653,7 @@ class TushareEnrichmentSource:
 
     def fetch_top_inst(self, trade_date: Any) -> pd.DataFrame:
         frame = self._call_api("top_inst", trade_date=_trade_date_arg(trade_date), fields=self.TOP_INST_FIELDS)
+        self._sleep_between_codes("top_inst")
         rows = []
         for item in _records(frame):
             row = _base_dated_row(item, "Tushare top_inst")
@@ -606,6 +674,7 @@ class TushareEnrichmentSource:
 
     def fetch_hm_detail(self, trade_date: Any) -> pd.DataFrame:
         frame = self._call_api("hm_detail", trade_date=_trade_date_arg(trade_date), fields=self.HM_DETAIL_FIELDS)
+        self._sleep_between_codes("hm_detail")
         rows = []
         for item in _records(frame):
             row = _base_dated_row(item, "Tushare hm_detail")
@@ -636,7 +705,7 @@ class TushareEnrichmentSource:
                 )
             except Exception as exc:
                 errors.append(f"{index_code}: {exc}")
-                self._sleep_between_codes()
+                self._sleep_between_codes("index_daily")
                 continue
             for item in _records(frame):
                 code = first_present(item, ["ts_code", "TS_CODE", "index_code", "INDEX_CODE"])
@@ -663,10 +732,47 @@ class TushareEnrichmentSource:
                         "updated_at": datetime.utcnow(),
                     }
                 )
-            self._sleep_between_codes()
+            self._sleep_between_codes("index_daily")
         if not rows and errors:
             raise SourceUnavailable(errors[0])
         return _clean_frame(rows, required=["index_code", "trade_date"])
+
+    def _normalize_ths_member_frame(
+        self,
+        frame: pd.DataFrame,
+        board_code: Optional[str] = None,
+        board_name: Optional[str] = None,
+        include_bj: bool = False,
+        exclude_star: bool = False,
+    ) -> pd.DataFrame:
+        rows = []
+        for item in _records(frame):
+            stock_code = normalize_a_share_code(
+                first_present(item, ["con_code", "CON_CODE", "code", "stock_code", "CODE", "STOCK_CODE"]),
+                include_bj=include_bj,
+                exclude_star=exclude_star,
+            )
+            if not stock_code:
+                continue
+            resolved_board_code = board_code or first_present(item, ["ts_code", "TS_CODE"])
+            if not resolved_board_code:
+                continue
+            resolved_board_name = board_name or first_present(item, ["name", "NAME"]) or str(resolved_board_code)
+            rows.append(
+                {
+                    "code": stock_code,
+                    "name": first_present(item, ["con_name", "CON_NAME"]) or stock_code,
+                    "con_code": str(resolved_board_code),
+                    "con_name": resolved_board_name,
+                    "weight": safe_float(first_present(item, ["weight", "WEIGHT"])),
+                    "in_date": _normalize_trade_date(first_present(item, ["in_date", "IN_DATE"])),
+                    "out_date": _normalize_trade_date(first_present(item, ["out_date", "OUT_DATE"])),
+                    "is_new": first_present(item, ["is_new", "IS_NEW"]),
+                    "source": "Tushare ths_member",
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+        return _clean_frame(rows, required=["code", "con_code"])
 
     def _call_api(self, api_name: str, **params: Any) -> pd.DataFrame:
         _, pro = self.client
@@ -678,9 +784,12 @@ class TushareEnrichmentSource:
             return query(api_name, **params)
         raise SourceUnavailable(f"当前 Tushare 中转未提供 {api_name} 接口。")
 
-    def _sleep_between_codes(self) -> None:
-        if self._loop_delay > 0:
-            time.sleep(self._loop_delay)
+    def _sleep_between_codes(self, api_name: Optional[str] = None) -> None:
+        target_rpm = self.LOOP_API_TARGET_RPM.get(api_name or "")
+        rate_delay = 60.0 / target_rpm if target_rpm else 0.0
+        delay = max(self._loop_delay, rate_delay)
+        if delay > 0:
+            time.sleep(delay)
 
 
 def _trade_date_arg(value: Any) -> str:
