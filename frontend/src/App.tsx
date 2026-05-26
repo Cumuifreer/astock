@@ -49,6 +49,7 @@ import type {
   FunnelStep,
   RuntimeHealth,
   RuntimeSlot,
+  SignalModeField,
   SignalModeTemplate,
   StrategyConfig,
   StrategyPreset,
@@ -114,10 +115,11 @@ const analysisModes: Array<{ id: string; label: string; sub: string }> = [
   { id: 'score', label: '综合评分', sub: '基础合格后按信号强弱排序' },
 ];
 
-const conditionModes: Array<[string, string]> = [
-  ['must', '必须满足'],
-  ['score', '只参与得分'],
-  ['off', '不启用'],
+const signalFieldRoles = [
+  { id: 'filter', label: '过滤' },
+  { id: 'score', label: '加分' },
+  { id: 'risk', label: '风控' },
+  { id: 'display', label: '展示' },
 ];
 
 const reviewStatuses = ['观察中', '已验证', '已放弃', '已错过'];
@@ -289,6 +291,53 @@ function App() {
     await startAnalyze(strategy);
   }
 
+  async function createSignalMode(name: string) {
+    try {
+      const result = await api.createSignalMode(name);
+      setNotice('信号模式已创建');
+      await load(true);
+      return result.mode;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建信号模式失败');
+      throw err;
+    }
+  }
+
+  async function saveSignalMode(mode: SignalModeTemplate) {
+    try {
+      const result = await api.saveSignalMode(mode);
+      setNotice('信号模式已保存');
+      await load(true);
+      return result.mode;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存信号模式失败');
+      throw err;
+    }
+  }
+
+  async function duplicateSignalMode(id: string) {
+    try {
+      const result = await api.duplicateSignalMode(id);
+      setNotice('信号模式已复制');
+      await load(true);
+      return result.mode;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '复制信号模式失败');
+      throw err;
+    }
+  }
+
+  async function deleteSignalMode(id: string) {
+    try {
+      await api.deleteSignalMode(id);
+      setNotice('信号模式已删除');
+      await load(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除信号模式失败');
+      throw err;
+    }
+  }
+
   const page = useMemo(() => {
     if (!bootstrap || !strategy) return null;
     if (tab === 'overview') {
@@ -301,7 +350,17 @@ function App() {
       );
     }
     if (tab === 'warehouse') return <Warehouse />;
-    if (tab === 'indicators') return <IndicatorLibraryPage library={bootstrap.indicator_library} />;
+    if (tab === 'indicators') {
+      return (
+        <IndicatorLibraryPage
+          library={bootstrap.indicator_library}
+          createMode={createSignalMode}
+          saveMode={saveSignalMode}
+          duplicateMode={duplicateSignalMode}
+          deleteMode={deleteSignalMode}
+        />
+      );
+    }
     if (tab === 'strategy') {
       return (
         <StrategyPanel
@@ -994,7 +1053,19 @@ function conceptProfileRows(concepts: Array<Record<string, unknown>>): Array<[Re
   ]);
 }
 
-function IndicatorLibraryPage({ library }: { library: IndicatorLibrary }) {
+function IndicatorLibraryPage({
+  library,
+  createMode,
+  saveMode,
+  duplicateMode,
+  deleteMode,
+}: {
+  library: IndicatorLibrary;
+  createMode: (name: string) => Promise<SignalModeTemplate>;
+  saveMode: (mode: SignalModeTemplate) => Promise<SignalModeTemplate>;
+  duplicateMode: (id: string) => Promise<SignalModeTemplate>;
+  deleteMode: (id: string) => Promise<void>;
+}) {
   const [category, setCategory] = useState(library.categories[0]?.id || '');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState(library.indicators[0]?.id || '');
@@ -1011,16 +1082,6 @@ function IndicatorLibraryPage({ library }: { library: IndicatorLibrary }) {
     });
   }, [category, library.indicators, search]);
   const selected = library.indicators.find((item) => item.id === selectedId) || indicators[0] || library.indicators[0];
-  const groupedTemplates = useMemo(
-    () => library.signal_modes.map((template) => ({
-      ...template,
-      interactionCount: template.rule_groups.reduce(
-        (sum, group) => sum + group.rules.filter((rule) => rule.kind === 'interaction').length,
-        0,
-      ),
-    })),
-    [library.signal_modes],
-  );
 
   useEffect(() => {
     if (!indicators.some((item) => item.id === selectedId) && indicators[0]) {
@@ -1127,97 +1188,127 @@ function IndicatorLibraryPage({ library }: { library: IndicatorLibrary }) {
         </aside>
       </section>
 
-      <section className="panel signal-template-strip">
-        <div className="signal-template-head">
-          <div>
-            <PanelTitle icon={<SlidersHorizontal size={18} />} title="信号模式模板" />
-            <p>每个模板由基础形态、指标规则和组合规则组成。组合规则就是你说的 interaction terms。</p>
-          </div>
-        </div>
-        <div className="signal-template-grid">
-          {groupedTemplates.map((template) => (
-            <article key={template.id} className="signal-template-card">
-              <div>
-                <span>{signalModeLabel(template.base_signal_mode)}</span>
-                <strong>{template.name}</strong>
-                <p>{template.description}</p>
-              </div>
-              <footer>
-                <b>{formatInt(template.interactionCount)} 个组合规则</b>
-                <small>{template.note}</small>
-              </footer>
-            </article>
-          ))}
-        </div>
-      </section>
+      <SignalModeManager
+        library={library}
+        createMode={createMode}
+        saveMode={saveMode}
+        duplicateMode={duplicateMode}
+        deleteMode={deleteMode}
+      />
     </div>
   );
 }
 
-function SignalModeStudio({
+function SignalModeManager({
   library,
-  strategy,
-  setStrategy,
+  createMode,
+  saveMode,
+  duplicateMode,
+  deleteMode,
 }: {
   library: IndicatorLibrary;
-  strategy: StrategyConfig;
-  setStrategy: (config: StrategyConfig) => void;
+  createMode: (name: string) => Promise<SignalModeTemplate>;
+  saveMode: (mode: SignalModeTemplate) => Promise<SignalModeTemplate>;
+  duplicateMode: (id: string) => Promise<SignalModeTemplate>;
+  deleteMode: (id: string) => Promise<void>;
 }) {
   const indicatorById = useMemo(
     () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
     [library.indicators],
   );
-  const activeProfile = useMemo(
-    () => activeSignalProfile(strategy, library),
-    [strategy.signal_mode, strategy.signal_profile, library],
-  );
-  const activeIndicatorIds = useMemo(() => {
-    if (!activeProfile) return new Set<string>();
-    return new Set(
-      activeProfile.rule_groups.flatMap((group) => group.rules.flatMap((rule) => rule.indicator_ids)),
-    );
-  }, [activeProfile]);
-  const addableIndicators = useMemo(
-    () => library.indicators
-      .filter((indicator) => indicator.status !== 'planned')
-      .filter((indicator) => indicator.usage.some((usage) => ['filter', 'score', 'risk', 'interaction', 'context'].includes(usage)))
-      .filter((indicator) => !activeIndicatorIds.has(indicator.id))
-      .slice(0, 10),
-    [activeIndicatorIds, library.indicators],
+  const [selectedModeId, setSelectedModeId] = useState(library.signal_modes[0]?.id || '');
+  const [draft, setDraft] = useState<SignalModeTemplate | null>(library.signal_modes[0] ? cloneSignalProfile(library.signal_modes[0]) : null);
+  const [addIndicatorId, setAddIndicatorId] = useState('');
+  const [addRole, setAddRole] = useState('filter');
+  const [busy, setBusy] = useState(false);
+  const selectedMode = useMemo(
+    () => library.signal_modes.find((mode) => mode.id === selectedModeId) || library.signal_modes[0] || null,
+    [library.signal_modes, selectedModeId],
   );
 
-  const setProfile = (profile: SignalModeTemplate | null) => {
-    setStrategy({
-      ...strategy,
-      signal_mode: profile?.base_signal_mode || strategy.signal_mode,
-      signal_profile: profile,
-    });
-  };
-  const ensureProfile = () => {
-    const profile = activeProfile ? cloneSignalProfile(activeProfile) : null;
-    if (profile && !strategy.signal_profile) {
-      setProfile(profile);
+  useEffect(() => {
+    if (!library.signal_modes.some((mode) => mode.id === selectedModeId) && library.signal_modes[0]) {
+      setSelectedModeId(library.signal_modes[0].id);
     }
-    return profile;
+  }, [library.signal_modes, selectedModeId]);
+
+  useEffect(() => {
+    setDraft(selectedMode ? cloneSignalProfile(selectedMode) : null);
+  }, [selectedMode]);
+
+  const activeIndicatorIds = useMemo(
+    () => new Set((draft?.fields || []).map((field) => field.indicator_id)),
+    [draft?.fields],
+  );
+  const addableIndicators = useMemo(
+    () => library.indicators
+      .filter((indicator) => indicator.status !== 'planned' || indicator.kind === 'strategy_param')
+      .filter((indicator) => !activeIndicatorIds.has(indicator.id))
+      .sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN')),
+    [activeIndicatorIds, library.indicators],
+  );
+  const selectedAddId = addIndicatorId || addableIndicators[0]?.id || '';
+  const fieldGroups = useMemo(() => {
+    const groups = new Map<string, { id: string; label: string; fields: SignalModeField[] }>();
+    (draft?.fields || []).forEach((field) => {
+      const indicator = indicatorById[field.indicator_id];
+      const id = field.group_id || indicator?.group_id || 'other';
+      const label = field.group_label || indicator?.group_label || '其他';
+      if (!groups.has(id)) groups.set(id, { id, label, fields: [] });
+      groups.get(id)?.fields.push(field);
+    });
+    return Array.from(groups.values());
+  }, [draft?.fields, indicatorById]);
+
+  const patchDraft = (patch: Partial<SignalModeTemplate>) => {
+    if (!draft) return;
+    setDraft({ ...draft, ...patch });
   };
-  const applyTemplate = (template: SignalModeTemplate) => {
-    setStrategy({
-      ...strategy,
-      signal_mode: template.base_signal_mode,
-      signal_profile: cloneSignalProfile(template),
+  const patchField = (indicatorId: string, patch: Partial<SignalModeField>) => {
+    if (!draft) return;
+    setDraft({
+      ...draft,
+      fields: draft.fields.map((field) => (field.indicator_id === indicatorId ? { ...field, ...patch } : field)),
     });
   };
-  const patchProfile = (patch: Partial<SignalModeTemplate>) => {
-    const profile = ensureProfile();
-    if (!profile) return;
-    setProfile({ ...profile, ...patch });
+  const removeField = (indicatorId: string) => {
+    if (!draft) return;
+    setDraft({
+      ...draft,
+      fields: draft.fields.filter((field) => field.indicator_id !== indicatorId),
+      rule_groups: draft.rule_groups
+        .map((group) => ({
+          ...group,
+          rules: group.rules
+            .map((rule) => ({ ...rule, indicator_ids: rule.indicator_ids.filter((id) => id !== indicatorId) }))
+            .filter((rule) => rule.indicator_ids.length > 0),
+        }))
+        .filter((group) => group.rules.length > 0),
+    });
+  };
+  const addField = () => {
+    if (!draft || !selectedAddId || activeIndicatorIds.has(selectedAddId)) return;
+    const indicator = indicatorById[selectedAddId];
+    if (!indicator) return;
+    setDraft({
+      ...draft,
+      fields: [
+        ...draft.fields,
+        {
+          indicator_id: indicator.id,
+          role: addRole,
+          group_id: indicator.group_id,
+          group_label: indicator.group_label,
+        },
+      ],
+    });
+    setAddIndicatorId('');
   };
   const patchRule = (groupId: string, ruleId: string, patch: Partial<IndicatorRule>) => {
-    const profile = ensureProfile();
-    if (!profile) return;
-    setProfile({
-      ...profile,
-      rule_groups: profile.rule_groups.map((group) => (
+    if (!draft) return;
+    setDraft({
+      ...draft,
+      rule_groups: draft.rule_groups.map((group) => (
         group.id === groupId
           ? { ...group, rules: group.rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)) }
           : group
@@ -1225,11 +1316,10 @@ function SignalModeStudio({
     });
   };
   const removeRule = (groupId: string, ruleId: string) => {
-    const profile = ensureProfile();
-    if (!profile) return;
-    setProfile({
-      ...profile,
-      rule_groups: profile.rule_groups
+    if (!draft) return;
+    setDraft({
+      ...draft,
+      rule_groups: draft.rule_groups
         .map((group) => (
           group.id === groupId
             ? { ...group, rules: group.rules.filter((rule) => rule.id !== ruleId) }
@@ -1238,155 +1328,314 @@ function SignalModeStudio({
         .filter((group) => group.rules.length > 0),
     });
   };
-  const addIndicatorRule = (indicator: IndicatorDefinition) => {
-    const profile = ensureProfile();
-    if (!profile) return;
-    const kind = indicator.usage.includes('risk')
-      ? 'risk'
-      : indicator.usage.includes('filter')
-        ? 'filter'
-        : indicator.usage.includes('interaction')
-          ? 'interaction'
-          : 'score';
+  const addRule = () => {
+    if (!draft) return;
+    const firstIndicators = draft.fields.slice(0, 2).map((field) => field.indicator_id);
     const rule: IndicatorRule = {
-      id: `custom-${indicator.id}`,
-      name: indicator.name,
-      kind,
-      indicator_ids: [indicator.id],
-      expression: `${indicator.name}：${indicator.formula}`,
-      effect: {
-        type: kind === 'filter' ? 'gate' : kind === 'risk' ? 'risk' : 'score',
-        value: kind === 'filter' ? 'must' : kind === 'risk' ? -6 : 6,
-      },
-      missing_policy: indicator.default_missing_policy,
+      id: `rule-${Date.now().toString(36)}`,
+      name: '新的组合条件',
+      kind: 'interaction',
+      indicator_ids: firstIndicators,
+      expression: '',
+      effect: { type: 'score', value: 0 },
+      missing_policy: 'neutral',
       editable: true,
     };
-    const customGroup = profile.rule_groups.find((group) => group.id === 'custom_rules');
+    const customGroup = draft.rule_groups.find((group) => group.id === 'custom_conditions');
     const ruleGroups = customGroup
-      ? profile.rule_groups.map((group) => (
-        group.id === 'custom_rules' ? { ...group, rules: [...group.rules, rule] } : group
+      ? draft.rule_groups.map((group) => (
+        group.id === 'custom_conditions' ? { ...group, rules: [...group.rules, rule] } : group
       ))
-      : [...profile.rule_groups, { id: 'custom_rules', label: '自定义指标', rules: [rule] }];
-    setProfile({ ...profile, rule_groups: ruleGroups });
+      : [...draft.rule_groups, { id: 'custom_conditions', label: '组合条件', rules: [rule] }];
+    setDraft({ ...draft, rule_groups: ruleGroups });
+  };
+  const addRuleIndicator = (groupId: string, ruleId: string, indicatorId: string) => {
+    if (!draft || !indicatorId) return;
+    setDraft({
+      ...draft,
+      rule_groups: draft.rule_groups.map((group) => (
+        group.id === groupId
+          ? {
+            ...group,
+            rules: group.rules.map((rule) => (
+              rule.id === ruleId && !rule.indicator_ids.includes(indicatorId)
+                ? { ...rule, indicator_ids: [...rule.indicator_ids, indicatorId] }
+                : rule
+            )),
+          }
+          : group
+      )),
+    });
+  };
+  const removeRuleIndicator = (groupId: string, ruleId: string, indicatorId: string) => {
+    if (!draft) return;
+    patchRule(groupId, ruleId, {
+      indicator_ids: draft.rule_groups
+        .find((group) => group.id === groupId)
+        ?.rules.find((rule) => rule.id === ruleId)
+        ?.indicator_ids.filter((id) => id !== indicatorId) || [],
+    });
+  };
+  const runModeAction = async (action: () => Promise<unknown>) => {
+    try {
+      setBusy(true);
+      await action();
+    } finally {
+      setBusy(false);
+    }
   };
 
-  if (!activeProfile) {
+  if (!draft) {
     return null;
   }
 
-  const ruleCount = activeProfile.rule_groups.reduce((sum, group) => sum + group.rules.length, 0);
-  const interactionCount = activeProfile.rule_groups.reduce(
-    (sum, group) => sum + group.rules.filter((rule) => rule.kind === 'interaction').length,
-    0,
-  );
+  const ruleCount = draft.rule_groups.reduce((sum, group) => sum + group.rules.length, 0);
 
   return (
-    <section className="signal-studio">
-      <div className="signal-studio-head">
+    <section className="panel signal-mode-manager">
+      <div className="signal-manager-head">
         <div>
-          <span className="section-kicker">Signal Profile</span>
-          <h3>信号模式预设</h3>
+          <PanelTitle icon={<SlidersHorizontal size={18} />} title="信号模式" />
+          <p>这里维护策略页可选择的信号模式。模式里选了哪些指标，策略页就只展示哪些参数。</p>
         </div>
-        <div className="signal-studio-stats">
-          <span><b>{formatInt(ruleCount)}</b><em>规则</em></span>
-          <span><b>{formatInt(interactionCount)}</b><em>组合</em></span>
+        <div className="signal-manager-actions">
+          <button className="ghost compact" disabled={busy} type="button" onClick={() => void runModeAction(async () => {
+            const mode = await createMode('新信号模式');
+            setSelectedModeId(mode.id);
+          })}>
+            <Plus size={14} />
+            新建
+          </button>
+          <button className="ghost compact" disabled={busy} type="button" onClick={() => void runModeAction(async () => {
+            const mode = await duplicateMode(draft.id);
+            setSelectedModeId(mode.id);
+          })}>
+            <Copy size={14} />
+            复制
+          </button>
+          <button className="ghost compact danger" disabled={busy || library.signal_modes.length <= 1} type="button" onClick={() => void runModeAction(async () => {
+            if (!window.confirm(`删除“${draft.name}”？`)) return;
+            await deleteMode(draft.id);
+            setSelectedModeId(library.signal_modes.find((mode) => mode.id !== draft.id)?.id || '');
+          })}>
+            <Trash2 size={14} />
+            删除
+          </button>
+          <button className="primary compact" disabled={busy} type="button" onClick={() => void runModeAction(async () => {
+            const mode = await saveMode(draft);
+            setSelectedModeId(mode.id);
+          })}>
+            <Save size={14} />
+            保存
+          </button>
         </div>
       </div>
 
-      <div className="signal-preset-grid">
-        {library.signal_modes.map((template) => {
-          const isActive = activeProfile.id === template.id && activeProfile.base_signal_mode === template.base_signal_mode;
-          return (
-            <button
-              key={template.id}
-              type="button"
-              className={isActive ? 'signal-preset-card active' : 'signal-preset-card'}
-              onClick={() => applyTemplate(template)}
-            >
-              <span>{signalModeLabel(template.base_signal_mode)}</span>
-              <strong>{template.name}</strong>
-              <small>{template.description}</small>
-            </button>
-          );
-        })}
-      </div>
+      <div className="signal-manager-layout">
+        <aside className="signal-mode-list">
+          {library.signal_modes.map((mode) => {
+            const count = mode.fields?.length || 0;
+            const combinations = mode.rule_groups.reduce((sum, group) => sum + group.rules.length, 0);
+            const active = mode.id === draft.id;
+            return (
+              <button
+                key={mode.id}
+                type="button"
+                className={active ? 'active' : ''}
+                onClick={() => setSelectedModeId(mode.id)}
+              >
+                <strong>{mode.name}</strong>
+                <span>{formatInt(count)} 个指标 · {formatInt(combinations)} 条组合条件</span>
+              </button>
+            );
+          })}
+        </aside>
 
-      <div className="profile-editor-grid">
-        <label className="field">
-          <span>模式名称</span>
-          <input
-            value={activeProfile.name}
-            onChange={(event) => patchProfile({ name: event.target.value })}
-          />
-        </label>
-        <label className="field profile-note-field">
-          <span>备注</span>
-          <textarea
-            value={activeProfile.note}
-            onChange={(event) => patchProfile({ note: event.target.value })}
-            rows={2}
-          />
-        </label>
-      </div>
+        <div className="signal-mode-editor">
+          <div className="profile-editor-grid">
+            <label className="field">
+              <span>模式名称</span>
+              <input
+                value={draft.name}
+                onChange={(event) => patchDraft({ name: event.target.value })}
+              />
+            </label>
+            <label className="field">
+              <span>说明</span>
+              <input
+                value={draft.description}
+                onChange={(event) => patchDraft({ description: event.target.value })}
+              />
+            </label>
+            <label className="field wide">
+              <span>备注</span>
+              <textarea
+                value={draft.note}
+                onChange={(event) => patchDraft({ note: event.target.value })}
+                rows={2}
+              />
+            </label>
+          </div>
 
-      <div className="signal-rule-board">
-        {activeProfile.rule_groups.map((group) => (
-          <article key={group.id} className="signal-rule-group">
-            <header>
-              <strong>{group.label}</strong>
-              <span>{formatInt(group.rules.length)} 条</span>
-            </header>
-            <div className="signal-rule-list">
-              {group.rules.map((rule) => (
-                <div key={rule.id} className={`signal-rule-card ${rule.kind}`}>
-                  <div className="signal-rule-topline">
-                    <span className={`rule-kind ${rule.kind}`}>{signalRuleKindLabel(rule.kind)}</span>
-                    <strong>{rule.name}</strong>
-                    {rule.editable && (
-                      <button className="table-action" type="button" onClick={() => removeRule(group.id, rule.id)} title="移除规则">
-                        <X size={13} />
-                      </button>
-                    )}
+          <div className="signal-editor-section">
+            <div className="signal-section-head">
+              <div>
+                <strong>模式指标</strong>
+                <span>{formatInt(draft.fields.length)} 个</span>
+              </div>
+              <div className="indicator-add-controls">
+                <select value={selectedAddId} onChange={(event) => setAddIndicatorId(event.target.value)}>
+                  {addableIndicators.map((indicator) => (
+                    <option key={indicator.id} value={indicator.id}>
+                      {indicator.group_label} / {indicator.name}
+                    </option>
+                  ))}
+                </select>
+                <select value={addRole} onChange={(event) => setAddRole(event.target.value)}>
+                  {signalFieldRoles.map((role) => <option key={role.id} value={role.id}>{role.label}</option>)}
+                </select>
+                <button className="ghost compact" type="button" disabled={!selectedAddId} onClick={addField}>
+                  <Plus size={13} />
+                  加入
+                </button>
+              </div>
+            </div>
+            <div className="mode-field-groups">
+              {fieldGroups.map((group) => (
+                <div key={group.id} className="mode-field-group">
+                  <header>
+                    <strong>{group.label}</strong>
+                    <span>{formatInt(group.fields.length)}</span>
+                  </header>
+                  <div>
+                    {group.fields.map((field) => {
+                      const indicator = indicatorById[field.indicator_id];
+                      if (!indicator) return null;
+                      return (
+                        <article key={field.indicator_id} className="mode-field-item">
+                          <div>
+                            <strong>{indicator.name}</strong>
+                            <span>{indicator.kind === 'strategy_param' ? '策略参数' : indicator.source}</span>
+                          </div>
+                          <select value={field.role || 'filter'} onChange={(event) => patchField(field.indicator_id, { role: event.target.value })}>
+                            {signalFieldRoles.map((role) => <option key={role.id} value={role.id}>{role.label}</option>)}
+                          </select>
+                          <button className="table-action" type="button" onClick={() => removeField(field.indicator_id)} title="移除指标">
+                            <X size={13} />
+                          </button>
+                        </article>
+                      );
+                    })}
                   </div>
-                  <div className="rule-indicator-chips">
-                    {rule.indicator_ids.map((indicatorId) => (
-                      <span key={indicatorId}>
-                        {indicatorById[indicatorId]?.name || indicatorId}
-                      </span>
-                    ))}
-                  </div>
-                  {rule.editable ? (
-                    <textarea
-                      value={rule.expression}
-                      onChange={(event) => patchRule(group.id, rule.id, { expression: event.target.value })}
-                      rows={2}
-                    />
-                  ) : (
-                    <p>{rule.expression}</p>
-                  )}
-                  <footer>
-                    <span>{signalRuleEffectLabel(rule.effect)}</span>
-                    <em>{missingPolicyLabel(rule.missing_policy)}</em>
-                  </footer>
                 </div>
               ))}
             </div>
-          </article>
-        ))}
-      </div>
+          </div>
 
-      <div className="indicator-add-strip">
-        <div>
-          <strong>从指标库加入</strong>
-          <span>加入后会写入当前策略画像。</span>
-        </div>
-        <div>
-          {addableIndicators.map((indicator) => (
-            <button key={indicator.id} className="filter-chip" type="button" onClick={() => addIndicatorRule(indicator)}>
-              <Plus size={12} />
-              {indicator.name}
-            </button>
-          ))}
+          <div className="signal-editor-section">
+            <div className="signal-section-head">
+              <div>
+                <strong>组合条件</strong>
+                <span>{formatInt(ruleCount)} 条</span>
+              </div>
+              <button className="ghost compact" type="button" onClick={addRule}>
+                <Plus size={13} />
+                新增条件
+              </button>
+            </div>
+            <div className="signal-rule-board compact">
+              {draft.rule_groups.length === 0 && <EmptyState text="暂无组合条件。可以先保存这个简单模式，也可以新增条件。" />}
+              {draft.rule_groups.map((group) => (
+                <article key={group.id} className="signal-rule-group">
+                  <header>
+                    <strong>{group.label}</strong>
+                    <span>{formatInt(group.rules.length)} 条</span>
+                  </header>
+                  <div className="signal-rule-list">
+                    {group.rules.map((rule) => {
+                      const unusedIndicators = draft.fields
+                        .map((field) => indicatorById[field.indicator_id])
+                        .filter(Boolean)
+                        .filter((indicator) => !rule.indicator_ids.includes(indicator.id));
+                      return (
+                        <div key={rule.id} className={`signal-rule-card ${rule.kind}`}>
+                          <div className="rule-edit-grid">
+                            <label className="field">
+                              <span>条件名称</span>
+                              <input value={rule.name} onChange={(event) => patchRule(group.id, rule.id, { name: event.target.value })} />
+                            </label>
+                            <label className="field">
+                              <span>用途</span>
+                              <select value={rule.kind} onChange={(event) => patchRule(group.id, rule.id, { kind: event.target.value as IndicatorRule['kind'] })}>
+                                <option value="filter">过滤</option>
+                                <option value="score">加分</option>
+                                <option value="risk">风控</option>
+                                <option value="interaction">组合条件</option>
+                              </select>
+                            </label>
+                          </div>
+                          <div className="rule-indicator-chips editable">
+                            {rule.indicator_ids.map((indicatorId) => (
+                              <button key={indicatorId} type="button" onClick={() => removeRuleIndicator(group.id, rule.id, indicatorId)}>
+                                {indicatorById[indicatorId]?.name || indicatorId}
+                                <X size={12} />
+                              </button>
+                            ))}
+                            {unusedIndicators.length > 0 && (
+                              <select value="" onChange={(event) => addRuleIndicator(group.id, rule.id, event.target.value)}>
+                                <option value="">加入指标</option>
+                                {unusedIndicators.map((indicator) => <option key={indicator.id} value={indicator.id}>{indicator.name}</option>)}
+                              </select>
+                            )}
+                          </div>
+                          <label className="field wide">
+                            <span>条件表达</span>
+                            <textarea
+                              value={rule.expression}
+                              onChange={(event) => patchRule(group.id, rule.id, { expression: event.target.value })}
+                              rows={3}
+                              placeholder="例如：突破上沿达标，并且量比达到设定阈值"
+                            />
+                          </label>
+                          <div className="rule-edit-grid">
+                            <label className="field">
+                              <span>效果</span>
+                              <select
+                                value={rule.effect?.type || 'score'}
+                                onChange={(event) => patchRule(group.id, rule.id, { effect: { ...rule.effect, type: event.target.value } })}
+                              >
+                                <option value="gate">门槛</option>
+                                <option value="score">评分</option>
+                                <option value="risk">风险扣分</option>
+                              </select>
+                            </label>
+                            <label className="field">
+                              <span>数值</span>
+                              <input
+                                value={String(rule.effect?.value ?? '')}
+                                onChange={(event) => patchRule(group.id, rule.id, { effect: { ...rule.effect, value: event.target.value } })}
+                              />
+                            </label>
+                            <label className="field">
+                              <span>缺失处理</span>
+                              <select value={rule.missing_policy} onChange={(event) => patchRule(group.id, rule.id, { missing_policy: event.target.value })}>
+                                <option value="allow">允许缺失</option>
+                                <option value="neutral">缺失中性</option>
+                                <option value="skip">缺失跳过</option>
+                              </select>
+                            </label>
+                          </div>
+                          <button className="table-action remove-rule" type="button" onClick={() => removeRule(group.id, rule.id)} title="移除条件">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -1419,6 +1668,17 @@ function StrategyPanel(props: {
   const activeAnalysisMode = analysisModes.find((mode) => mode.id === (props.strategy.analysis_mode || 'strict')) || analysisModes[0];
   const suggestedName = suggestStrategyName(props.strategy);
   const nameLooksGeneric = !props.strategyName.trim() || /^未命名策略/.test(props.strategyName.trim());
+  const activeProfile = activeSignalProfile(props.strategy, props.indicatorLibrary);
+  const selectedSignalModeId = activeProfile?.id || props.indicatorLibrary.signal_modes[0]?.id || '';
+  const selectSignalMode = (modeId: string) => {
+    const mode = props.indicatorLibrary.signal_modes.find((item) => item.id === modeId);
+    if (!mode) return;
+    props.setStrategy({
+      ...props.strategy,
+      signal_mode: mode.runtime_signal_mode || mode.id,
+      signal_profile: cloneSignalProfile(mode),
+    });
+  };
 
   useEffect(() => {
     let alive = true;
@@ -1542,185 +1802,189 @@ function StrategyPanel(props: {
               </button>
             )}
           </div>
-          <div className="mode-tabs wide">
-            {signalModes.map((mode) => (
-              <button
-                key={mode.id}
-                className={mode.id === props.strategy.signal_mode ? 'active' : ''}
-                onClick={() => props.setStrategy({ ...props.strategy, signal_mode: mode.id, signal_profile: null })}
-                type="button"
-              >
-                <strong>{mode.label}</strong>
-                <small>{mode.sub}</small>
-              </button>
-            ))}
+          <div className="strategy-mode-selectors wide">
+            <label>
+              <span>信号模式</span>
+              <select value={selectedSignalModeId} onChange={(event) => selectSignalMode(event.target.value)}>
+                {props.indicatorLibrary.signal_modes.map((mode) => (
+                  <option key={mode.id} value={mode.id}>{mode.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>运行方式</span>
+              <select value={props.strategy.analysis_mode || 'strict'} onChange={(event) => update('analysis_mode', event.target.value)}>
+                {analysisModes.map((mode) => (
+                  <option key={mode.id} value={mode.id}>{mode.label}</option>
+                ))}
+              </select>
+            </label>
           </div>
-          <div className="analysis-mode-tabs wide" aria-label="选股方式">
-            {analysisModes.map((mode) => (
-              <button
-                key={mode.id}
-                className={mode.id === (props.strategy.analysis_mode || 'strict') ? 'active' : ''}
-                onClick={() => update('analysis_mode', mode.id)}
-                type="button"
-              >
-                <strong>{mode.label}</strong>
-                <small>{mode.sub}</small>
-              </button>
-            ))}
-          </div>
-          <div className="wide-panel">
-            <SignalModeStudio
+          {activeProfile ? (
+            <SignalModeFieldForm
+              profile={activeProfile}
               library={props.indicatorLibrary}
               strategy={props.strategy}
-              setStrategy={props.setStrategy}
+              update={update}
             />
-          </div>
-          {props.strategy.signal_mode === 'breakout_or_pullback' && (
-            <>
-              <div className="form-section wide">
-                <span>突破回踩</span>
-              </div>
-              <SelectField
-                label="形态方向"
-                value={props.strategy.breakout_pullback_direction || 'both'}
-                onChange={(value) => update('breakout_pullback_direction', value)}
-                options={[['both', '突破与回踩都看'], ['breakout', '只看右侧突破'], ['pullback', '只看左侧回踩']]}
-                description="旧的右侧突破、左侧回踩已合并到这里；策略名称可以继续区分不同用法。"
-              />
-              <NumberField label="回踩容忍" value={props.strategy.pullback_tolerance} onChange={(value) => update('pullback_tolerance', value)} description={`价格贴近短期均线 ${formatPercentRatio(props.strategy.pullback_tolerance)} 内会更像回踩信号。`} />
-            </>
+          ) : (
+            <div className="field-note wide">指标库里还没有可用的信号模式。</div>
           )}
-          <div className="form-section wide">
-            <span>基础股票池</span>
-          </div>
-          <NumberField label="最低股价" value={props.strategy.min_price} onChange={(value) => update('min_price', value)} />
-          <MoneyField label="成交额门槛" value={props.strategy.min_amount} onChange={(value) => update('min_amount', value)} />
-          <MoneyField label="最小流通市值" value={props.strategy.min_float_market_value} onChange={(value) => update('min_float_market_value', value)} allowBlank />
-          <MoneyField label="最大流通市值" value={props.strategy.max_float_market_value} onChange={(value) => update('max_float_market_value', value)} allowBlank />
-          <label className="toggle">
-            <input type="checkbox" checked={props.strategy.include_bj} onChange={(event) => update('include_bj', event.target.checked)} />
-            <span>包含北交所</span>
-          </label>
-          <label className="toggle">
-            <input type="checkbox" checked={props.strategy.exclude_star_board} onChange={(event) => update('exclude_star_board', event.target.checked)} />
-            <span>排除科创板</span>
-          </label>
-
-          {props.strategy.signal_mode === 'platform_breakout' && (
-            <>
-              <div className="form-section wide">
-                <span>平台区间</span>
-              </div>
-              <NumberField label="平台观察天数" value={props.strategy.platform_lookback_days} onChange={(value) => update('platform_lookback_days', value)} description="这就是你说的 15 天窗口；从最新 K 线前一日往前取样，不含最新 K 线。" />
-              <SelectField label="平台振幅口径" value={props.strategy.platform_range_basis} onChange={(value) => update('platform_range_basis', value)} options={[['high_low', '最高价 / 最低价'], ['close', '收盘价区间']]} description="最高价/最低价更严格；收盘价区间会忽略盘中长影线。" />
-              <SelectField label="平台区间条件" value={props.strategy.platform_max_range_mode} onChange={(value) => update('platform_max_range_mode', value)} options={conditionModes} description="只控制观察天数这段平台是否必须满足。" />
-              <NumberField label="平台区间最大振幅" value={props.strategy.platform_max_range} onChange={(value) => update('platform_max_range', value)} description={`平台最高到最低不超过 ${formatPercentRatio(props.strategy.platform_max_range)}。`} />
-              <NumberField label="最小阳线占比" value={props.strategy.platform_min_bullish_ratio} onChange={(value) => update('platform_min_bullish_ratio', value)} description={`平台内红柱占比至少 ${formatPercentRatio(props.strategy.platform_min_bullish_ratio)}。`} />
-              <NumberField label="阳线占比加分线" value={props.strategy.platform_bullish_ratio_score} onChange={(value) => update('platform_bullish_ratio_score', value)} description={`得分项：达到 ${formatPercentRatio(props.strategy.platform_bullish_ratio_score)} 会提高排序。`} />
-              <NumberField label="阳线均量优势" value={props.strategy.platform_bull_volume_advantage} onChange={(value) => update('platform_bull_volume_advantage', value)} description={`平台红柱均量 / 绿柱均量至少 ${formatPrice(props.strategy.platform_bull_volume_advantage)}x。`} />
-              <NumberField label="阳线量能加分线" value={props.strategy.platform_bull_volume_advantage_score} onChange={(value) => update('platform_bull_volume_advantage_score', value)} description={`得分项：达到 ${formatPrice(props.strategy.platform_bull_volume_advantage_score)}x 会提高排序。`} />
-              <div className="form-section wide">
-                <span>突破确认</span>
-              </div>
-              <NumberField label="突破上沿最小幅度" value={props.strategy.platform_breakout_clearance} onChange={(value) => update('platform_breakout_clearance', value)} description={`最新收盘价高于平台上沿至少 ${formatPercentRatio(props.strategy.platform_breakout_clearance)}。`} />
-              <NumberField label="突破上沿最大距离" value={props.strategy.platform_breakout_max_clearance} onChange={(value) => update('platform_breakout_max_clearance', value)} description={`超过 ${formatPercentRatio(props.strategy.platform_breakout_max_clearance)} 通常说明买点偏后。`} />
-              <NumberField label="突破量比" value={props.strategy.platform_breakout_volume_ratio} onChange={(value) => update('platform_breakout_volume_ratio', value)} description={`最新成交量 / 平台均量至少 ${formatPrice(props.strategy.platform_breakout_volume_ratio)}x。`} />
-              <NumberField label="突破涨幅下限" value={props.strategy.platform_breakout_pct_chg_min} onChange={(value) => update('platform_breakout_pct_chg_min', value)} description={`最新 K 线涨幅至少 ${formatPercent(props.strategy.platform_breakout_pct_chg_min)}。`} />
-              <NumberField label="突破实体强度" value={props.strategy.platform_body_strength_min} onChange={(value) => update('platform_body_strength_min', value)} description="红柱实体 / 上下影线总和；越高说明突破越干净。" />
-              <SelectField label="MACD 位置" value={props.strategy.macd_position} onChange={(value) => update('macd_position', value)} options={[['dif_above_zero', 'DIF 在 0 轴上方'], ['dif_dea_above_zero', 'DIF 与 DEA 均在 0 轴上方']]} description="用于判断 MACD 条件是否满足。" />
-            </>
-          )}
-
-          {props.strategy.signal_mode === 'platform_setup' && (
-            <>
-              <div className="form-section wide">
-                <span>平台临界观察</span>
-              </div>
-              <NumberField label="平台观察天数" value={props.strategy.platform_setup_lookback_days} onChange={(value) => update('platform_setup_lookback_days', value)} />
-              <NumberField label="平台最大振幅" value={props.strategy.platform_setup_max_range} onChange={(value) => update('platform_setup_max_range', value)} />
-              <NumberField label="接近上沿距离" value={props.strategy.platform_setup_max_distance_to_high} onChange={(value) => update('platform_setup_max_distance_to_high', value)} />
-              <NumberField label="近5日涨幅上限" value={props.strategy.platform_setup_max_recent_gain_5d} onChange={(value) => update('platform_setup_max_recent_gain_5d', value)} />
-              <NumberField label="缩量整理上限" value={props.strategy.platform_setup_volume_contraction_max} onChange={(value) => update('platform_setup_volume_contraction_max', value)} />
-              <NumberField label="阳线均量优势" value={props.strategy.platform_setup_bull_volume_advantage} onChange={(value) => update('platform_setup_bull_volume_advantage', value)} />
-              <NumberField label="均线粘合上限" value={props.strategy.platform_setup_ma_convergence_max} onChange={(value) => update('platform_setup_ma_convergence_max', value)} />
-              <SelectField label="MACD 状态" value={props.strategy.platform_setup_macd_mode} onChange={(value) => update('platform_setup_macd_mode', value)} options={[['none', '不启用'], ['dif_above_dea', 'DIF 强于 DEA'], ['dif_above_zero', 'DIF 在 0 轴上方']]} />
-              <label className="toggle">
-                <input type="checkbox" checked={props.strategy.platform_setup_require_ma_turning} onChange={(event) => update('platform_setup_require_ma_turning', event.target.checked)} />
-                <span>要求 MA5 拐头</span>
-              </label>
-            </>
-          )}
-
-          {props.strategy.signal_mode === 'trend_resonance' && (
-            <>
-              <div className="form-section wide">
-                <span>趋势共振</span>
-              </div>
-              <NumberField label="EMA 快线" value={props.strategy.trend_ema_fast_window} onChange={(value) => update('trend_ema_fast_window', value)} description="默认 13，观察短线趋势是否抬头。" />
-              <NumberField label="EMA 中线" value={props.strategy.trend_ema_mid_window} onChange={(value) => update('trend_ema_mid_window', value)} description="默认 21，用来控制买点是否离节奏线太远。" />
-              <NumberField label="EMA 长线" value={props.strategy.trend_ema_long_window} onChange={(value) => update('trend_ema_long_window', value)} description="默认 60，判断中期趋势方向。" />
-              <SelectField label="趋势信号" value={props.strategy.trend_entry_signal} onChange={(value) => update('trend_entry_signal', value)} options={[['any', '全部趋势信号'], ['thunder', '强动能确认'], ['follow', '趋势延续'], ['stealth', '早期转强']]} description="强动能看趋势、MACD、随机指标同时走强；趋势延续看沿长期均线上方保持强势；早期转强偏观察趋势刚改善。" />
-              <NumberField label="MACD 快线" value={props.strategy.trend_macd_fast} onChange={(value) => update('trend_macd_fast', value)} description="默认 4，来自文章参数 4-26-6。" />
-              <NumberField label="MACD 慢线" value={props.strategy.trend_macd_slow} onChange={(value) => update('trend_macd_slow', value)} />
-              <NumberField label="MACD 信号线" value={props.strategy.trend_macd_signal} onChange={(value) => update('trend_macd_signal', value)} />
-              <SelectField label="MACD 条件" value={props.strategy.trend_macd_mode} onChange={(value) => update('trend_macd_mode', value)} options={[['dif_above_dea', 'DIF 强于 DEA'], ['dif_above_zero', 'DIF 在 0 轴上方'], ['dif_dea_above_zero', 'DIF 与 DEA 均在 0 轴上方'], ['off', '不启用']]} />
-              <NumberField label="随机周期" value={props.strategy.trend_stoch_window} onChange={(value) => update('trend_stoch_window', value)} description="默认 27，对应慢速随机指标 27-9-3。" />
-              <NumberField label="随机 K 平滑" value={props.strategy.trend_stoch_k_smooth} onChange={(value) => update('trend_stoch_k_smooth', value)} />
-              <NumberField label="随机 D 平滑" value={props.strategy.trend_stoch_d_smooth} onChange={(value) => update('trend_stoch_d_smooth', value)} />
-              <SelectField label="随机条件" value={props.strategy.trend_stoch_mode} onChange={(value) => update('trend_stoch_mode', value)} options={[['k_above_d', 'K 在 D 上方'], ['cross_up', '要求 K 上穿 D'], ['off', '不启用']]} />
-              <NumberField label="距 EMA21 上限" value={props.strategy.trend_max_ema_mid_distance} onChange={(value) => update('trend_max_ema_mid_distance', value)} description={`超过 ${formatPercentRatio(props.strategy.trend_max_ema_mid_distance)} 通常说明追高风险变大。`} />
-              <NumberField label="近10日涨幅上限" value={props.strategy.trend_max_recent_gain_10d} onChange={(value) => update('trend_max_recent_gain_10d', value)} description={`超过 ${formatPercentRatio(props.strategy.trend_max_recent_gain_10d)} 会被过滤或扣分。`} />
-              <NumberField label="随机过热线" value={props.strategy.trend_stoch_overheat} onChange={(value) => update('trend_stoch_overheat', value)} description="K 值高于该水平会被视为偏热。" />
-              <label className="toggle">
-                <input type="checkbox" checked={props.strategy.trend_require_price_above_ema_long} onChange={(event) => update('trend_require_price_above_ema_long', event.target.checked)} />
-                <span>要求站上 EMA60</span>
-              </label>
-              <label className="toggle">
-                <input type="checkbox" checked={props.strategy.trend_require_ema_long_rising} onChange={(event) => update('trend_require_ema_long_rising', event.target.checked)} />
-                <span>要求 EMA60 上升</span>
-              </label>
-              <label className="toggle">
-                <input type="checkbox" checked={props.strategy.trend_require_ema_fast_above_mid} onChange={(event) => update('trend_require_ema_fast_above_mid', event.target.checked)} />
-                <span>要求 EMA13 高于 EMA21</span>
-              </label>
-            </>
-          )}
-
-          <div className="form-section wide">
-            <span>强弱与趋势</span>
-          </div>
-          <NumberField label="MA 短期" value={props.strategy.ma_short_window} onChange={(value) => update('ma_short_window', value)} />
-          <NumberField label="MA 长期" value={props.strategy.ma_long_window} onChange={(value) => update('ma_long_window', value)} />
-          <SelectField label="RPS 周期" value={String(props.strategy.rps_window)} onChange={(value) => update('rps_window', Number(value))} options={[['20', 'RPS20'], ['60', 'RPS60'], ['120', 'RPS120']]} />
-          <NumberField label="RPS20 下限" value={props.strategy.min_rps20} onChange={(value) => update('min_rps20', value)} allowBlank />
-          <NumberField label="RPS60 下限" value={props.strategy.min_rps60} onChange={(value) => update('min_rps60', value)} allowBlank />
-          <NumberField label="RPS120 下限" value={props.strategy.min_rps120} onChange={(value) => update('min_rps120', value)} allowBlank />
-
-          <div className="form-section wide">
-            <span>量价触发</span>
-          </div>
-          <NumberField label="振幅上限" value={props.strategy.max_amplitude} onChange={(value) => update('max_amplitude', value)} />
-          <NumberField label="最小换手率" value={props.strategy.min_turnover} onChange={(value) => update('min_turnover', value)} allowBlank />
-          <NumberField label="最大换手率" value={props.strategy.max_turnover} onChange={(value) => update('max_turnover', value)} allowBlank />
-          <NumberField label="最小涨跌幅" value={props.strategy.min_pct_chg} onChange={(value) => update('min_pct_chg', value)} allowBlank />
-          <NumberField label="最大涨跌幅" value={props.strategy.max_pct_chg} onChange={(value) => update('max_pct_chg', value)} allowBlank />
-          {props.strategy.signal_mode !== 'platform_setup' && (
-            <NumberField label="成交量放大" value={props.strategy.volume_ratio_min} onChange={(value) => update('volume_ratio_min', value)} allowBlank />
-          )}
-          <NumberField label="最大均线偏离" value={props.strategy.max_ma_distance} onChange={(value) => update('max_ma_distance', value)} allowBlank />
-          <NumberField label="候选上限" value={props.strategy.candidate_limit} onChange={(value) => update('candidate_limit', value)} />
-          <SelectField label="排序" value={props.strategy.sort_by} onChange={(value) => update('sort_by', value)} options={[['signal_score', '信号分数'], ['rps20', 'RPS20'], ['amount', '成交额'], ['pct_chg', '涨跌幅']]} />
-
-          <div className="form-section wide">
-            <span>缺失数据处理</span>
-          </div>
-          <SelectField label="换手率缺失" value={props.strategy.missing_turnover_policy} onChange={(value) => update('missing_turnover_policy', value)} options={[['allow', '保留缺失股票'], ['skip', '跳过缺失股票']]} />
-          <SelectField label="流通市值缺失" value={props.strategy.missing_float_market_value_policy} onChange={(value) => update('missing_float_market_value_policy', value)} options={[['allow', '保留缺失股票'], ['skip', '跳过缺失股票']]} />
-          <div className="field-note wide">
-            空值表示不启用该过滤。保留缺失股票表示字段缺失时不因这一项淘汰；跳过缺失股票表示字段缺失时直接排除该股票。
-          </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+function SignalModeFieldForm({
+  profile,
+  library,
+  strategy,
+  update,
+}: {
+  profile: SignalModeTemplate;
+  library: IndicatorLibrary;
+  strategy: StrategyConfig;
+  update: (key: keyof StrategyConfig, value: unknown) => void;
+}) {
+  const indicatorById = useMemo(
+    () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
+    [library.indicators],
+  );
+  const groups = useMemo(() => {
+    const next = new Map<string, { id: string; label: string; fields: Array<{ field: SignalModeField; indicator: IndicatorDefinition }> }>();
+    (profile.fields || []).forEach((field) => {
+      const indicator = indicatorById[field.indicator_id];
+      if (!indicator || indicator.kind !== 'strategy_param' || !indicator.strategy_key) return;
+      const id = field.group_id || indicator.group_id || 'other';
+      const label = field.group_label || indicator.group_label || '其他';
+      if (!next.has(id)) next.set(id, { id, label, fields: [] });
+      next.get(id)?.fields.push({ field, indicator });
+    });
+    return Array.from(next.values());
+  }, [indicatorById, profile.fields]);
+  const referenceIndicators = (profile.fields || [])
+    .map((field) => indicatorById[field.indicator_id])
+    .filter((indicator) => indicator && indicator.kind !== 'strategy_param');
+  const rules = profile.rule_groups.flatMap((group) => group.rules.map((rule) => ({ ...rule, groupLabel: group.label })));
+
+  return (
+    <>
+      <div className="strategy-profile-note wide">
+        <strong>{profile.name}</strong>
+        <span>{profile.description || profile.note || '按这个信号模式填写下方参数。'}</span>
+      </div>
+      {groups.length === 0 && <div className="field-note wide">这个信号模式目前只有基础股票池，暂时没有需要填写的策略参数。</div>}
+      {groups.map((group) => (
+        <Fragment key={group.id}>
+          <div className="form-section wide">
+            <span>{group.label}</span>
+            <small>{formatInt(group.fields.length)} 项</small>
+          </div>
+          {group.fields.map(({ field, indicator }) => (
+            <StrategyIndicatorField
+              key={`${profile.id}-${field.indicator_id}`}
+              indicator={indicator}
+              strategy={strategy}
+              update={update}
+            />
+          ))}
+        </Fragment>
+      ))}
+      {(referenceIndicators.length > 0 || rules.length > 0) && (
+        <div className="strategy-signal-context wide">
+          {referenceIndicators.length > 0 && (
+            <div>
+              <strong>参考指标</strong>
+              <div className="context-chip-row">
+                {referenceIndicators.map((indicator) => (
+                  <span key={indicator.id}>{indicator.name}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {rules.length > 0 && (
+            <div>
+              <strong>组合条件</strong>
+              <div className="context-rule-list">
+                {rules.map((rule) => (
+                  <span key={`${rule.groupLabel}-${rule.id}`}>
+                    <em>{signalRuleKindLabel(rule.kind)}</em>
+                    {rule.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+function StrategyIndicatorField({
+  indicator,
+  strategy,
+  update,
+}: {
+  indicator: IndicatorDefinition;
+  strategy: StrategyConfig;
+  update: (key: keyof StrategyConfig, value: unknown) => void;
+}) {
+  const key = indicator.strategy_key as keyof StrategyConfig;
+  const control = indicator.control || { type: 'readonly' };
+  const value = strategy[key] as unknown;
+  if (!key) return null;
+  if (control.type === 'money') {
+    return (
+      <MoneyField
+        label={indicator.name}
+        value={nullableNumber(value)}
+        onChange={(next) => update(key, next)}
+        allowBlank={Boolean(control.allow_blank)}
+      />
+    );
+  }
+  if (control.type === 'number') {
+    return (
+      <NumberField
+        label={indicator.name}
+        value={nullableNumber(value)}
+        onChange={(next) => update(key, next)}
+        allowBlank={Boolean(control.allow_blank)}
+        description={indicator.description}
+      />
+    );
+  }
+  if (control.type === 'select') {
+    const rawOptions = control.options || [];
+    const current = value === null || value === undefined ? '' : String(value);
+    return (
+      <SelectField
+        label={indicator.name}
+        value={current}
+        onChange={(next) => update(key, typeof value === 'number' ? Number(next) : next)}
+        options={rawOptions.map((option) => [String(option.value), option.label])}
+        description={indicator.description}
+      />
+    );
+  }
+  if (control.type === 'boolean') {
+    return (
+      <label className="toggle strategy-toggle">
+        <input
+          type="checkbox"
+          checked={Boolean(value)}
+          onChange={(event) => update(key, event.target.checked)}
+        />
+        <span>{indicator.name}</span>
+      </label>
+    );
+  }
+  return (
+    <div className="field-note">
+      <strong>{indicator.name}</strong>
+      <span>{indicator.description}</span>
     </div>
   );
 }
@@ -4002,10 +4266,13 @@ function missingPolicyLabel(value: string) {
 }
 
 function activeSignalProfile(strategy: StrategyConfig, library: IndicatorLibrary): SignalModeTemplate | null {
-  if (strategy.signal_profile && strategy.signal_profile.base_signal_mode === strategy.signal_mode) {
+  if (strategy.signal_profile) {
     return strategy.signal_profile;
   }
-  return library.signal_modes.find((template) => template.base_signal_mode === strategy.signal_mode) || library.signal_modes[0] || null;
+  return library.signal_modes.find((template) => template.id === strategy.signal_mode)
+    || library.signal_modes.find((template) => (template.runtime_signal_mode || template.id) === strategy.signal_mode)
+    || library.signal_modes[0]
+    || null;
 }
 
 function cloneSignalProfile(profile: SignalModeTemplate): SignalModeTemplate {

@@ -1647,6 +1647,319 @@ h1 {
   min-width: 0;
 }
 
+.strategy-mode-selectors {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 0.8fr);
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(59, 240, 193, 0.2);
+  background: rgba(59, 240, 193, 0.035);
+}
+
+.strategy-mode-selectors label,
+.indicator-add-controls {
+  min-width: 0;
+}
+
+.strategy-mode-selectors span,
+.strategy-profile-note span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 7px;
+}
+
+.strategy-mode-selectors select,
+.indicator-add-controls select,
+.rule-indicator-chips select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  background: #071012;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0 10px;
+  outline: none;
+}
+
+.strategy-profile-note,
+.strategy-signal-context {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(255, 255, 255, 0.018);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.strategy-profile-note strong,
+.strategy-signal-context strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.strategy-profile-note span {
+  margin: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.strategy-signal-context {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.context-chip-row,
+.context-rule-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.context-chip-row span,
+.context-rule-list span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(255, 255, 255, 0.024);
+  color: var(--soft);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.context-rule-list em {
+  color: var(--teal);
+  font-style: normal;
+  font-size: 11px;
+}
+
+.strategy-toggle {
+  min-width: 0;
+}
+
+.strategy-toggle span {
+  overflow-wrap: anywhere;
+}
+
+.signal-mode-manager {
+  display: grid;
+  gap: 14px;
+}
+
+.signal-manager-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.signal-manager-head p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.signal-manager-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.signal-manager-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.28fr) minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+
+.signal-mode-list,
+.signal-mode-editor,
+.signal-editor-section {
+  min-width: 0;
+}
+
+.signal-mode-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.signal-mode-list button {
+  min-height: 72px;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(5, 12, 13, 0.64);
+  color: var(--soft);
+  border-radius: 7px;
+  padding: 11px;
+  text-align: left;
+  cursor: pointer;
+  display: grid;
+  gap: 5px;
+}
+
+.signal-mode-list button.active {
+  border-color: rgba(59, 240, 193, 0.52);
+  background: rgba(59, 240, 193, 0.08);
+  color: var(--text);
+}
+
+.signal-mode-list strong,
+.signal-mode-list span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.signal-mode-list span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.signal-mode-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.signal-editor-section {
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(255, 255, 255, 0.016);
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.signal-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.signal-section-head strong {
+  display: block;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.signal-section-head span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.signal-section-head > div:first-child {
+  min-width: 112px;
+}
+
+.indicator-add-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(100px, 0.35fr) auto;
+  gap: 8px;
+  width: min(680px, 100%);
+}
+
+.mode-field-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.mode-field-group {
+  display: grid;
+  gap: 8px;
+}
+
+.mode-field-group header,
+.mode-field-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.mode-field-group header {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mode-field-group header strong {
+  color: var(--accent);
+}
+
+.mode-field-group > div {
+  display: grid;
+  gap: 7px;
+}
+
+.mode-field-item {
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 0.22fr) auto;
+  min-height: 54px;
+  border: 1px solid rgba(157, 196, 187, 0.12);
+  background: rgba(5, 12, 13, 0.5);
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+.mode-field-item strong,
+.mode-field-item span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mode-field-item strong {
+  color: var(--text);
+}
+
+.mode-field-item span {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.mode-field-item select {
+  min-height: 34px;
+}
+
+.signal-rule-board.compact {
+  grid-template-columns: 1fr;
+}
+
+.rule-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.rule-indicator-chips.editable button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(59, 240, 193, 0.2);
+  background: rgba(59, 240, 193, 0.06);
+  color: var(--soft);
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.rule-indicator-chips.editable select {
+  width: auto;
+  min-width: 128px;
+  min-height: 30px;
+}
+
+.signal-rule-card .remove-rule {
+  justify-self: start;
+}
+
 .signal-studio {
   grid-column: 1 / -1;
   border: 1px solid rgba(59, 240, 193, 0.22);
@@ -2725,6 +3038,12 @@ h1 {
   font-size: 13px;
 }
 
+.primary.compact {
+  min-height: 32px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+
 .editor-action-strip {
   display: flex;
   justify-content: space-between;
@@ -3606,6 +3925,8 @@ a {
   }
 
   .profile-editor-grid,
+  .signal-manager-layout,
+  .strategy-signal-context,
   .indicator-add-strip {
     grid-template-columns: 1fr;
   }
@@ -3627,7 +3948,8 @@ a {
   }
 
   .mode-tabs,
-  .analysis-mode-tabs {
+  .analysis-mode-tabs,
+  .strategy-mode-selectors {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -3707,7 +4029,12 @@ a {
   .indicator-detail-grid,
   .signal-template-grid,
   .signal-preset-grid,
-  .signal-rule-board {
+  .signal-rule-board,
+  .signal-manager-layout,
+  .strategy-mode-selectors,
+  .strategy-signal-context,
+  .rule-edit-grid,
+  .indicator-add-controls {
     grid-template-columns: 1fr;
   }
 
@@ -3727,6 +4054,15 @@ a {
 
   .signal-studio-head {
     display: grid;
+  }
+
+  .signal-manager-head,
+  .signal-section-head {
+    display: grid;
+  }
+
+  .signal-manager-actions {
+    justify-content: flex-start;
   }
 
   .signal-studio-stats {
@@ -3801,13 +4137,17 @@ a {
   .form-section.wide,
   .mode-tabs,
   .analysis-mode-tabs,
+  .strategy-mode-selectors,
+  .strategy-profile-note,
+  .strategy-signal-context,
   .field-note,
   .wide-panel {
     grid-column: auto;
   }
 
   .mode-tabs,
-  .analysis-mode-tabs {
+  .analysis-mode-tabs,
+  .strategy-mode-selectors {
     grid-template-columns: 1fr;
   }
 

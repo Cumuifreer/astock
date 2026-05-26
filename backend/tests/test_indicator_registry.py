@@ -1,4 +1,5 @@
-from backend.app.services.indicator_registry import indicator_library
+from backend.app.services.indicator_registry import blank_signal_mode, indicator_library
+from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG
 
 
 def test_indicator_library_groups_a_share_indicators_by_domain():
@@ -27,8 +28,86 @@ def test_signal_mode_templates_include_editable_interaction_rules():
     template = templates["theme_resonance_breakout"]
     interactions = [rule for group in template["rule_groups"] for rule in group["rules"] if rule["kind"] == "interaction"]
 
-    assert template["base_signal_mode"] == "platform_breakout"
+    assert "base_signal_mode" not in template
     assert interactions
     assert interactions[0]["editable"] is True
     assert {"platform_breakout_clearance", "volume_ratio", "topic_heat"}.issubset(set(interactions[0]["indicator_ids"]))
     assert interactions[0]["effect"]["type"] == "score"
+
+
+def test_all_strategy_form_fields_are_defined_in_indicator_library():
+    library = indicator_library()
+    indicators = {indicator["id"]: indicator for indicator in library["indicators"]}
+    strategy_keys = {
+        indicator.get("strategy_key")
+        for indicator in indicators.values()
+        if indicator.get("kind") == "strategy_param"
+    }
+
+    required_keys = {
+        "min_price",
+        "min_amount",
+        "min_float_market_value",
+        "max_float_market_value",
+        "include_bj",
+        "exclude_star_board",
+        "breakout_pullback_direction",
+        "pullback_tolerance",
+        "platform_lookback_days",
+        "platform_range_basis",
+        "platform_max_range_mode",
+        "platform_max_range",
+        "platform_min_bullish_ratio",
+        "platform_bull_volume_advantage",
+        "platform_breakout_require_close_above",
+        "platform_breakout_clearance",
+        "platform_breakout_volume_ratio",
+        "platform_breakout_pct_chg_min",
+        "platform_body_strength_min",
+        "platform_setup_lookback_days",
+        "platform_setup_max_distance_to_high",
+        "trend_ema_fast_window",
+        "trend_macd_mode",
+        "trend_stoch_mode",
+        "ma_short_window",
+        "ma_long_window",
+        "rps_window",
+        "min_rps20",
+        "max_turnover",
+        "volume_ratio_min",
+        "sort_by",
+        "missing_turnover_policy",
+        "missing_float_market_value_policy",
+    }
+
+    assert required_keys.issubset(strategy_keys)
+    assert set(DEFAULT_STRATEGY_CONFIG) - strategy_keys == {"analysis_mode", "signal_mode"}
+    assert all(key in DEFAULT_STRATEGY_CONFIG for key in strategy_keys if key)
+    assert all(indicator.get("control", {}).get("type") for indicator in indicators.values() if indicator.get("kind") == "strategy_param")
+
+
+def test_signal_modes_reference_existing_indicators_and_new_mode_starts_with_stock_pool_only():
+    library = indicator_library()
+    indicator_ids = {indicator["id"] for indicator in library["indicators"]}
+
+    for mode in library["signal_modes"]:
+        assert "base_signal_mode" not in mode
+        assert mode["fields"]
+        assert all(field["indicator_id"] in indicator_ids for field in mode["fields"])
+        for group in mode["rule_groups"]:
+            for rule in group["rules"]:
+                assert all(indicator_id in indicator_ids for indicator_id in rule["indicator_ids"])
+
+    blank = blank_signal_mode("我的信号模式")
+    assert blank["name"] == "我的信号模式"
+    assert [field["indicator_id"] for field in blank["fields"]] == [
+        "min_price",
+        "min_amount",
+        "min_float_market_value",
+        "max_float_market_value",
+        "include_bj",
+        "exclude_star_board",
+        "missing_turnover_policy",
+        "missing_float_market_value_policy",
+    ]
+    assert blank["rule_groups"] == []

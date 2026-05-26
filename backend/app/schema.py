@@ -15,7 +15,7 @@ from backend.app.services.strategy_service import (
 )
 
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 MIGRATIONS = [
@@ -358,6 +358,17 @@ MIGRATIONS = [
         summary TEXT,
         created_at TIMESTAMP,
         UNIQUE (preset_id, version_number)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS signal_modes (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        mode_json TEXT,
+        sort_order INTEGER,
+        created_at TIMESTAMP,
+        updated_at TIMESTAMP,
+        deleted_at TIMESTAMP
     )
     """,
     """

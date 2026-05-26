@@ -1,438 +1,393 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Optional
 
 
 INDICATOR_CATEGORIES: List[Dict[str, str]] = [
-    {"id": "quote", "label": "基础行情", "description": "价格、成交、换手和市值，决定股票池与流动性底线。"},
-    {"id": "technical", "label": "技术强弱", "description": "RPS、均线、MACD、KDJ、平台形态等本地 K 线计算指标。"},
-    {"id": "capital_flow", "label": "资金流向", "description": "主力净额、净流入和大小单结构，用来确认资金是否回流。"},
-    {"id": "theme", "label": "题材行业", "description": "同花顺概念/行业成分以及基于成分股宽度计算的题材热度。"},
-    {"id": "event", "label": "事件异动", "description": "涨跌停、炸板、龙虎榜和游资等低覆盖但高信息密度事件。"},
-    {"id": "chips", "label": "筹码成本", "description": "筹码胜率、成本分布和潜在抛压，用来观察位置阻力。"},
+    {"id": "stock_pool", "label": "基础股票池", "description": "价格、成交、市值、市场范围和缺失数据处理。"},
+    {"id": "quote", "label": "基础行情", "description": "价格、成交、换手、量比和市值等行情字段。"},
+    {"id": "technical", "label": "技术强弱", "description": "RPS、均线、MACD、KDJ、平台形态等本地 K 线指标。"},
+    {"id": "platform", "label": "平台形态", "description": "平台突破、平台临界、区间收敛和突破确认参数。"},
+    {"id": "trend", "label": "趋势共振", "description": "EMA、MACD、随机指标和趋势过热参数。"},
+    {"id": "capital_flow", "label": "资金流向", "description": "主力净额、净流入和大小单结构。"},
+    {"id": "theme", "label": "题材行业", "description": "同花顺概念/行业成分以及题材热度。"},
+    {"id": "event", "label": "事件异动", "description": "涨跌停、炸板、龙虎榜和游资等高信息密度事件。"},
+    {"id": "chips", "label": "筹码成本", "description": "筹码胜率、成本分布和潜在抛压。"},
     {"id": "risk", "label": "风险过滤", "description": "ST、停牌、涨幅过热、换手过热和异常事件风险。"},
-    {"id": "market", "label": "市场环境", "description": "市场宽度、指数趋势和涨跌停温度，用来判断策略是否顺风。"},
+    {"id": "market", "label": "市场环境", "description": "市场宽度、指数趋势和涨跌停温度。"},
 ]
 
 
-INDICATORS: List[Dict[str, Any]] = [
-    {
-        "id": "latest_price",
-        "name": "最新价",
-        "category_id": "quote",
+def data_indicator(
+    indicator_id: str,
+    name: str,
+    category_id: str,
+    source: str,
+    formula: str,
+    description: str,
+    usage: List[str],
+    *,
+    status: str = "active",
+    missing: str = "neutral",
+    analysis_ready: bool = True,
+) -> Dict[str, Any]:
+    return {
+        "id": indicator_id,
+        "name": name,
+        "category_id": category_id,
+        "kind": "data",
+        "status": status,
+        "source": source,
+        "formula": formula,
+        "description": description,
+        "usage": usage,
+        "default_missing_policy": missing,
+        "analysis_ready": analysis_ready,
+        "control": {"type": "readonly"},
+        "group_id": category_id,
+        "group_label": next((item["label"] for item in INDICATOR_CATEGORIES if item["id"] == category_id), category_id),
+    }
+
+
+def strategy_param(
+    key: str,
+    name: str,
+    category_id: str,
+    group_id: str,
+    group_label: str,
+    control: Dict[str, Any],
+    description: str,
+    *,
+    formula: Optional[str] = None,
+    usage: Optional[List[str]] = None,
+    missing: str = "allow",
+) -> Dict[str, Any]:
+    return {
+        "id": key,
+        "name": name,
+        "category_id": category_id,
+        "kind": "strategy_param",
+        "strategy_key": key,
         "status": "active",
-        "source": "Tushare 实时日线 / 本地历史 K 线",
-        "formula": "优先取当日行情快照 latest_price，缺失时取最新历史 K 线 close。",
-        "description": "用于过滤过低价格和展示当前交易位置。",
-        "usage": ["filter", "display"],
-        "default_missing_policy": "skip",
+        "source": "策略配置",
+        "formula": formula or "由用户在信号模式参数中设置，分析运行时读取该参数。",
+        "description": description,
+        "usage": usage or ["filter"],
+        "default_missing_policy": missing,
         "analysis_ready": True,
-    },
-    {
-        "id": "amount",
-        "name": "成交额",
-        "category_id": "quote",
-        "status": "active",
-        "source": "Tushare 实时日线 / 历史 K 线",
-        "formula": "当日快照 amount，缺失时取最新历史 K 线 amount。",
-        "description": "衡量流动性，低成交额股票容易滑点大、信号失真。",
-        "usage": ["filter", "score"],
-        "default_missing_policy": "skip",
-        "analysis_ready": True,
-    },
-    {
-        "id": "turnover_rate",
-        "name": "换手率",
-        "category_id": "quote",
-        "status": "active",
-        "source": "Tushare daily_basic / 历史 K 线",
-        "formula": "优先取 daily_basic.turnover_rate，缺失时取历史 K 线 turn。",
-        "description": "衡量筹码交换强度，过低代表不活跃，过高可能代表分歧或过热。",
-        "usage": ["filter", "risk", "score"],
-        "default_missing_policy": "allow",
-        "analysis_ready": True,
-    },
-    {
-        "id": "volume_ratio",
-        "name": "量比",
-        "category_id": "quote",
-        "status": "active",
-        "source": "Tushare daily_basic / 本地 K 线估算",
-        "formula": "优先取 daily_basic.volume_ratio；为空时用最新成交量 / 前 20 根成交量均值。",
-        "description": "判断当前成交是否明显放大，是右侧突破和资金确认的重要指标。",
-        "usage": ["filter", "score", "interaction"],
-        "default_missing_policy": "allow",
-        "analysis_ready": True,
-    },
-    {
-        "id": "float_market_value",
-        "name": "流通市值",
-        "category_id": "quote",
-        "status": "active",
-        "source": "Tushare daily_basic / 快照估算",
-        "formula": "优先使用 daily_basic.circ_mv 归一化后的流通市值，缺失时由流通股本和价格估算。",
-        "description": "控制股票规模，避免过小或过大的标的进入同一套策略。",
-        "usage": ["filter"],
-        "default_missing_policy": "allow",
-        "analysis_ready": True,
-    },
-    {
-        "id": "rps20",
-        "name": "RPS20",
-        "category_id": "technical",
-        "status": "active",
-        "source": "本地历史 K 线",
-        "formula": "按最近 20 日收益率在全市场排序并映射到 0-100。",
-        "description": "短期相对强度，适合寻找强于市场的趋势股。",
-        "usage": ["filter", "score", "sort"],
-        "default_missing_policy": "skip",
-        "analysis_ready": True,
-    },
-    {
-        "id": "rps60",
-        "name": "RPS60",
-        "category_id": "technical",
-        "status": "active",
-        "source": "本地历史 K 线",
-        "formula": "按最近 60 日收益率在全市场排序并映射到 0-100。",
-        "description": "中期相对强度，比 RPS20 更稳定。",
-        "usage": ["filter", "score", "sort"],
-        "default_missing_policy": "skip",
-        "analysis_ready": True,
-    },
-    {
-        "id": "macd_state",
-        "name": "MACD 状态",
-        "category_id": "technical",
-        "status": "active",
-        "source": "本地历史 K 线 / Tushare stk_factor",
-        "formula": "DIF、DEA 和 0 轴关系；平台/趋势模式中可设为必须或加分。",
-        "description": "确认动能是否改善，避免弱势反抽被误判为突破。",
-        "usage": ["filter", "score", "interaction"],
-        "default_missing_policy": "allow",
-        "analysis_ready": True,
-    },
-    {
-        "id": "platform_range",
-        "name": "平台振幅",
-        "category_id": "technical",
-        "status": "active",
-        "source": "本地历史 K 线",
-        "formula": "平台窗口内最高价 / 最低价 - 1，或按收盘价区间计算。",
-        "description": "衡量横盘收敛程度，越小越接近蓄势平台。",
-        "usage": ["filter", "score"],
-        "default_missing_policy": "skip",
-        "analysis_ready": True,
-    },
-    {
-        "id": "platform_breakout_clearance",
-        "name": "突破上沿距离",
-        "category_id": "technical",
-        "status": "active",
-        "source": "本地历史 K 线",
-        "formula": "最新收盘价 / 平台上沿 - 1。",
-        "description": "判断是否刚刚有效站上平台上沿，也控制追高距离。",
-        "usage": ["filter", "score", "interaction"],
-        "default_missing_policy": "skip",
-        "analysis_ready": True,
-    },
-    {
-        "id": "platform_setup_distance_to_high",
-        "name": "距平台上沿",
-        "category_id": "technical",
-        "status": "active",
-        "source": "本地历史 K 线",
-        "formula": "平台上沿 / 最新收盘价 - 1。",
-        "description": "平台临界模式的核心位置指标，越接近上沿越值得观察。",
-        "usage": ["filter", "score", "interaction"],
-        "default_missing_policy": "skip",
-        "analysis_ready": True,
-    },
-    {
-        "id": "main_net_amount",
-        "name": "主力净额",
-        "category_id": "capital_flow",
-        "status": "available",
-        "source": "Tushare moneyflow",
-        "formula": "大单与超大单买入金额 - 卖出金额，按本地 moneyflow 字段归一。",
-        "description": "判断主动资金是否回流，适合做突破和平台临界的确认项。",
-        "usage": ["score", "interaction"],
-        "default_missing_policy": "neutral",
-        "analysis_ready": False,
-    },
-    {
-        "id": "net_mf_amount",
-        "name": "资金净流入",
-        "category_id": "capital_flow",
-        "status": "available",
-        "source": "Tushare moneyflow",
-        "formula": "全口径买入金额 - 卖出金额。",
-        "description": "辅助确认资金方向，和主力净额一起判断资金质量。",
-        "usage": ["score"],
-        "default_missing_policy": "neutral",
-        "analysis_ready": False,
-    },
-    {
-        "id": "topic_count",
-        "name": "题材数",
-        "category_id": "theme",
-        "status": "available",
-        "source": "Tushare ths_member",
-        "formula": "统计股票关联的同花顺概念/行业成分数量。",
-        "description": "只表示股票挂在哪些题材里，不直接代表题材强弱。",
-        "usage": ["display", "score"],
-        "default_missing_policy": "neutral",
-        "analysis_ready": False,
-    },
-    {
-        "id": "topic_heat",
-        "name": "题材热度",
-        "category_id": "theme",
-        "status": "planned",
-        "source": "ths_member + 当日行情 + 涨跌停",
-        "formula": "对股票所属题材的成分股上涨比例、RPS 高分股数量、涨停数量和成交额扩张做综合评分。",
-        "description": "判断个股是否站在活跃主线上，是 A 股策略里很有价值的联动指标。",
-        "usage": ["score", "interaction", "sort"],
-        "default_missing_policy": "neutral",
-        "analysis_ready": False,
-    },
-    {
-        "id": "theme_limit_count",
-        "name": "题材涨停数",
-        "category_id": "theme",
-        "status": "planned",
-        "source": "ths_member + Tushare limit_list_d",
-        "formula": "统计股票所属题材内最近交易日涨停成分股数量。",
-        "description": "衡量题材短线爆发力，适合接力和题材共振策略。",
-        "usage": ["score", "interaction"],
-        "default_missing_policy": "neutral",
-        "analysis_ready": False,
-    },
-    {
-        "id": "limit_event",
-        "name": "涨跌停 / 炸板",
-        "category_id": "event",
-        "status": "available",
-        "source": "Tushare limit_list_d",
-        "formula": "读取最近涨停、跌停或炸板事件及开板次数、封单金额。",
-        "description": "低覆盖事件指标。出现时信息密度很高，缺失通常代表普通交易日。",
-        "usage": ["risk", "score", "interaction"],
-        "default_missing_policy": "neutral",
-        "analysis_ready": False,
-    },
-    {
-        "id": "top_list_net_amount",
-        "name": "龙虎榜净额",
-        "category_id": "event",
-        "status": "available",
-        "source": "Tushare top_list / top_inst / hm_detail",
-        "formula": "取最近龙虎榜或游资明细中的净买入金额。",
-        "description": "短线资金偏好指标，只在上榜股票中出现。",
-        "usage": ["score", "interaction", "risk"],
-        "default_missing_policy": "neutral",
-        "analysis_ready": False,
-    },
-    {
-        "id": "cyq_winner_rate",
-        "name": "筹码胜率",
-        "category_id": "chips",
-        "status": "available",
-        "source": "Tushare cyq_perf",
-        "formula": "获利筹码占比，来自 Tushare 筹码分布性能接口。",
-        "description": "观察筹码位置与潜在抛压，适合趋势与低阻力策略。",
-        "usage": ["score", "risk"],
-        "default_missing_policy": "neutral",
-        "analysis_ready": False,
-    },
-    {
-        "id": "cost_50pct",
-        "name": "中位成本",
-        "category_id": "chips",
-        "status": "available",
-        "source": "Tushare cyq_perf",
-        "formula": "筹码分布中 50% 成本位置。",
-        "description": "用当前价和中位成本的距离观察压力与支撑。",
-        "usage": ["score", "risk"],
-        "default_missing_policy": "neutral",
-        "analysis_ready": False,
-    },
-    {
-        "id": "is_st",
-        "name": "ST 状态",
-        "category_id": "risk",
-        "status": "active",
-        "source": "股票基础信息 / 历史 K 线",
-        "formula": "股票名或历史数据中的 ST 标记。",
-        "description": "默认风险过滤项，通常不进入普通策略。",
-        "usage": ["filter", "risk"],
-        "default_missing_policy": "allow",
-        "analysis_ready": True,
-    },
-    {
-        "id": "overheat_risk",
-        "name": "过热风险",
-        "category_id": "risk",
-        "status": "active",
-        "source": "本地计算",
-        "formula": "结合近 5/10 日涨幅、当前涨幅、换手率和距均线偏离度。",
-        "description": "识别已经脱离买点或分歧过大的候选股。",
-        "usage": ["risk", "interaction"],
-        "default_missing_policy": "neutral",
-        "analysis_ready": True,
-    },
-    {
-        "id": "market_breadth",
-        "name": "市场宽度",
-        "category_id": "market",
-        "status": "available",
-        "source": "本地历史 K 线 / 市场环境表",
-        "formula": "统计全市场上涨比例、涨跌停温度和指数趋势后综合评分。",
-        "description": "判断策略环境是否顺风，适合作为仓位或信号阈值调节项。",
-        "usage": ["context", "risk"],
-        "default_missing_policy": "neutral",
-        "analysis_ready": False,
-    },
+        "control": control,
+        "group_id": group_id,
+        "group_label": group_label,
+    }
+
+
+def number_control(
+    *,
+    unit: str = "",
+    allow_blank: bool = False,
+    min_value: Optional[float] = None,
+    max_value: Optional[float] = None,
+    step: Optional[float] = None,
+) -> Dict[str, Any]:
+    control: Dict[str, Any] = {"type": "number", "unit": unit, "allow_blank": allow_blank}
+    if min_value is not None:
+        control["min"] = min_value
+    if max_value is not None:
+        control["max"] = max_value
+    if step is not None:
+        control["step"] = step
+    return control
+
+
+def money_control(*, allow_blank: bool = False) -> Dict[str, Any]:
+    return {"type": "money", "unit": "元", "allow_blank": allow_blank}
+
+
+def select_control(options: Iterable[tuple[str, str]]) -> Dict[str, Any]:
+    return {"type": "select", "options": [{"value": value, "label": label} for value, label in options]}
+
+
+def boolean_control() -> Dict[str, Any]:
+    return {"type": "boolean"}
+
+
+CONDITION_OPTIONS = [("must", "必须满足"), ("score", "只参与得分"), ("off", "不启用")]
+
+
+DATA_INDICATORS: List[Dict[str, Any]] = [
+    data_indicator(
+        "latest_price",
+        "最新价",
+        "quote",
+        "Tushare 实时日线 / 本地历史 K 线",
+        "优先取当日行情快照 latest_price，缺失时取最新历史 K 线 close。",
+        "用于过滤过低价格和展示当前交易位置。",
+        ["filter", "display"],
+        missing="skip",
+    ),
+    data_indicator(
+        "amount",
+        "成交额",
+        "quote",
+        "Tushare 实时日线 / 历史 K 线",
+        "当日快照 amount，缺失时取最新历史 K 线 amount。",
+        "衡量流动性，低成交额股票容易滑点大、信号失真。",
+        ["filter", "score"],
+        missing="skip",
+    ),
+    data_indicator(
+        "turnover_rate",
+        "换手率",
+        "quote",
+        "Tushare daily_basic / 历史 K 线",
+        "优先取 daily_basic.turnover_rate，缺失时取历史 K 线 turn。",
+        "衡量筹码交换强度，过低代表不活跃，过高可能代表分歧或过热。",
+        ["filter", "risk", "score"],
+        missing="allow",
+    ),
+    data_indicator(
+        "volume_ratio",
+        "量比",
+        "quote",
+        "Tushare daily_basic / 本地 K 线估算",
+        "优先取 daily_basic.volume_ratio；为空时用最新成交量 / 前 20 根成交量均值。",
+        "判断当前成交是否明显放大，是右侧突破和资金确认的重要指标。",
+        ["filter", "score", "interaction"],
+        missing="allow",
+    ),
+    data_indicator(
+        "float_market_value",
+        "流通市值",
+        "quote",
+        "Tushare daily_basic / 快照估算",
+        "优先使用 daily_basic.circ_mv 归一化后的流通市值，缺失时由流通股本和价格估算。",
+        "控制股票规模，避免过小或过大的标的进入同一套策略。",
+        ["filter"],
+        missing="allow",
+    ),
+    data_indicator("rps20", "RPS20", "technical", "本地历史 K 线", "按最近 20 日收益率在全市场排序并映射到 0-100。", "短期相对强度。", ["filter", "score", "sort"], missing="skip"),
+    data_indicator("rps60", "RPS60", "technical", "本地历史 K 线", "按最近 60 日收益率在全市场排序并映射到 0-100。", "中期相对强度。", ["filter", "score", "sort"], missing="skip"),
+    data_indicator("rps120", "RPS120", "technical", "本地历史 K 线", "按最近 120 日收益率在全市场排序并映射到 0-100。", "中长期相对强度。", ["filter", "score", "sort"], missing="skip"),
+    data_indicator("macd_state", "MACD 状态", "technical", "本地历史 K 线 / Tushare stk_factor", "DIF、DEA 和 0 轴关系。", "确认动能是否改善。", ["filter", "score", "interaction"], missing="allow"),
+    data_indicator("platform_range", "平台振幅", "platform", "本地历史 K 线", "平台窗口内最高价 / 最低价 - 1，或按收盘价区间计算。", "衡量横盘收敛程度。", ["filter", "score"], missing="skip"),
+    data_indicator("platform_breakout_clearance", "突破上沿距离", "platform", "本地历史 K 线", "最新收盘价 / 平台上沿 - 1。", "判断是否刚刚有效站上平台上沿。", ["filter", "score", "interaction"], missing="skip"),
+    data_indicator("platform_setup_distance_to_high", "距平台上沿", "platform", "本地历史 K 线", "平台上沿 / 最新收盘价 - 1。", "平台临界模式的核心位置指标。", ["filter", "score", "interaction"], missing="skip"),
+    data_indicator("main_net_amount", "主力净额", "capital_flow", "Tushare moneyflow", "大单与超大单买入金额 - 卖出金额。", "判断主动资金是否回流。", ["score", "interaction"], status="available", analysis_ready=False),
+    data_indicator("net_mf_amount", "资金净流入", "capital_flow", "Tushare moneyflow", "全口径买入金额 - 卖出金额。", "辅助确认资金方向。", ["score"], status="available", analysis_ready=False),
+    data_indicator("topic_count", "题材数", "theme", "Tushare ths_member", "统计股票关联的同花顺概念/行业成分数量。", "表示股票挂在哪些题材里。", ["display", "score"], status="available", analysis_ready=False),
+    data_indicator("topic_heat", "题材热度", "theme", "ths_member + 当日行情 + 涨跌停", "成分股上涨比例、RPS 高分股数量、涨停数量和成交额扩张综合评分。", "判断个股是否站在活跃主线上。", ["score", "interaction", "sort"], status="planned", analysis_ready=False),
+    data_indicator("theme_limit_count", "题材涨停数", "theme", "ths_member + Tushare limit_list_d", "统计股票所属题材内最近交易日涨停成分股数量。", "衡量题材短线爆发力。", ["score", "interaction"], status="planned", analysis_ready=False),
+    data_indicator("limit_event", "涨跌停 / 炸板", "event", "Tushare limit_list_d", "读取最近涨停、跌停或炸板事件及开板次数、封单金额。", "低覆盖事件指标。", ["risk", "score", "interaction"], status="available", analysis_ready=False),
+    data_indicator("top_list_net_amount", "龙虎榜净额", "event", "Tushare top_list / top_inst / hm_detail", "取最近龙虎榜或游资明细中的净买入金额。", "短线资金偏好指标。", ["score", "interaction", "risk"], status="available", analysis_ready=False),
+    data_indicator("cyq_winner_rate", "筹码胜率", "chips", "Tushare cyq_perf", "获利筹码占比。", "观察筹码位置与潜在抛压。", ["score", "risk"], status="available", analysis_ready=False),
+    data_indicator("cost_50pct", "中位成本", "chips", "Tushare cyq_perf", "筹码分布中 50% 成本位置。", "观察当前价和中位成本的距离。", ["score", "risk"], status="available", analysis_ready=False),
+    data_indicator("is_st", "ST 状态", "risk", "股票基础信息 / 历史 K 线", "股票名或历史数据中的 ST 标记。", "默认风险过滤项。", ["filter", "risk"], missing="allow"),
+    data_indicator("overheat_risk", "过热风险", "risk", "本地计算", "近 5/10 日涨幅、当前涨幅、换手率和距均线偏离度。", "识别脱离买点或分歧过大的候选股。", ["risk", "interaction"]),
+    data_indicator("market_breadth", "市场宽度", "market", "本地历史 K 线 / 市场环境表", "全市场上涨比例、涨跌停温度和指数趋势综合评分。", "判断策略环境是否顺风。", ["context", "risk"], status="available", analysis_ready=False),
 ]
 
 
-SIGNAL_MODE_TEMPLATES: List[Dict[str, Any]] = [
+STRATEGY_PARAM_INDICATORS: List[Dict[str, Any]] = [
+    strategy_param("min_price", "最低股价", "stock_pool", "stock_pool", "基础股票池", number_control(unit="元", min_value=0), "低于该价格的股票不进入候选。"),
+    strategy_param("min_amount", "成交额门槛", "stock_pool", "stock_pool", "基础股票池", money_control(), "低成交额股票会被过滤。"),
+    strategy_param("min_float_market_value", "最小流通市值", "stock_pool", "stock_pool", "基础股票池", money_control(allow_blank=True), "为空时不启用下限。"),
+    strategy_param("max_float_market_value", "最大流通市值", "stock_pool", "stock_pool", "基础股票池", money_control(allow_blank=True), "为空时不启用上限。"),
+    strategy_param("include_bj", "包含北交所", "stock_pool", "stock_pool", "基础股票池", boolean_control(), "是否允许北交所股票进入股票池。", usage=["filter", "switch"]),
+    strategy_param("exclude_star_board", "排除科创板", "stock_pool", "stock_pool", "基础股票池", boolean_control(), "是否排除科创板股票。", usage=["filter", "switch"]),
+    strategy_param("missing_turnover_policy", "换手率缺失", "stock_pool", "missing_data", "缺失数据处理", select_control([("allow", "保留缺失股票"), ("skip", "跳过缺失股票")]), "控制换手率字段缺失时如何处理。"),
+    strategy_param("missing_float_market_value_policy", "流通市值缺失", "stock_pool", "missing_data", "缺失数据处理", select_control([("allow", "保留缺失股票"), ("skip", "跳过缺失股票")]), "控制流通市值缺失时如何处理。"),
+    strategy_param("breakout_pullback_direction", "形态方向", "technical", "breakout_pullback", "突破回踩", select_control([("both", "突破与回踩都看"), ("breakout", "只看右侧突破"), ("pullback", "只看左侧回踩")]), "控制突破回踩模式关注的形态方向。"),
+    strategy_param("breakout_lookback", "突破观察天数", "technical", "breakout_pullback", "突破回踩", number_control(unit="日", min_value=5), "观察阶段高点和回踩位置的窗口。"),
+    strategy_param("pullback_tolerance", "回踩容忍", "technical", "breakout_pullback", "突破回踩", number_control(unit="比例", min_value=0), "价格贴近短期均线的容忍距离。"),
+    strategy_param("platform_lookback_days", "平台观察天数", "platform", "platform_range", "平台区间", number_control(unit="日", min_value=10), "平台窗口长度。"),
+    strategy_param("platform_range_basis", "平台振幅口径", "platform", "platform_range", "平台区间", select_control([("high_low", "最高价 / 最低价"), ("close", "收盘价区间")]), "决定平台振幅按影线还是收盘价计算。"),
+    strategy_param("platform_max_range_mode", "平台区间条件", "platform", "platform_range", "平台区间", select_control(CONDITION_OPTIONS), "控制平台振幅是必须条件、得分项还是关闭。"),
+    strategy_param("platform_max_range", "平台区间最大振幅", "platform", "platform_range", "平台区间", number_control(unit="比例", min_value=0), "平台最高到最低的最大允许振幅。"),
+    strategy_param("platform_min_bullish_ratio", "最小阳线占比", "platform", "platform_range", "平台区间", number_control(unit="比例", min_value=0, max_value=1), "平台内红柱占比下限。"),
+    strategy_param("platform_bullish_ratio_mode", "阳线占比条件", "platform", "platform_range", "平台区间", select_control(CONDITION_OPTIONS), "控制阳线占比的使用方式。"),
+    strategy_param("platform_bullish_ratio_score", "阳线占比加分线", "platform", "platform_range", "平台区间", number_control(unit="比例", min_value=0, max_value=1), "达到该比例时增加形态质量分。", usage=["score"]),
+    strategy_param("platform_bull_volume_advantage", "阳线均量优势", "platform", "platform_range", "平台区间", number_control(unit="倍", min_value=0), "平台红柱均量 / 绿柱均量下限。"),
+    strategy_param("platform_bull_volume_advantage_mode", "阳线均量条件", "platform", "platform_range", "平台区间", select_control(CONDITION_OPTIONS), "控制阳线均量优势的使用方式。"),
+    strategy_param("platform_bull_volume_advantage_score", "阳线量能加分线", "platform", "platform_range", "平台区间", number_control(unit="倍", min_value=0), "达到该倍数时增加量能质量分。", usage=["score"]),
+    strategy_param("platform_breakout_clearance_mode", "突破幅度条件", "platform", "platform_breakout", "突破确认", select_control(CONDITION_OPTIONS), "控制突破上沿最小幅度的使用方式。"),
+    strategy_param("platform_breakout_require_close_above", "收盘站上平台", "platform", "platform_breakout", "突破确认", boolean_control(), "是否要求收盘价站在平台上沿之上。", usage=["filter", "switch"]),
+    strategy_param("platform_breakout_clearance", "突破上沿最小幅度", "platform", "platform_breakout", "突破确认", number_control(unit="比例", min_value=0), "最新收盘价高于平台上沿的最小幅度。"),
+    strategy_param("platform_breakout_max_clearance", "突破上沿最大距离", "platform", "platform_breakout", "突破确认", number_control(unit="比例", min_value=0), "距离平台过远时视为追高。"),
+    strategy_param("platform_breakout_max_clearance_mode", "最大距离条件", "platform", "platform_breakout", "突破确认", select_control(CONDITION_OPTIONS), "控制突破上沿最大距离的使用方式。"),
+    strategy_param("platform_breakout_first_mode", "首次突破条件", "platform", "platform_breakout", "突破确认", select_control(CONDITION_OPTIONS), "控制是否要求首次有效突破。"),
+    strategy_param("platform_breakout_volume_ratio", "突破量比", "platform", "platform_breakout", "突破确认", number_control(unit="倍", min_value=0), "最新成交量 / 平台均量下限。"),
+    strategy_param("platform_breakout_volume_ratio_mode", "突破量比条件", "platform", "platform_breakout", "突破确认", select_control(CONDITION_OPTIONS), "控制突破量比的使用方式。"),
+    strategy_param("platform_breakout_pct_chg_min", "突破涨幅下限", "platform", "platform_breakout", "突破确认", number_control(unit="%", min_value=-20, max_value=20), "突破当天涨跌幅下限。"),
+    strategy_param("platform_breakout_pct_chg_mode", "突破涨幅条件", "platform", "platform_breakout", "突破确认", select_control(CONDITION_OPTIONS), "控制突破涨幅的使用方式。"),
+    strategy_param("platform_breakout_bullish_mode", "突破红柱条件", "platform", "platform_breakout", "突破确认", select_control(CONDITION_OPTIONS), "控制突破 K 线是否必须收红。"),
+    strategy_param("platform_body_strength_min", "突破实体强度", "platform", "platform_breakout", "突破确认", number_control(min_value=0), "红柱实体 / 上下影线总和。"),
+    strategy_param("platform_body_strength_mode", "实体强度条件", "platform", "platform_breakout", "突破确认", select_control(CONDITION_OPTIONS), "控制实体强度的使用方式。"),
+    strategy_param("macd_position", "MACD 位置", "platform", "platform_breakout", "突破确认", select_control([("dif_above_zero", "DIF 在 0 轴上方"), ("dif_dea_above_zero", "DIF 与 DEA 均在 0 轴上方")]), "平台突破使用的 MACD 位置条件。"),
+    strategy_param("platform_ma_trend_enabled", "启用均线趋势", "platform", "platform_ma", "平台均线", boolean_control(), "是否检查平台突破时的均线状态。", usage=["switch"]),
+    strategy_param("platform_ma_bullish_mode", "均线多头条件", "platform", "platform_ma", "平台均线", select_control(CONDITION_OPTIONS), "控制均线多头排列的使用方式。"),
+    strategy_param("platform_ma_rising_required", "要求均线上升", "platform", "platform_ma", "平台均线", boolean_control(), "是否要求关键均线向上。", usage=["switch"]),
+    strategy_param("platform_ma_rising_mode", "均线上升条件", "platform", "platform_ma", "平台均线", select_control(CONDITION_OPTIONS), "控制均线上升的使用方式。"),
+    strategy_param("platform_macd_filter_mode", "平台 MACD 条件", "platform", "platform_ma", "平台均线", select_control(CONDITION_OPTIONS), "控制 MACD 过滤的使用方式。"),
+    strategy_param("platform_setup_lookback_days", "平台观察天数", "platform", "platform_setup", "平台临界观察", number_control(unit="日", min_value=10), "平台临界窗口长度。"),
+    strategy_param("platform_setup_max_range", "平台最大振幅", "platform", "platform_setup", "平台临界观察", number_control(unit="比例", min_value=0), "平台临界模式下的最大区间振幅。"),
+    strategy_param("platform_setup_max_distance_to_high", "接近上沿距离", "platform", "platform_setup", "平台临界观察", number_control(unit="比例", min_value=0), "最新价距离平台上沿的最大距离。"),
+    strategy_param("platform_setup_max_recent_gain_5d", "近5日涨幅上限", "platform", "platform_setup", "平台临界观察", number_control(unit="比例", min_value=0), "防止平台临界提前走远。"),
+    strategy_param("platform_setup_volume_contraction_max", "缩量整理上限", "platform", "platform_setup", "平台临界观察", number_control(unit="倍", min_value=0), "平台内成交量不能明显放大。"),
+    strategy_param("platform_setup_bull_volume_advantage", "阳线均量优势", "platform", "platform_setup", "平台临界观察", number_control(unit="倍", min_value=0), "阳线均量相对阴线均量的优势。"),
+    strategy_param("platform_setup_ma_convergence_max", "均线粘合上限", "platform", "platform_setup", "平台临界观察", number_control(unit="比例", min_value=0), "短中期均线距离的最大允许值。"),
+    strategy_param("platform_setup_require_ma_turning", "要求 MA5 拐头", "platform", "platform_setup", "平台临界观察", boolean_control(), "是否要求短均线开始向上。", usage=["switch"]),
+    strategy_param("platform_setup_macd_mode", "MACD 状态", "platform", "platform_setup", "平台临界观察", select_control([("none", "不启用"), ("dif_above_dea", "DIF 强于 DEA"), ("dif_above_zero", "DIF 在 0 轴上方")]), "平台临界使用的 MACD 状态。"),
+    strategy_param("trend_ema_fast_window", "EMA 快线", "trend", "trend_ema", "趋势均线", number_control(unit="日", min_value=2), "短线趋势 EMA 周期。"),
+    strategy_param("trend_ema_mid_window", "EMA 中线", "trend", "trend_ema", "趋势均线", number_control(unit="日", min_value=3), "节奏线 EMA 周期。"),
+    strategy_param("trend_ema_long_window", "EMA 长线", "trend", "trend_ema", "趋势均线", number_control(unit="日", min_value=5), "中期趋势 EMA 周期。"),
+    strategy_param("trend_entry_signal", "趋势信号", "trend", "trend_ema", "趋势均线", select_control([("any", "全部趋势信号"), ("thunder", "强动能确认"), ("follow", "趋势延续"), ("stealth", "早期转强")]), "控制趋势共振关注的入场信号。"),
+    strategy_param("trend_require_price_above_ema_long", "要求站上 EMA60", "trend", "trend_ema", "趋势均线", boolean_control(), "是否要求价格站上长期 EMA。", usage=["switch"]),
+    strategy_param("trend_require_ema_long_rising", "要求 EMA60 上升", "trend", "trend_ema", "趋势均线", boolean_control(), "是否要求长期 EMA 上升。", usage=["switch"]),
+    strategy_param("trend_require_ema_fast_above_mid", "要求 EMA13 高于 EMA21", "trend", "trend_ema", "趋势均线", boolean_control(), "是否要求快线高于中线。", usage=["switch"]),
+    strategy_param("trend_macd_fast", "MACD 快线", "trend", "trend_macd", "趋势动能", number_control(min_value=2), "趋势共振 MACD 快线参数。"),
+    strategy_param("trend_macd_slow", "MACD 慢线", "trend", "trend_macd", "趋势动能", number_control(min_value=3), "趋势共振 MACD 慢线参数。"),
+    strategy_param("trend_macd_signal", "MACD 信号线", "trend", "trend_macd", "趋势动能", number_control(min_value=2), "趋势共振 MACD 信号线参数。"),
+    strategy_param("trend_macd_mode", "MACD 条件", "trend", "trend_macd", "趋势动能", select_control([("dif_above_dea", "DIF 强于 DEA"), ("dif_above_zero", "DIF 在 0 轴上方"), ("dif_dea_above_zero", "DIF 与 DEA 均在 0 轴上方"), ("off", "不启用")]), "趋势共振中的 MACD 条件。"),
+    strategy_param("trend_stoch_window", "随机周期", "trend", "trend_stoch", "随机指标", number_control(min_value=5), "慢速随机指标窗口。"),
+    strategy_param("trend_stoch_k_smooth", "随机 K 平滑", "trend", "trend_stoch", "随机指标", number_control(min_value=1), "K 线平滑参数。"),
+    strategy_param("trend_stoch_d_smooth", "随机 D 平滑", "trend", "trend_stoch", "随机指标", number_control(min_value=1), "D 线平滑参数。"),
+    strategy_param("trend_stoch_mode", "随机条件", "trend", "trend_stoch", "随机指标", select_control([("k_above_d", "K 在 D 上方"), ("cross_up", "要求 K 上穿 D"), ("off", "不启用")]), "趋势共振中的随机指标条件。"),
+    strategy_param("trend_max_ema_mid_distance", "距 EMA21 上限", "trend", "trend_risk", "趋势风险", number_control(unit="比例", min_value=0), "防止趋势买点距离节奏线太远。"),
+    strategy_param("trend_max_recent_gain_10d", "近10日涨幅上限", "trend", "trend_risk", "趋势风险", number_control(unit="比例", min_value=0), "防止趋势信号过热。"),
+    strategy_param("trend_stoch_overheat", "随机过热线", "trend", "trend_risk", "趋势风险", number_control(min_value=0, max_value=100), "随机指标过热扣分线。"),
+    strategy_param("ma_short_window", "MA 短期", "technical", "strength_trend", "强弱与趋势", number_control(unit="日", min_value=3), "短期均线周期。"),
+    strategy_param("ma_long_window", "MA 长期", "technical", "strength_trend", "强弱与趋势", number_control(unit="日", min_value=4), "长期均线周期。"),
+    strategy_param("trend_filter", "趋势过滤", "technical", "strength_trend", "强弱与趋势", select_control([("ma_short_above_long", "短均线在长均线上方"), ("none", "不启用")]), "通用趋势过滤方式。"),
+    strategy_param("rps_window", "RPS 周期", "technical", "strength_trend", "强弱与趋势", select_control([("20", "RPS20"), ("60", "RPS60"), ("120", "RPS120")]), "排序或过滤使用的 RPS 周期。"),
+    strategy_param("min_rps20", "RPS20 下限", "technical", "strength_trend", "强弱与趋势", number_control(allow_blank=True, min_value=0, max_value=100), "RPS20 低于该值时过滤。"),
+    strategy_param("min_rps60", "RPS60 下限", "technical", "strength_trend", "强弱与趋势", number_control(allow_blank=True, min_value=0, max_value=100), "RPS60 低于该值时过滤。"),
+    strategy_param("min_rps120", "RPS120 下限", "technical", "strength_trend", "强弱与趋势", number_control(allow_blank=True, min_value=0, max_value=100), "RPS120 低于该值时过滤。"),
+    strategy_param("max_amplitude", "振幅上限", "technical", "price_volume", "量价触发", number_control(allow_blank=True, unit="比例", min_value=0), "单日振幅超过该值时过滤。"),
+    strategy_param("min_turnover", "最小换手率", "quote", "price_volume", "量价触发", number_control(allow_blank=True, unit="%", min_value=0), "低于该换手率时过滤。"),
+    strategy_param("max_turnover", "最大换手率", "quote", "price_volume", "量价触发", number_control(allow_blank=True, unit="%", min_value=0), "高于该换手率时过滤或扣分。"),
+    strategy_param("min_pct_chg", "最小涨跌幅", "quote", "price_volume", "量价触发", number_control(allow_blank=True, unit="%"), "低于该涨跌幅时过滤。"),
+    strategy_param("max_pct_chg", "最大涨跌幅", "quote", "price_volume", "量价触发", number_control(allow_blank=True, unit="%"), "高于该涨跌幅时过滤。"),
+    strategy_param("volume_ratio_min", "成交量放大", "quote", "price_volume", "量价触发", number_control(allow_blank=True, unit="倍", min_value=0), "量比低于该值时过滤。"),
+    strategy_param("max_ma_distance", "最大均线偏离", "technical", "price_volume", "量价触发", number_control(allow_blank=True, unit="比例", min_value=0), "距离短均线过远时过滤或扣分。"),
+    strategy_param("candidate_limit", "候选上限", "stock_pool", "output", "输出设置", number_control(min_value=1, max_value=500), "每次分析最多输出的候选数量。"),
+    strategy_param("sort_by", "排序", "stock_pool", "output", "输出设置", select_control([("signal_score", "信号分数"), ("rps20", "RPS20"), ("amount", "成交额"), ("pct_chg", "涨跌幅")]), "候选排序字段。", usage=["sort"]),
+    strategy_param("macd_filter_enabled", "启用 MACD 过滤", "technical", "legacy", "兼容参数", boolean_control(), "兼容旧策略中的 MACD 总开关。", usage=["switch"]),
+]
+
+
+INDICATORS: List[Dict[str, Any]] = DATA_INDICATORS + STRATEGY_PARAM_INDICATORS
+
+
+BASE_STOCK_POOL_FIELDS = [
+    "min_price",
+    "min_amount",
+    "min_float_market_value",
+    "max_float_market_value",
+    "include_bj",
+    "exclude_star_board",
+    "missing_turnover_policy",
+    "missing_float_market_value_policy",
+]
+
+
+def mode_field(indicator_id: str, role: str = "filter") -> Dict[str, str]:
+    indicator = INDICATOR_BY_ID[indicator_id]
+    return {
+        "indicator_id": indicator_id,
+        "role": role,
+        "group_id": indicator["group_id"],
+        "group_label": indicator["group_label"],
+    }
+
+
+INDICATOR_BY_ID = {indicator["id"]: indicator for indicator in INDICATORS}
+
+
+def mode_fields(indicator_ids: Iterable[str]) -> List[Dict[str, str]]:
+    return [mode_field(indicator_id) for indicator_id in indicator_ids]
+
+
+COMMON_STRENGTH_FIELDS = [
+    "ma_short_window",
+    "ma_long_window",
+    "rps_window",
+    "min_rps20",
+    "min_rps60",
+    "min_rps120",
+    "max_amplitude",
+    "min_turnover",
+    "max_turnover",
+    "min_pct_chg",
+    "max_pct_chg",
+    "volume_ratio_min",
+    "max_ma_distance",
+    "candidate_limit",
+    "sort_by",
+]
+
+
+DEFAULT_SIGNAL_MODES: List[Dict[str, Any]] = [
     {
-        "id": "platform_breakout_core",
+        "id": "breakout_or_pullback",
+        "name": "突破回踩",
+        "description": "突破与回踩共用的基础信号模式。",
+        "note": "可以保留双形态，也可以只看突破或只看回踩。",
+        "runtime_signal_mode": "breakout_or_pullback",
+        "fields": mode_fields(BASE_STOCK_POOL_FIELDS + ["breakout_pullback_direction", "pullback_tolerance"] + COMMON_STRENGTH_FIELDS),
+        "rule_groups": [],
+    },
+    {
+        "id": "platform_breakout",
         "name": "平台突破",
-        "base_signal_mode": "platform_breakout",
-        "description": "保留现有平台突破骨架，强调平台收敛、首次突破和放量确认。",
-        "note": "适合右侧确认，不追求题材过滤时使用。",
+        "description": "平台收敛后有效突破，并用量能和形态质量确认。",
+        "note": "适合右侧确认。",
+        "runtime_signal_mode": "platform_breakout",
+        "fields": mode_fields(
+            BASE_STOCK_POOL_FIELDS
+            + [
+                "platform_lookback_days",
+                "platform_range_basis",
+                "platform_max_range_mode",
+                "platform_max_range",
+                "platform_min_bullish_ratio",
+                "platform_bullish_ratio_mode",
+                "platform_bullish_ratio_score",
+                "platform_bull_volume_advantage",
+                "platform_bull_volume_advantage_mode",
+                "platform_bull_volume_advantage_score",
+                "platform_breakout_clearance_mode",
+                "platform_breakout_require_close_above",
+                "platform_breakout_clearance",
+                "platform_breakout_max_clearance",
+                "platform_breakout_max_clearance_mode",
+                "platform_breakout_first_mode",
+                "platform_breakout_volume_ratio",
+                "platform_breakout_volume_ratio_mode",
+                "platform_breakout_pct_chg_min",
+                "platform_breakout_pct_chg_mode",
+                "platform_breakout_bullish_mode",
+                "platform_body_strength_min",
+                "platform_body_strength_mode",
+                "macd_position",
+                "platform_ma_bullish_mode",
+                "platform_ma_rising_mode",
+                "platform_macd_filter_mode",
+            ]
+            + COMMON_STRENGTH_FIELDS
+        ),
         "rule_groups": [
             {
-                "id": "must",
-                "label": "必须满足",
-                "rules": [
-                    {
-                        "id": "platform_is_tight",
-                        "name": "平台足够收敛",
-                        "kind": "filter",
-                        "indicator_ids": ["platform_range"],
-                        "expression": "平台振幅 <= 策略设置上限",
-                        "effect": {"type": "filter", "value": "must"},
-                        "missing_policy": "skip",
-                        "editable": True,
-                    },
-                    {
-                        "id": "first_breakout",
-                        "name": "首次有效突破",
-                        "kind": "filter",
-                        "indicator_ids": ["platform_breakout_clearance"],
-                        "expression": "最新收盘价站上平台上沿，且不是已经远离平台的旧突破",
-                        "effect": {"type": "filter", "value": "must"},
-                        "missing_policy": "skip",
-                        "editable": True,
-                    },
-                ],
-            },
-            {
                 "id": "score",
-                "label": "加分确认",
+                "label": "组合条件",
                 "rules": [
                     {
                         "id": "volume_confirms_breakout",
                         "name": "放量确认突破",
                         "kind": "interaction",
                         "indicator_ids": ["platform_breakout_clearance", "volume_ratio"],
-                        "expression": "突破上沿距离达标，并且量比 >= 设定阈值",
+                        "expression": "突破上沿距离达标，并且量比达到设定阈值",
                         "effect": {"type": "score", "value": 18},
-                        "missing_policy": "neutral",
-                        "editable": True,
-                    }
-                ],
-            },
-        ],
-    },
-    {
-        "id": "theme_resonance_breakout",
-        "name": "题材共振突破",
-        "base_signal_mode": "platform_breakout",
-        "description": "平台突破叠加题材热度与量能确认，优先找站在活跃主线里的突破。",
-        "note": "等题材热度接入分析后，这个模板会成为 A 股特色主线策略。",
-        "rule_groups": [
-            {
-                "id": "base",
-                "label": "形态底座",
-                "rules": [
-                    {
-                        "id": "platform_breakout_base",
-                        "name": "平台突破底座",
-                        "kind": "filter",
-                        "indicator_ids": ["platform_range", "platform_breakout_clearance"],
-                        "expression": "平台收敛，并且最新价有效突破平台上沿",
-                        "effect": {"type": "filter", "value": "must"},
-                        "missing_policy": "skip",
-                        "editable": True,
-                    }
-                ],
-            },
-            {
-                "id": "interaction",
-                "label": "联动因子",
-                "rules": [
-                    {
-                        "id": "theme_volume_breakout",
-                        "name": "题材放量共振",
-                        "kind": "interaction",
-                        "indicator_ids": ["platform_breakout_clearance", "volume_ratio", "topic_heat"],
-                        "expression": "突破上沿达标，并且量比放大，并且题材热度 >= 70",
-                        "effect": {"type": "score", "value": 22},
-                        "missing_policy": "neutral",
-                        "editable": True,
-                    },
-                    {
-                        "id": "theme_limit_boost",
-                        "name": "同题材涨停助攻",
-                        "kind": "interaction",
-                        "indicator_ids": ["topic_heat", "theme_limit_count"],
-                        "expression": "题材热度升温，且同题材存在涨停成分股",
-                        "effect": {"type": "score", "value": 12},
-                        "missing_policy": "neutral",
-                        "editable": True,
-                    },
-                ],
-            },
-            {
-                "id": "risk",
-                "label": "风险扣分",
-                "rules": [
-                    {
-                        "id": "breakout_overheat",
-                        "name": "突破过热扣分",
-                        "kind": "interaction",
-                        "indicator_ids": ["overheat_risk", "turnover_rate"],
-                        "expression": "近 5/10 日涨幅偏高，或换手率进入过热区间",
-                        "effect": {"type": "risk", "value": -12},
-                        "missing_policy": "neutral",
-                        "editable": True,
-                    }
-                ],
-            },
-        ],
-    },
-    {
-        "id": "capital_return_setup",
-        "name": "资金回流平台",
-        "base_signal_mode": "platform_setup",
-        "description": "平台临界叠加主力资金回流，寻找还没突破但已经有资金试探的标的。",
-        "note": "偏观察池和盘中雷达，适合提前盯临界位。",
-        "rule_groups": [
-            {
-                "id": "interaction",
-                "label": "联动因子",
-                "rules": [
-                    {
-                        "id": "setup_capital_return",
-                        "name": "缩量平台后资金回流",
-                        "kind": "interaction",
-                        "indicator_ids": ["platform_setup_distance_to_high", "volume_ratio", "main_net_amount"],
-                        "expression": "距离平台上沿足够近，量能温和恢复，主力净额转正",
-                        "effect": {"type": "score", "value": 20},
                         "missing_policy": "neutral",
                         "editable": True,
                     }
@@ -441,15 +396,62 @@ SIGNAL_MODE_TEMPLATES: List[Dict[str, Any]] = [
         ],
     },
     {
-        "id": "low_resistance_trend",
-        "name": "低阻力趋势",
-        "base_signal_mode": "trend_resonance",
-        "description": "趋势共振叠加筹码胜率与成本位置，寻找上方压力较轻的趋势股。",
-        "note": "适合中短线趋势观察，不追求涨停事件。",
+        "id": "platform_setup",
+        "name": "平台临界",
+        "description": "还没突破但贴近平台上沿，适合提前放入观察。",
+        "note": "适合观察池和盘中雷达。",
+        "runtime_signal_mode": "platform_setup",
+        "fields": mode_fields(
+            BASE_STOCK_POOL_FIELDS
+            + [
+                "platform_setup_lookback_days",
+                "platform_setup_max_range",
+                "platform_setup_max_distance_to_high",
+                "platform_setup_max_recent_gain_5d",
+                "platform_setup_volume_contraction_max",
+                "platform_setup_bull_volume_advantage",
+                "platform_setup_ma_convergence_max",
+                "platform_setup_require_ma_turning",
+                "platform_setup_macd_mode",
+            ]
+            + [field for field in COMMON_STRENGTH_FIELDS if field != "volume_ratio_min"]
+        ),
+        "rule_groups": [],
+    },
+    {
+        "id": "trend_resonance",
+        "name": "趋势共振",
+        "description": "EMA、MACD 和随机指标共同确认趋势强度。",
+        "note": "适合中短线趋势观察。",
+        "runtime_signal_mode": "trend_resonance",
+        "fields": mode_fields(
+            BASE_STOCK_POOL_FIELDS
+            + [
+                "trend_ema_fast_window",
+                "trend_ema_mid_window",
+                "trend_ema_long_window",
+                "trend_entry_signal",
+                "trend_require_price_above_ema_long",
+                "trend_require_ema_long_rising",
+                "trend_require_ema_fast_above_mid",
+                "trend_macd_fast",
+                "trend_macd_slow",
+                "trend_macd_signal",
+                "trend_macd_mode",
+                "trend_stoch_window",
+                "trend_stoch_k_smooth",
+                "trend_stoch_d_smooth",
+                "trend_stoch_mode",
+                "trend_max_ema_mid_distance",
+                "trend_max_recent_gain_10d",
+                "trend_stoch_overheat",
+            ]
+            + COMMON_STRENGTH_FIELDS
+        ),
         "rule_groups": [
             {
                 "id": "score",
-                "label": "加分确认",
+                "label": "组合条件",
                 "rules": [
                     {
                         "id": "trend_low_resistance",
@@ -465,27 +467,117 @@ SIGNAL_MODE_TEMPLATES: List[Dict[str, Any]] = [
             }
         ],
     },
+    {
+        "id": "theme_resonance_breakout",
+        "name": "题材共振突破",
+        "description": "平台突破叠加题材热度与量能确认。",
+        "note": "偏 A 股主线题材的突破确认。",
+        "runtime_signal_mode": "platform_breakout",
+        "fields": mode_fields(BASE_STOCK_POOL_FIELDS + ["platform_breakout_clearance", "platform_breakout_volume_ratio", "topic_heat", "theme_limit_count", "max_turnover", "candidate_limit", "sort_by"]),
+        "rule_groups": [
+            {
+                "id": "interaction",
+                "label": "组合条件",
+                "rules": [
+                    {
+                        "id": "theme_volume_breakout",
+                        "name": "题材放量共振",
+                        "kind": "interaction",
+                        "indicator_ids": ["platform_breakout_clearance", "volume_ratio", "topic_heat"],
+                        "expression": "突破上沿达标，并且量比放大，并且题材热度达到阈值",
+                        "effect": {"type": "score", "value": 22},
+                        "missing_policy": "neutral",
+                        "editable": True,
+                    }
+                ],
+            }
+        ],
+    },
 ]
 
 
-def indicator_library() -> Dict[str, Any]:
+def blank_signal_mode(name: str = "新信号模式") -> Dict[str, Any]:
+    return {
+        "id": "",
+        "name": name.strip() or "新信号模式",
+        "description": "从基础股票池开始，自行添加需要的指标和组合条件。",
+        "note": "",
+        "runtime_signal_mode": "breakout_or_pullback",
+        "fields": mode_fields(BASE_STOCK_POOL_FIELDS),
+        "rule_groups": [],
+    }
+
+
+def normalize_signal_mode(mode: Dict[str, Any]) -> Dict[str, Any]:
+    indicator_ids = {indicator["id"] for indicator in INDICATORS}
+    normalized = deepcopy(mode)
+    normalized["name"] = str(normalized.get("name") or "新信号模式").strip() or "新信号模式"
+    normalized["description"] = str(normalized.get("description") or "")
+    normalized["note"] = str(normalized.get("note") or "")
+    normalized["runtime_signal_mode"] = normalized.get("runtime_signal_mode") or "breakout_or_pullback"
+    fields = []
+    seen = set()
+    for field in normalized.get("fields") or []:
+        indicator_id = field.get("indicator_id")
+        if indicator_id not in indicator_ids or indicator_id in seen:
+            continue
+        seen.add(indicator_id)
+        indicator = INDICATOR_BY_ID[indicator_id]
+        fields.append(
+            {
+                "indicator_id": indicator_id,
+                "role": field.get("role") or indicator.get("default_role") or "filter",
+                "group_id": field.get("group_id") or indicator["group_id"],
+                "group_label": field.get("group_label") or indicator["group_label"],
+            }
+        )
+    normalized["fields"] = fields or mode_fields(BASE_STOCK_POOL_FIELDS)
+    rule_groups = []
+    for group in normalized.get("rule_groups") or []:
+        rules = []
+        for rule in group.get("rules") or []:
+            rule_indicator_ids = [indicator_id for indicator_id in rule.get("indicator_ids", []) if indicator_id in indicator_ids]
+            if not rule_indicator_ids:
+                continue
+            rules.append(
+                {
+                    "id": str(rule.get("id") or f"rule-{len(rules) + 1}"),
+                    "name": str(rule.get("name") or "组合条件"),
+                    "kind": rule.get("kind") if rule.get("kind") in {"filter", "score", "risk", "interaction"} else "interaction",
+                    "indicator_ids": rule_indicator_ids,
+                    "expression": str(rule.get("expression") or ""),
+                    "effect": rule.get("effect") or {"type": "score", "value": 0},
+                    "missing_policy": rule.get("missing_policy") or "neutral",
+                    "editable": bool(rule.get("editable", True)),
+                }
+            )
+        if rules:
+            rule_groups.append({"id": str(group.get("id") or f"group-{len(rule_groups) + 1}"), "label": str(group.get("label") or "组合条件"), "rules": rules})
+    normalized["rule_groups"] = rule_groups
+    normalized.pop("base_signal_mode", None)
+    return normalized
+
+
+def indicator_library(signal_modes: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     indicators = deepcopy(INDICATORS)
     categories = deepcopy(INDICATOR_CATEGORIES)
-    signal_modes = deepcopy(SIGNAL_MODE_TEMPLATES)
+    modes = deepcopy(signal_modes if signal_modes is not None else DEFAULT_SIGNAL_MODES)
+    modes = [normalize_signal_mode(mode) for mode in modes]
     return {
         "categories": categories,
         "indicators": indicators,
-        "signal_modes": signal_modes,
+        "signal_modes": modes,
         "summary": {
             "category_count": len(categories),
             "indicator_count": len(indicators),
             "active_count": sum(1 for item in indicators if item["status"] == "active"),
             "available_count": sum(1 for item in indicators if item["status"] == "available"),
             "planned_count": sum(1 for item in indicators if item["status"] == "planned"),
-            "signal_mode_count": len(signal_modes),
+            "strategy_param_count": sum(1 for item in indicators if item.get("kind") == "strategy_param"),
+            "signal_mode_count": len(modes),
             "interaction_rule_count": sum(
                 1
-                for template in signal_modes
+                for template in modes
                 for group in template["rule_groups"]
                 for rule in group["rules"]
                 if rule["kind"] == "interaction"

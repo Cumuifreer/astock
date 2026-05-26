@@ -43,6 +43,7 @@ export interface IndicatorDefinition {
   id: string;
   name: string;
   category_id: string;
+  kind: 'data' | 'strategy_param';
   status: 'active' | 'available' | 'planned';
   source: string;
   formula: string;
@@ -50,6 +51,20 @@ export interface IndicatorDefinition {
   usage: string[];
   default_missing_policy: string;
   analysis_ready: boolean;
+  strategy_key?: keyof StrategyConfig | string;
+  control: IndicatorControl;
+  group_id: string;
+  group_label: string;
+}
+
+export interface IndicatorControl {
+  type: 'readonly' | 'number' | 'money' | 'select' | 'boolean';
+  unit?: string;
+  allow_blank?: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: Array<{ value: string; label: string }>;
 }
 
 export interface IndicatorRule {
@@ -66,14 +81,22 @@ export interface IndicatorRule {
 export interface SignalModeTemplate {
   id: string;
   name: string;
-  base_signal_mode: string;
   description: string;
   note: string;
+  runtime_signal_mode?: string;
+  fields: SignalModeField[];
   rule_groups: Array<{
     id: string;
     label: string;
     rules: IndicatorRule[];
   }>;
+}
+
+export interface SignalModeField {
+  indicator_id: string;
+  role: 'filter' | 'score' | 'risk' | 'display' | string;
+  group_id: string;
+  group_label: string;
 }
 
 export interface IndicatorLibrary {
@@ -86,6 +109,7 @@ export interface IndicatorLibrary {
     active_count: number;
     available_count: number;
     planned_count: number;
+    strategy_param_count: number;
     signal_mode_count: number;
     interaction_rule_count: number;
   };

@@ -12,6 +12,7 @@ from backend.app.services.backtest_service import BacktestService
 from backend.app.services.data_service import DataService
 from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.indicator_registry import indicator_library
+from backend.app.services.signal_mode_service import SignalModeService
 from backend.app.services.strategy_service import StrategyService
 from backend.app.services.update_service import TaskBusy, UpdateService
 from backend.app.services.watchlist_service import WatchlistService
@@ -23,12 +24,14 @@ db = get_database()
 migrate(db)
 data_service = DataService(db)
 strategy_service = StrategyService(db)
+signal_mode_service = SignalModeService(db)
 analysis_service = AnalysisService(db)
 update_service = UpdateService(db)
 backtest_service = BacktestService(db, analysis_service)
 intraday_service = IntradayRadarService(db)
 watchlist_service = WatchlistService(db)
 update_service.configure_runners(analysis_service, backtest_service)
+signal_mode_service.ensure_seeded()
 update_service.recover_interrupted_tasks()
 update_service.kick_queue()
 
@@ -48,7 +51,7 @@ def bootstrap() -> Dict[str, Any]:
     return {
         "overview": data_service.overview(),
         "capabilities": data_service.capabilities(),
-        "indicator_library": indicator_library(),
+        "indicator_library": indicator_library(signal_mode_service.list_modes()),
         "strategies": strategy_service.list_presets(),
         "default_strategy": strategy_service.default_config(),
         "update_status": data_service.latest_task("update"),
@@ -84,7 +87,39 @@ def data_capabilities() -> Dict[str, Any]:
 
 @router.get("/indicators")
 def indicators() -> Dict[str, Any]:
-    return indicator_library()
+    return indicator_library(signal_mode_service.list_modes())
+
+
+@router.get("/signal-modes")
+def signal_modes() -> Dict[str, Any]:
+    return {"rows": signal_mode_service.list_modes()}
+
+
+@router.post("/signal-modes")
+def save_signal_mode(payload: Dict[str, Any]) -> Dict[str, Any]:
+    mode = payload.get("mode") if isinstance(payload, dict) and "mode" in payload else payload
+    return {"mode": signal_mode_service.save_mode(mode or {})}
+
+
+@router.post("/signal-modes/new")
+def create_signal_mode(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    name = (payload or {}).get("name") or "新信号模式"
+    return {"mode": signal_mode_service.create_mode(str(name))}
+
+
+@router.post("/signal-modes/{mode_id}/duplicate")
+def duplicate_signal_mode(mode_id: str) -> Dict[str, Any]:
+    mode = signal_mode_service.duplicate_mode(mode_id)
+    if not mode:
+        raise HTTPException(status_code=404, detail="信号模式不存在。")
+    return {"mode": mode}
+
+
+@router.delete("/signal-modes/{mode_id}")
+def delete_signal_mode(mode_id: str) -> Dict[str, Any]:
+    if not signal_mode_service.delete_mode(mode_id):
+        raise HTTPException(status_code=404, detail="信号模式不存在。")
+    return {"ok": True}
 
 
 @router.post("/data/probe")

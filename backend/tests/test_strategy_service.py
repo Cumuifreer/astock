@@ -208,9 +208,14 @@ def test_save_preset_preserves_signal_profile_rules(tmp_path):
     profile = {
         "id": "theme_resonance_breakout",
         "name": "题材共振突破",
-        "base_signal_mode": "platform_breakout",
         "description": "平台突破叠加题材和量能。",
         "note": "可编辑组合规则。",
+        "runtime_signal_mode": "platform_breakout",
+        "fields": [
+            {"indicator_id": "min_price", "role": "filter"},
+            {"indicator_id": "platform_breakout_clearance", "role": "filter"},
+            {"indicator_id": "topic_heat", "role": "score"},
+        ],
         "rule_groups": [
             {
                 "id": "interactions",
@@ -240,6 +245,7 @@ def test_save_preset_preserves_signal_profile_rules(tmp_path):
     assert saved is not None
     saved_profile = saved["config"]["signal_profile"]
     assert saved_profile["id"] == "theme_resonance_breakout"
+    assert "base_signal_mode" not in saved_profile
     assert saved_profile["rule_groups"][0]["rules"][0]["kind"] == "interaction"
     assert saved_profile["rule_groups"][0]["rules"][0]["editable"] is True
 
