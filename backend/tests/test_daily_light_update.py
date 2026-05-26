@@ -120,10 +120,14 @@ def test_history_update_prefers_tushare_batch_and_refreshes_qfq_window(tmp_path,
     db.upsert("stock_basic", [_stock("000001.SZ"), _stock("600000.SH")], ["code"])
 
     class FakeTushareHistorySource:
-        def fetch_history_bars(self, start, end, codes=None):
-            assert start == date(2026, 1, 1)
+        def fetch_history_reference_factors(self, end, codes=None):
             assert end == date(2026, 5, 22)
             assert codes == ["000001.SZ", "600000.SH"]
+            return {"000001.SZ": 2.0, "600000.SH": 1.0}, "2026-05-22"
+
+        def fetch_history_day(self, day, reference_factors, codes=None, progress=None):
+            if day != date(2026, 5, 22):
+                return pd.DataFrame()
             return pd.DataFrame(
                 [
                     {
@@ -186,3 +190,172 @@ def test_history_update_prefers_tushare_batch_and_refreshes_qfq_window(tmp_path,
     assert [row["code"] for row in rows] == ["000001.SZ", "600000.SH"]
     assert rows[0]["open"] == 5.0
     assert rows[0]["source"] == "Tushare daily 前复权"
+
+
+def test_tushare_history_streams_each_day_to_db_and_task_heartbeat(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ"), _stock("600000.SH")], ["code"])
+    service = UpdateService(db)
+    service._write_task("task-stream", kind="update", status="running", stage="轻量补齐历史 K 线")
+
+    class FakeStreamingTushareSource:
+        def fetch_history_reference_factors(self, end, codes=None):
+            assert end == date(2026, 5, 22)
+            assert codes == ["000001.SZ", "600000.SH"]
+            return {"000001.SZ": 2.0, "600000.SH": 1.0}, "2026-05-22"
+
+        def fetch_history_day(self, day, reference_factors, codes=None, progress=None):
+            assert reference_factors == {"000001.SZ": 2.0, "600000.SH": 1.0}
+            assert codes == ["000001.SZ", "600000.SH"]
+            if progress:
+                progress("daily")
+                progress("adj_factor")
+                progress("daily_basic")
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "000001.SZ",
+                        "date": day.isoformat(),
+                        "open": 5.0,
+                        "high": 6.0,
+                        "low": 4.5,
+                        "close": 5.5,
+                        "prev_close": 4.5,
+                        "volume": 100_000.0,
+                        "amount": 1_200_000.0,
+                        "turn": 2.5,
+                        "pct_chg": 22.22,
+                        "tradestatus": "1",
+                        "is_st": None,
+                        "source": "Tushare daily 前复权",
+                        "updated_at": "2026-05-22T18:30:00",
+                    }
+                ]
+            )
+
+    monkeypatch.setattr(update_module, "TushareEnrichmentSource", FakeStreamingTushareSource)
+
+    success, failed, skipped = service._update_tushare_history(
+        [{"code": "000001.SZ"}, {"code": "600000.SH"}],
+        date(2026, 5, 21),
+        date(2026, 5, 22),
+        "task-stream",
+    )
+
+    rows = db.query("SELECT code, date FROM historical_bars ORDER BY date, code")
+    task = db.query("SELECT * FROM task_runs WHERE id = 'task-stream'")[0]
+    summary = update_module.json.loads(task["summary_json"])
+    progress = summary["history_progress"]
+    assert (success, failed, skipped) == (1, 0, 1)
+    assert [row["date"].isoformat() for row in rows] == ["2026-05-21", "2026-05-22"]
+    assert task["processed"] == 2
+    assert task["total"] == 2
+    assert progress["mode"] == "streaming"
+    assert progress["current_date"] == "2026-05-22"
+    assert progress["step"] == "完成"
+    assert progress["written_rows"] == 2
+    assert progress["reference_date"] == "2026-05-22"
+
+
+def test_tushare_history_stream_keeps_written_days_when_later_day_fails(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ")], ["code"])
+    service = UpdateService(db)
+    service._write_task("task-fail", kind="update", status="running", stage="轻量补齐历史 K 线")
+
+    class PartlyFailingTushareSource:
+        def fetch_history_reference_factors(self, end, codes=None):
+            return {"000001.SZ": 2.0}, "2026-05-22"
+
+        def fetch_history_day(self, day, reference_factors, codes=None, progress=None):
+            if day == date(2026, 5, 22):
+                raise RuntimeError("Tushare timeout")
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "000001.SZ",
+                        "date": day.isoformat(),
+                        "open": 5.0,
+                        "high": 6.0,
+                        "low": 4.5,
+                        "close": 5.5,
+                        "prev_close": 4.5,
+                        "volume": 100_000.0,
+                        "amount": 1_200_000.0,
+                        "turn": 2.5,
+                        "pct_chg": 22.22,
+                        "tradestatus": "1",
+                        "is_st": None,
+                        "source": "Tushare daily 前复权",
+                        "updated_at": "2026-05-21T18:30:00",
+                    }
+                ]
+            )
+
+    monkeypatch.setattr(update_module, "TushareEnrichmentSource", PartlyFailingTushareSource)
+
+    try:
+        service._update_tushare_history(
+            [{"code": "000001.SZ"}],
+            date(2026, 5, 21),
+            date(2026, 5, 22),
+            "task-fail",
+        )
+    except RuntimeError:
+        pass
+
+    rows = db.query("SELECT code, date FROM historical_bars")
+    assert [(row["code"], row["date"].isoformat()) for row in rows] == [("000001.SZ", "2026-05-21")]
+
+
+def test_tushare_history_counts_latest_weekday_when_end_is_weekend(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ")], ["code"])
+    service = UpdateService(db)
+    service._write_task("task-weekend", kind="update", status="running", stage="轻量补齐历史 K 线")
+
+    class WeekendTushareSource:
+        def fetch_history_reference_factors(self, end, codes=None):
+            assert end == date(2026, 5, 24)
+            return {"000001.SZ": 2.0}, "2026-05-22"
+
+        def fetch_history_day(self, day, reference_factors, codes=None, progress=None):
+            assert day == date(2026, 5, 22)
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "000001.SZ",
+                        "date": day.isoformat(),
+                        "open": 5.0,
+                        "high": 6.0,
+                        "low": 4.5,
+                        "close": 5.5,
+                        "prev_close": 4.5,
+                        "volume": 100_000.0,
+                        "amount": 1_200_000.0,
+                        "turn": 2.5,
+                        "pct_chg": 22.22,
+                        "tradestatus": "1",
+                        "is_st": None,
+                        "source": "Tushare daily 前复权",
+                        "updated_at": "2026-05-22T18:30:00",
+                    }
+                ]
+            )
+
+    monkeypatch.setattr(update_module, "TushareEnrichmentSource", WeekendTushareSource)
+
+    success, failed, skipped = service._update_tushare_history(
+        [{"code": "000001.SZ"}],
+        date(2026, 5, 22),
+        date(2026, 5, 24),
+        "task-weekend",
+    )
+
+    task = db.query("SELECT * FROM task_runs WHERE id = 'task-weekend'")[0]
+    summary = update_module.json.loads(task["summary_json"])
+    assert (success, failed, skipped) == (1, 0, 0)
+    assert summary["history_progress"]["current_date"] == "2026-05-22"

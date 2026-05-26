@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 import uuid
@@ -25,6 +26,7 @@ from backend.app.sources.tushare_source import TushareEnrichmentSource, TushareR
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 HISTORY_CLOSE_HOUR = 16
+logger = logging.getLogger(__name__)
 TUSHARE_TABLE_COLUMNS: Dict[str, List[str]] = {
     "tushare_daily_basic": [
         "code",
@@ -1605,48 +1607,157 @@ class UpdateService:
             return 0, 0, 0
 
         source = TushareEnrichmentSource()
-        frame = SourceGuard._call_with_timeout(
-            lambda: source.fetch_history_bars(start, end, codes=codes),
-            settings.tushare_history_timeout_seconds,
+        history_days = [day for day in _date_span(start, end) if day.weekday() < 5]
+        day_total = len(history_days)
+        if not history_days:
+            return 0, 0, total
+        latest_history_day = history_days[-1]
+
+        self._patch_tushare_history_progress(
+            task_id,
+            day=history_days[0],
+            day_index=0,
+            day_total=day_total,
+            step="准备参考因子",
+            processed=0,
+            total_written_rows=0,
         )
-        if frame is None or frame.empty:
-            raise RuntimeError("Tushare 历史 K 线为空")
+        reference_factors, reference_date = source.fetch_history_reference_factors(end, codes=codes)
+        if not reference_factors:
+            raise RuntimeError("Tushare 历史 K 线参考复权因子为空")
 
         st_rows = self.db.query("SELECT code, is_st FROM stock_basic")
         is_st_by_code = {str(row["code"]): bool(row.get("is_st")) for row in st_rows}
-        rows = []
-        for item in frame.to_dict("records"):
-            row = dict(item)
-            code = str(row.get("code") or "")
-            if row.get("is_st") is None:
-                row["is_st"] = is_st_by_code.get(code, False)
-            rows.append(row)
+        total_written_rows = 0
+        skipped_days = 0
+        success_codes = set()
 
-        self.db.upsert("historical_bars", rows, ["code", "date"])
-        end_text = end.isoformat()
-        success_codes = {
-            str(row["code"])
-            for row in rows
-            if row.get("code") and str(row.get("date"))[:10] >= end_text
-        }
+        for day_index, day in enumerate(history_days, start=1):
+            def progress(step: str) -> None:
+                self._patch_tushare_history_progress(
+                    task_id,
+                    day=day,
+                    day_index=day_index,
+                    day_total=day_total,
+                    step=step,
+                    processed=day_index - 1,
+                    total_written_rows=total_written_rows,
+                    reference_date=reference_date,
+                )
+
+            frame = source.fetch_history_day(day, reference_factors, codes=codes, progress=progress)
+            if frame is None or frame.empty:
+                skipped_days += 1
+                self._patch_tushare_history_progress(
+                    task_id,
+                    day=day,
+                    day_index=day_index,
+                    day_total=day_total,
+                    step="空日",
+                    processed=day_index,
+                    total_written_rows=total_written_rows,
+                    reference_date=reference_date,
+                )
+                continue
+
+            rows = []
+            for item in frame.to_dict("records"):
+                row = dict(item)
+                code = str(row.get("code") or "")
+                if row.get("is_st") is None:
+                    row["is_st"] = is_st_by_code.get(code, False)
+                rows.append(row)
+
+            self.db.upsert("historical_bars", rows, ["code", "date"])
+            total_written_rows += len(rows)
+            if day == latest_history_day:
+                success_codes.update(str(row["code"]) for row in rows if row.get("code"))
+
+            if day_index % 10 == 0 or day == latest_history_day:
+                logger.info(
+                    "Tushare history qfq progress %s/%s date=%s wrote=%s total_rows=%s",
+                    day_index,
+                    day_total,
+                    day.isoformat(),
+                    len(rows),
+                    total_written_rows,
+                )
+
+            self._patch_tushare_history_progress(
+                task_id,
+                day=day,
+                day_index=day_index,
+                day_total=day_total,
+                step="写入",
+                processed=day_index,
+                total_written_rows=total_written_rows,
+                reference_date=reference_date,
+            )
+
         success = len(success_codes)
         skipped = max(0, total - success)
         self.public_guard.record(
             "Tushare daily 前复权",
             "历史 K 线",
             "available",
-            payload={"success": success, "skipped": skipped, "rows": len(rows)},
+            payload={
+                "success": success,
+                "skipped": skipped,
+                "skipped_days": skipped_days,
+                "rows": total_written_rows,
+                "reference_date": reference_date,
+            },
         )
-        self._patch_task(
+        self._patch_tushare_history_progress(
             task_id,
-            current_stock="Tushare 批量前复权",
-            total=total,
-            processed=total,
+            day=latest_history_day,
+            day_index=day_total,
+            day_total=day_total,
+            step="完成",
+            processed=day_total,
+            total_written_rows=total_written_rows,
+            reference_date=reference_date,
             success=success,
-            failed=0,
             skipped=skipped,
         )
         return success, 0, skipped
+
+    def _patch_tushare_history_progress(
+        self,
+        task_id: str,
+        day: date,
+        day_index: int,
+        day_total: int,
+        step: str,
+        processed: int,
+        total_written_rows: int,
+        reference_date: Optional[str] = None,
+        success: int = 0,
+        skipped: int = 0,
+    ) -> None:
+        summary = {
+            "history_progress": {
+                "mode": "streaming",
+                "current_date": day.isoformat(),
+                "step": step,
+                "day_index": day_index,
+                "day_total": day_total,
+                "written_rows": total_written_rows,
+                "reference_date": reference_date,
+                "last_heartbeat_at": datetime.utcnow().isoformat(timespec="seconds"),
+            }
+        }
+        self._patch_task(
+            task_id,
+            source="Tushare daily 前复权",
+            current_stock=f"{day.isoformat()} · {step}",
+            total=day_total,
+            processed=processed,
+            success=success,
+            failed=0,
+            skipped=skipped,
+            summary=summary,
+        )
 
     @staticmethod
     def _target_history_date(now: Optional[datetime] = None) -> date:
@@ -1841,3 +1952,12 @@ def _parse_sample_at(value: Any) -> Optional[datetime]:
     if parsed.tzinfo is not None:
         return parsed.astimezone(CHINA_TZ).replace(tzinfo=None)
     return parsed
+
+
+def _date_span(start: date, end: date) -> List[date]:
+    days = []
+    current = start
+    while current <= end:
+        days.append(current)
+        current += timedelta(days=1)
+    return days

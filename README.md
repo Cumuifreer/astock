@@ -70,7 +70,7 @@ export ASHARE_INTRADAY_RETENTION_DAYS=0
 
 轻量日更补齐历史 K 线后，会按 `ASHARE_INTRADAY_RETENTION_DAYS` 清理已落入历史 K 线的旧盘中快照和盘中排名。设为 `0` 会清掉所有符合条件的历史盘中行，设为负数会关闭清理。
 
-Tushare 历史 K 线会在轻量日更时刷新最近 `ASHARE_HISTORY_DAYS` 天的前复权窗口，用最新 `adj_factor` 重新写入近期 OHLC，避免除权后只补当天导致历史口径漂移。
+Tushare 历史 K 线会在轻量日更时刷新最近 `ASHARE_HISTORY_DAYS` 天的前复权窗口，用最新 `adj_factor` 重新写入近期 OHLC，避免除权后只补当天导致历史口径漂移。刷新过程按交易日流式写入 DuckDB，并在状态页显示当前日期、接口步骤、已写入行数和心跳时间；服务中途重启时，已经写入的日期会保留。
 
 轻量/完整更新会在历史 K 线后接入 Tushare 增强数据：`daily_basic`、`stk_factor`、`moneyflow`、`limit_list_d`、`cyq_perf`、`cyq_chips`、`ths_member`、`top_list`、`top_inst`、`hm_detail`。其中 `daily_basic` 会直接写入流通市值缓存；筹码和同花顺成分会按 `ASHARE_TUSHARE_ENRICHMENT_CODE_LIMIT` 分批补齐。
 

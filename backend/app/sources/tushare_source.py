@@ -222,77 +222,106 @@ class TushareEnrichmentSource:
         if start > end:
             return pd.DataFrame()
 
-        requested = set(codes or [])
-        daily_rows: List[Dict[str, Any]] = []
-        factors: Dict[tuple[str, str], float] = {}
-        latest_factor_by_code: Dict[str, float] = {}
-        turns: Dict[tuple[str, str], Optional[float]] = {}
+        reference_factors, _ = self.fetch_history_reference_factors(end, codes=codes)
+        frames = [
+            self.fetch_history_day(day, reference_factors, codes=codes)
+            for day in _date_span(start, end)
+            if day.weekday() < 5
+        ]
+        frames = [frame for frame in frames if frame is not None and not frame.empty]
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-        for day in _date_span(start, end):
+    def fetch_history_reference_factors(
+        self,
+        end_date: Any,
+        codes: Optional[List[str]] = None,
+        max_lookback_days: int = 15,
+    ) -> tuple[Dict[str, float], str]:
+        end = _date_from_arg(end_date)
+        requested = set(codes or [])
+        for offset in range(max_lookback_days + 1):
+            day = end - timedelta(days=offset)
             if day.weekday() >= 5:
                 continue
             trade_date = _trade_date_arg(day)
-            daily_frame = self._call_api("daily", trade_date=trade_date, fields=self.HISTORY_DAILY_FIELDS)
-            self._sleep_between_codes()
-            day_daily_rows = _records(daily_frame)
-            if not day_daily_rows:
-                continue
-
             factor_frame = self._call_api("adj_factor", trade_date=trade_date, fields=self.ADJ_FACTOR_FIELDS)
             self._sleep_between_codes()
-            try:
-                basic_frame = self._call_api(
-                    "daily_basic",
-                    trade_date=trade_date,
-                    fields=self.HISTORY_DAILY_BASIC_FIELDS,
-                )
-            except Exception:
-                basic_frame = pd.DataFrame()
-            self._sleep_between_codes()
+            factors = _factor_map(factor_frame, requested)
+            if factors:
+                return factors, day.isoformat()
+        raise SourceUnavailable("Tushare adj_factor 为空，无法确定前复权参考因子。")
 
-            for item in _records(factor_frame):
-                code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE"]), include_bj=True)
-                trade_day = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
-                factor = safe_float(first_present(item, ["adj_factor", "ADJ_FACTOR"]))
-                if not code or not trade_day or factor is None:
-                    continue
-                if requested and code not in requested:
-                    continue
-                factors[(code, trade_day)] = factor
-                latest_factor_by_code[code] = factor
+    def fetch_history_day(
+        self,
+        day: Any,
+        reference_factors: Dict[str, float],
+        codes: Optional[List[str]] = None,
+        progress: Optional[Any] = None,
+    ) -> pd.DataFrame:
+        trade_day = _date_from_arg(day)
+        if trade_day.weekday() >= 5:
+            return pd.DataFrame()
 
-            for item in _records(basic_frame):
-                code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE"]), include_bj=True)
-                trade_day = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
-                if not code or not trade_day:
-                    continue
-                if requested and code not in requested:
-                    continue
-                turns[(code, trade_day)] = safe_float(first_present(item, ["turnover_rate", "TURNOVER_RATE"]))
+        requested = set(codes or [])
+        trade_date = _trade_date_arg(trade_day)
+        if progress:
+            progress("daily")
+        daily_frame = self._call_api("daily", trade_date=trade_date, fields=self.HISTORY_DAILY_FIELDS)
+        self._sleep_between_codes()
+        day_daily_rows = _records(daily_frame)
+        if not day_daily_rows:
+            return pd.DataFrame()
 
-            for item in day_daily_rows:
-                code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE"]), include_bj=True)
-                trade_day = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
-                if not code or not trade_day:
-                    continue
-                if requested and code not in requested:
-                    continue
-                daily_rows.append({"code": code, "date": trade_day, "raw": item})
+        if progress:
+            progress("adj_factor")
+        factor_frame = self._call_api("adj_factor", trade_date=trade_date, fields=self.ADJ_FACTOR_FIELDS)
+        self._sleep_between_codes()
+        factors = _factor_map(factor_frame, requested)
 
+        if progress:
+            progress("daily_basic")
+        try:
+            basic_frame = self._call_api(
+                "daily_basic",
+                trade_date=trade_date,
+                fields=self.HISTORY_DAILY_BASIC_FIELDS,
+            )
+        except Exception:
+            basic_frame = pd.DataFrame()
+        self._sleep_between_codes()
+        turns: Dict[tuple[str, str], Optional[float]] = {}
+        for item in _records(basic_frame):
+            code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE"]), include_bj=True)
+            item_day = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
+            if not code or not item_day:
+                continue
+            if requested and code not in requested:
+                continue
+            turns[(code, item_day)] = safe_float(first_present(item, ["turnover_rate", "TURNOVER_RATE"]))
+
+        normalized_daily_rows = []
+        for item in day_daily_rows:
+            code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE"]), include_bj=True)
+            item_day = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
+            if not code or not item_day:
+                continue
+            if requested and code not in requested:
+                continue
+            normalized_daily_rows.append({"code": code, "date": item_day, "raw": item})
         rows: List[Dict[str, Any]] = []
-        for item in daily_rows:
+        for item in normalized_daily_rows:
             code = item["code"]
-            trade_day = item["date"]
+            item_day = item["date"]
             raw = item["raw"]
-            factor = factors.get((code, trade_day))
-            latest_factor = latest_factor_by_code.get(code)
+            factor = factors.get(code)
+            latest_factor = reference_factors.get(code)
             if factor is None or latest_factor in (None, 0):
                 continue
             scale = factor / latest_factor
             rows.append(
                 {
                     "code": code,
-                    "date": trade_day,
+                    "date": item_day,
                     "open": _scaled_float(first_present(raw, ["open", "OPEN"]), scale),
                     "high": _scaled_float(first_present(raw, ["high", "HIGH"]), scale),
                     "low": _scaled_float(first_present(raw, ["low", "LOW"]), scale),
@@ -303,7 +332,7 @@ class TushareEnrichmentSource:
                         first_present(raw, ["amount", "AMOUNT"]),
                         amount_unit="thousand_yuan",
                     ),
-                    "turn": turns.get((code, trade_day)),
+                    "turn": turns.get((code, item_day)),
                     "pct_chg": safe_float(first_present(raw, ["pct_chg", "PCT_CHG"])),
                     "tradestatus": "1",
                     "is_st": None,
@@ -311,7 +340,7 @@ class TushareEnrichmentSource:
                     "updated_at": datetime.utcnow(),
                 }
             )
-        if daily_rows and not rows:
+        if normalized_daily_rows and not rows:
             raise SourceUnavailable("Tushare adj_factor 为空，无法生成前复权历史 K 线。")
         return _clean_frame(rows, required=["code", "date"])
 
@@ -699,6 +728,20 @@ def _base_dated_row(item: Dict[str, Any], source: str) -> Optional[Dict[str, Any
     if not code or not trade_date:
         return None
     return {"code": code, "trade_date": trade_date, "source": source, "updated_at": datetime.utcnow()}
+
+
+def _factor_map(frame: pd.DataFrame, requested: Optional[set[str]] = None) -> Dict[str, float]:
+    factors = {}
+    requested = requested or set()
+    for item in _records(frame):
+        code = normalize_a_share_code(first_present(item, ["ts_code", "TS_CODE"]), include_bj=True)
+        factor = safe_float(first_present(item, ["adj_factor", "ADJ_FACTOR"]))
+        if not code or factor is None:
+            continue
+        if requested and code not in requested:
+            continue
+        factors[code] = factor
+    return factors
 
 
 def _clean_frame(rows: List[Dict[str, Any]], required: List[str]) -> pd.DataFrame:

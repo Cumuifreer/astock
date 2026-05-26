@@ -2705,6 +2705,7 @@ function TaskDetail({ task }: { task: TaskRun | null }) {
   const visual = taskProgressVisual(task);
   const queued = task.status === 'queued';
   const analyzeRunning = task.kind === 'analyze' && task.status === 'running';
+  const historyProgress = taskHistoryProgress(task);
   const summaryStats = taskSummaryStats(task);
   return (
     <div className="task-detail">
@@ -2733,14 +2734,34 @@ function TaskDetail({ task }: { task: TaskRun | null }) {
           </>
         ) : (
           <>
-            <span>当前 <b>{task.current_stock || '-'}</b></span>
-            <span>进度 <b>{formatInt(task.processed)} / {formatInt(task.total)}</b></span>
+            <span>当前 <b>{historyProgress ? `${historyProgress.currentDate} · ${historyProgress.step}` : task.current_stock || '-'}</b></span>
+            <span>进度 <b>{historyProgress ? `${formatInt(historyProgress.dayIndex)} / ${formatInt(historyProgress.dayTotal)} 个日期` : `${formatInt(task.processed)} / ${formatInt(task.total)}`}</b></span>
             <span>成功 <b>{formatInt(task.success)}</b></span>
             <span>失败 <b>{formatInt(task.failed)}</b></span>
             <span>跳过 <b>{formatInt(task.skipped)}</b></span>
           </>
         )}
       </div>
+      {historyProgress && (
+        <div className={`history-heartbeat ${historyProgress.stale ? 'stale' : ''}`}>
+          <span>
+            <em>接口</em>
+            <b>{historyProgress.step}</b>
+          </span>
+          <span>
+            <em>参考日</em>
+            <b>{historyProgress.referenceDate || '-'}</b>
+          </span>
+          <span>
+            <em>已写入</em>
+            <b>{formatInt(historyProgress.writtenRows)} 行</b>
+          </span>
+          <span>
+            <em>心跳</em>
+            <b>{historyProgress.heartbeatLabel}</b>
+          </span>
+        </div>
+      )}
       {summaryStats.length > 0 && (
         <div className="task-stats">
           {summaryStats.map((item) => (
@@ -2752,6 +2773,36 @@ function TaskDetail({ task }: { task: TaskRun | null }) {
       {task.error_message && <InlineError text={task.error_message} />}
     </div>
   );
+}
+
+function taskHistoryProgress(task: TaskRun) {
+  if (task.kind !== 'update') return null;
+  const summary = task.summary || {};
+  const raw = asRecord(summary.history_progress);
+  if (!raw || raw.mode !== 'streaming') return null;
+  const dayIndex = nullableNumber(raw.day_index) ?? 0;
+  const dayTotal = nullableNumber(raw.day_total) ?? task.total ?? 0;
+  const writtenRows = nullableNumber(raw.written_rows) ?? 0;
+  const heartbeat = typeof raw.last_heartbeat_at === 'string' ? raw.last_heartbeat_at : '';
+  const heartbeatAgeMs = heartbeat ? Date.now() - parseBackendUtc(heartbeat).getTime() : Number.POSITIVE_INFINITY;
+  return {
+    currentDate: String(raw.current_date || '-'),
+    step: String(raw.step || '-'),
+    dayIndex,
+    dayTotal,
+    writtenRows,
+    referenceDate: typeof raw.reference_date === 'string' ? raw.reference_date : '',
+    heartbeatLabel: formatHeartbeatAge(heartbeatAgeMs),
+    stale: task.status === 'running' && heartbeatAgeMs > 45_000,
+  };
+}
+
+function formatHeartbeatAge(ageMs: number) {
+  if (!Number.isFinite(ageMs) || ageMs < 0) return '-';
+  const seconds = Math.round(ageMs / 1000);
+  if (seconds < 60) return `${seconds} 秒前`;
+  const minutes = Math.round(seconds / 60);
+  return `${minutes} 分钟前`;
 }
 
 function taskSummaryStats(task: TaskRun): Array<{ label: string; value: string }> {
