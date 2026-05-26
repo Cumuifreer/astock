@@ -714,7 +714,7 @@ function Warehouse() {
   const viewOptions = [
     { value: 'quote', label: '行情', sub: '价格 / 成交 / 换手' },
     { value: 'flow', label: '资金', sub: '主力 / 龙虎榜 / 量能' },
-    { value: 'structure', label: '结构', sub: '题材 / 筹码 / 事件' },
+    { value: 'structure', label: '结构', sub: '题材数 / 筹码 / 异动' },
   ] as const;
 
   async function load() {
@@ -816,11 +816,11 @@ function Warehouse() {
                 )}
                 {view === 'structure' && (
                   <>
-                    <th>题材</th>
+                    <th>题材数</th>
                     <th>筹码胜率</th>
                     <th>历史天数</th>
                     <th>最新 K 线</th>
-                    <th>事件</th>
+                    <th>异动</th>
                   </>
                 )}
               </tr>
@@ -923,6 +923,9 @@ function StockDetailPanel({
   const concepts = compactRecords(detail?.concepts);
   const limitEvents = compactRecords(detail?.limit_events);
   const topEvents = compactRecords(detail?.top_events);
+  const volumeRatio = daily?.volume_ratio ?? basic?.volume_ratio;
+  const volumeRatioSource = String(daily?.volume_ratio_source || basic?.volume_ratio_source || '');
+  const volumeRatioSub = ['换手 ' + formatPercent(daily?.turnover_rate ?? basic?.turnover_rate), volumeRatioSource].filter(Boolean).join(' · ');
 
   return (
     <section className="panel stock-profile">
@@ -941,7 +944,7 @@ function StockDetailPanel({
         <>
           <div className="profile-metrics">
             <MetricCard label="最新价" value={formatPrice(basic?.latest_price)} sub={formatPercent(basic?.pct_chg)} icon={<CandlestickChart size={18} />} />
-            <MetricCard label="量比" value={formatRatioX(daily?.volume_ratio)} sub={`换手 ${formatPercent(daily?.turnover_rate ?? basic?.turnover_rate)}`} icon={<Gauge size={18} />} />
+            <MetricCard label="量比" value={formatRatioX(volumeRatio)} sub={volumeRatioSub} icon={<Gauge size={18} />} />
             <MetricCard label="主力净额" value={formatMoney(moneyflow?.main_net_amount)} sub={`净流 ${formatMoney(moneyflow?.net_mf_amount)}`} icon={<Activity size={18} />} />
             <MetricCard label="筹码胜率" value={formatPercentRatio(cyq?.winner_rate)} sub={`中位成本 ${formatPrice(cyq?.cost_50pct)}`} icon={<Layers3 size={18} />} />
           </div>
@@ -952,9 +955,9 @@ function StockDetailPanel({
               ['RSI6', formatPrice(factor?.rsi_6)],
               ['BOLL', [formatPrice(factor?.boll_upper), formatPrice(factor?.boll_mid), formatPrice(factor?.boll_lower)].join(' / ')],
             ]} />
-            <ProfileBlock title="题材成分" rows={(concepts.length ? concepts.slice(0, 8).map((item) => [String(item?.con_name || '-'), String(item?.con_code || '')]) : [['暂无', '-']])} />
-            <ProfileBlock title="涨跌停" rows={(limitEvents.length ? limitEvents.slice(0, 5).map((item) => [formatDate(item?.trade_date), `${String(item?.limit_type || '-')} · ${formatInt(item?.open_times)} 次`]) : [['暂无', '-']])} />
-            <ProfileBlock title="龙虎榜" rows={(topEvents.length ? topEvents.slice(0, 5).map((item) => [formatDate(item?.trade_date), `${formatMoney(item?.net_amount)} · ${String(item?.reason || '-')}`]) : [['暂无', '-']])} />
+            <ProfileBlock title="题材成分" rows={conceptProfileRows(concepts)} />
+            <ProfileBlock title="涨跌停 / 炸板" rows={(limitEvents.length ? limitEvents.slice(0, 5).map((item) => [formatDate(item?.trade_date), `${limitTypeLabel(item?.limit_type)} · ${formatInt(item?.open_times)} 次`]) : [['普通交易日', '无涨跌停/炸板']])} />
+            <ProfileBlock title="龙虎榜" rows={(topEvents.length ? topEvents.slice(0, 5).map((item) => [formatDate(item?.trade_date), `${formatMoney(item?.net_amount)} · ${String(item?.reason || '-')}`]) : [['未上榜', '无龙虎榜记录']])} />
           </div>
         </>
       )}
@@ -962,18 +965,26 @@ function StockDetailPanel({
   );
 }
 
-function ProfileBlock({ title, rows }: { title: string; rows: Array<[string, string]> }) {
+function ProfileBlock({ title, rows }: { title: string; rows: Array<[ReactNode, ReactNode]> }) {
   return (
     <div className="profile-block">
       <h3>{title}</h3>
-      {rows.map(([label, value]) => (
-        <div key={`${title}-${label}-${value}`}>
+      {rows.map(([label, value], index) => (
+        <div key={`${title}-${index}`}>
           <span>{label}</span>
           <b>{value}</b>
         </div>
       ))}
     </div>
   );
+}
+
+function conceptProfileRows(concepts: Array<Record<string, unknown>>): Array<[ReactNode, ReactNode]> {
+  if (!concepts.length) return [['暂无成分', '-']];
+  return concepts.slice(0, 8).map((item) => [
+    String(item?.con_name || '-'),
+    <span className="profile-code">{String(item?.con_code || '板块代码')}</span>,
+  ]);
 }
 
 function StrategyPanel(props: {
@@ -3534,9 +3545,17 @@ function compactRecords(value: unknown): Array<Record<string, unknown>> {
 
 function warehouseEventLabel(row: Record<string, unknown>) {
   const pieces = [];
-  if (row.latest_limit_type) pieces.push(String(row.latest_limit_type));
-  if (nullableNumber(row.latest_top_net_amount) !== null) pieces.push(`榜 ${formatMoney(row.latest_top_net_amount)}`);
-  return pieces.length ? pieces.join(' · ') : '-';
+  if (row.latest_limit_type) pieces.push(limitTypeLabel(row.latest_limit_type));
+  if (nullableNumber(row.latest_top_net_amount) !== null) pieces.push(`龙虎 ${formatMoney(row.latest_top_net_amount)}`);
+  return pieces.length ? pieces.join(' · ') : '普通';
+}
+
+function limitTypeLabel(value: unknown) {
+  const text = String(value || '').toUpperCase();
+  if (text === 'U') return '涨停';
+  if (text === 'D') return '跌停';
+  if (text === 'Z') return '炸板';
+  return text || '-';
 }
 
 function formatPercent(value: unknown) {

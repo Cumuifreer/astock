@@ -125,6 +125,71 @@ def test_stock_warehouse_turnover_rate_prefers_tushare_daily_basic(tmp_path):
     assert result["rows"][0]["turnover_rate"] == 2.4
 
 
+def test_stock_warehouse_volume_ratio_falls_back_to_local_history(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    seed_stock_basics(db)
+    db.upsert(
+        "historical_bars",
+        [
+            {
+                "code": "000001.SZ",
+                "date": date(2026, 5, 22),
+                "open": 9.8,
+                "high": 10.0,
+                "low": 9.7,
+                "close": 9.9,
+                "prev_close": 9.8,
+                "volume": 100,
+                "amount": 1000000,
+                "turn": 0.8,
+                "pct_chg": 1.0,
+                "source": "test",
+                "updated_at": datetime(2026, 5, 22, 15, 0),
+            },
+            {
+                "code": "000001.SZ",
+                "date": date(2026, 5, 23),
+                "open": 10.0,
+                "high": 10.2,
+                "low": 9.9,
+                "close": 10.1,
+                "prev_close": 9.9,
+                "volume": 200,
+                "amount": 2000000,
+                "turn": 1.0,
+                "pct_chg": 2.0,
+                "source": "test",
+                "updated_at": datetime(2026, 5, 23, 15, 0),
+            },
+            {
+                "code": "000001.SZ",
+                "date": date(2026, 5, 24),
+                "open": 10.2,
+                "high": 10.5,
+                "low": 10.0,
+                "close": 10.4,
+                "prev_close": 10.1,
+                "volume": 300,
+                "amount": 3000000,
+                "turn": 1.2,
+                "pct_chg": 3.0,
+                "source": "test",
+                "updated_at": datetime(2026, 5, 24, 15, 0),
+            },
+        ],
+        ["code", "date"],
+    )
+
+    service = DataService(db)
+    result = service.list_stocks(search="000001")
+    detail = service.stock_detail("000001.SZ")
+
+    assert result["rows"][0]["volume_ratio"] == 2.0
+    assert detail["daily_basic"]["volume_ratio"] == 2.0
+    assert detail["daily_basic"]["volume_ratio_source"] == "本地K线"
+
+
 def test_capabilities_count_snapshot_float_market_value(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

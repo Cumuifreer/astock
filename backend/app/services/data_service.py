@@ -23,6 +23,30 @@ CASE
 END
 """
 
+LOCAL_VOLUME_RATIO_JOIN = """
+LEFT JOIN (
+    SELECT code,
+           CASE
+               WHEN base_volume > 0 THEN latest_volume / base_volume
+               ELSE NULL
+           END AS local_volume_ratio
+    FROM (
+        SELECT code,
+               MAX(CASE WHEN rn = 1 THEN volume END) AS latest_volume,
+               AVG(CASE WHEN rn > 1 THEN volume END) AS base_volume
+        FROM (
+            SELECT code,
+                   volume,
+                   ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS rn
+            FROM historical_bars
+            WHERE volume IS NOT NULL
+        ) ranked
+        WHERE rn <= 21
+        GROUP BY code
+    ) volume_base
+) hv ON hv.code = b.code
+"""
+
 
 def _is_blocked_brief_source(item: Dict[str, Any]) -> bool:
     source_text = f"{item.get('source_id') or ''} {item.get('source') or ''}".lower()
@@ -329,7 +353,12 @@ class DataService:
                    s.latest_price, s.pct_chg, s.amount, s.volume,
                    COALESCE(dbs.turnover_rate, s.turnover_rate) AS turnover_rate,
                    f.float_market_value,
-                   dbs.volume_ratio,
+                   COALESCE(dbs.volume_ratio, hv.local_volume_ratio) AS volume_ratio,
+                   CASE
+                       WHEN dbs.volume_ratio IS NOT NULL THEN 'Tushare daily_basic'
+                       WHEN hv.local_volume_ratio IS NOT NULL THEN '本地K线'
+                       ELSE NULL
+                   END AS volume_ratio_source,
                    mf.main_net_amount,
                    mf.net_mf_amount,
                    cyq.winner_rate,
@@ -349,6 +378,7 @@ class DataService:
             LEFT JOIN tushare_daily_basic dbs
               ON dbs.code = b.code
              AND dbs.trade_date = (SELECT MAX(trade_date) FROM tushare_daily_basic WHERE code = b.code)
+            {LOCAL_VOLUME_RATIO_JOIN}
             LEFT JOIN tushare_moneyflow mf
               ON mf.code = b.code
              AND mf.trade_date = (SELECT MAX(trade_date) FROM tushare_moneyflow WHERE code = b.code)
@@ -371,6 +401,12 @@ class DataService:
                    {STOCK_BOARD_CASE} AS board,
                    s.latest_price, s.pct_chg, s.amount, s.volume,
                    COALESCE(dbs.turnover_rate, s.turnover_rate) AS turnover_rate,
+                   COALESCE(dbs.volume_ratio, hv.local_volume_ratio) AS volume_ratio,
+                   CASE
+                       WHEN dbs.volume_ratio IS NOT NULL THEN 'Tushare daily_basic'
+                       WHEN hv.local_volume_ratio IS NOT NULL THEN '本地K线'
+                       ELSE NULL
+                   END AS volume_ratio_source,
                    f.float_market_value,
                    (SELECT COUNT(*) FROM historical_bars h WHERE h.code = b.code) AS history_days,
                    (SELECT MAX(date) FROM historical_bars h WHERE h.code = b.code) AS latest_history_date
@@ -384,6 +420,7 @@ class DataService:
             LEFT JOIN tushare_daily_basic dbs
               ON dbs.code = b.code
              AND dbs.trade_date = (SELECT MAX(trade_date) FROM tushare_daily_basic WHERE code = b.code)
+            {LOCAL_VOLUME_RATIO_JOIN}
             WHERE b.code = ?
             LIMIT 1
             """,
@@ -391,9 +428,21 @@ class DataService:
         )
         if not basic_rows:
             return {"basic": None}
+        basic = basic_rows[0]
+        daily_basic = self._latest_code_row("tushare_daily_basic", target)
+        if basic.get("volume_ratio") is not None and (not daily_basic or daily_basic.get("volume_ratio") is None):
+            daily_basic = dict(daily_basic or {})
+            daily_basic.setdefault("code", target)
+            daily_basic.setdefault("trade_date", basic.get("latest_history_date"))
+            daily_basic.setdefault("source", "本地K线")
+            daily_basic["volume_ratio"] = basic.get("volume_ratio")
+            daily_basic["volume_ratio_source"] = basic.get("volume_ratio_source") or "本地K线"
+        elif daily_basic and daily_basic.get("volume_ratio") is not None:
+            daily_basic = dict(daily_basic)
+            daily_basic["volume_ratio_source"] = "Tushare daily_basic"
         return {
-            "basic": basic_rows[0],
-            "daily_basic": self._latest_code_row("tushare_daily_basic", target),
+            "basic": basic,
+            "daily_basic": daily_basic,
             "factor": self._latest_code_row("tushare_stk_factor", target),
             "moneyflow": self._latest_code_row("tushare_moneyflow", target),
             "cyq_perf": self._latest_code_row("tushare_cyq_perf", target),
