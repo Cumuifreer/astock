@@ -69,6 +69,8 @@ export ASHARE_INTRADAY_RETENTION_DAYS=0
 
 轻量/完整更新会在历史 K 线后接入 Tushare 增强数据：`daily_basic`、`stk_factor`、`moneyflow`、`limit_list_d`、`cyq_perf`、`cyq_chips`、`ths_member`、`top_list`、`top_inst`、`hm_detail`。其中 `daily_basic` 会直接写入流通市值缓存；筹码和同花顺成分会按 `ASHARE_TUSHARE_ENRICHMENT_CODE_LIMIT` 分批补齐。
 
+市场环境会优先抓取 Tushare `index_daily` 指数日线，并结合本地历史 K 线宽度、成交额和涨跌停事件生成市场温度。数据仓库页可从股票列表点开个股档案，查看每日指标、资金流、筹码、题材和事件数据。
+
 如果用 systemd 定时触发，可以让 timer 在这些时间运行：
 
 ```ini

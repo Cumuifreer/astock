@@ -30,6 +30,7 @@ export const api = {
     });
     return request(`/api/data/stocks?${params.toString()}`);
   },
+  stockDetail: (code: string) => request(`/api/data/stocks/${encodeURIComponent(code)}`),
   startUpdate: (payload: Record<string, unknown>) =>
     request('/api/tasks/update', { method: 'POST', body: JSON.stringify(payload) }),
   startAnalyze: (config: StrategyConfig) =>

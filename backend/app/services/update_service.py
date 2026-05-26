@@ -166,7 +166,23 @@ TUSHARE_TABLE_COLUMNS: Dict[str, List[str]] = {
         "source",
         "updated_at",
     ],
+    "tushare_index_daily": [
+        "index_code",
+        "trade_date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "pre_close",
+        "change",
+        "pct_chg",
+        "volume",
+        "amount",
+        "source",
+        "updated_at",
+    ],
 }
+MARKET_INDEX_CODES = ["000001.SH", "399107.SZ", "399006.SZ", "399300.SZ", "000905.SH", "000852.SH"]
 
 
 def _tushare_realtime_configured() -> bool:
@@ -189,6 +205,10 @@ def _snapshot_date(value: Any, fallback: Optional[date] = None) -> date:
         except ValueError:
             pass
     return fallback or date.today()
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
 
 
 class TaskBusy(RuntimeError):
@@ -690,6 +710,9 @@ class UpdateService:
                 if sum(tushare_counts.values()):
                     success_sources += 1
 
+            self._patch_task(task_id, stage="刷新市场环境", source="Tushare 指数 / 本地宽度")
+            market_environment_count = self._update_market_environment(target_history_date)
+
             self._patch_task(task_id, stage="刷新流通市值", source="Tushare daily_basic / 本地缓存")
             float_count = self._update_float_values_from_snapshots()
             cleanup_counts = self.cleanup_intraday_history()
@@ -715,6 +738,7 @@ class UpdateService:
                     "history_skipped": history_skipped,
                     "target_history_date": target_history_date.isoformat(),
                     "tushare_enrichment": tushare_counts,
+                    "market_environment_count": market_environment_count,
                     "float_market_value_count": float_count,
                     "intraday_cleanup": cleanup_counts,
                     "warnings": warnings,
@@ -889,6 +913,128 @@ class UpdateService:
                 payload={"rows": float_count, "method": "daily_basic_circ_mv"},
             )
         return count
+
+    def _update_market_environment(
+        self,
+        trade_date: date,
+        source: Optional[TushareEnrichmentSource] = None,
+    ) -> int:
+        resolved_source = source or TushareEnrichmentSource()
+        index_frame = self._fetch_tushare_optional(
+            "Tushare index_daily",
+            "市场环境",
+            lambda: resolved_source.fetch_index_daily(MARKET_INDEX_CODES, trade_date),
+            warnings=None,
+        )
+        index_count = self._persist_tushare_frame("tushare_index_daily", index_frame, ["index_code", "trade_date"])
+        if index_frame is None or index_frame.empty:
+            index_frame = pd.DataFrame(
+                self.db.query(
+                    "SELECT * FROM tushare_index_daily WHERE trade_date = ?",
+                    [trade_date],
+                )
+            )
+        environment = self._build_market_environment_row(trade_date, index_frame, index_count)
+        if not environment:
+            return 0
+        count = self.db.upsert("market_environment", [environment], ["date"])
+        self.public_guard.record(
+            environment["source"],
+            "市场环境",
+            "available",
+            payload={"rows": count, "index_rows": index_count},
+        )
+        return count
+
+    def _build_market_environment_row(
+        self,
+        trade_date: date,
+        index_frame: pd.DataFrame,
+        index_count: int,
+    ) -> Optional[Dict[str, Any]]:
+        bars = self.db.query(
+            """
+            SELECT pct_chg, amount
+            FROM historical_bars
+            WHERE date = ?
+            """,
+            [trade_date],
+        )
+        limit_rows = self.db.query(
+            "SELECT limit_type FROM tushare_limit_list_d WHERE trade_date = ?",
+            [trade_date],
+        )
+        index_rows = [] if index_frame is None or index_frame.empty else index_frame.to_dict("records")
+        if not bars and not index_rows:
+            return None
+
+        pct_values = [safe_float(row.get("pct_chg")) for row in bars]
+        pct_values = [value for value in pct_values if value is not None]
+        up_count = sum(1 for value in pct_values if value > 0)
+        down_count = sum(1 for value in pct_values if value < 0)
+        flat_count = max(0, len(pct_values) - up_count - down_count)
+        strong_count = sum(1 for value in pct_values if value >= 5)
+        weak_count = sum(1 for value in pct_values if value <= -5)
+        total_amount = sum(safe_float(row.get("amount")) or 0 for row in bars)
+        limit_up_count = sum(1 for row in limit_rows if str(row.get("limit_type") or "").upper().startswith("U"))
+        limit_down_count = sum(1 for row in limit_rows if str(row.get("limit_type") or "").upper().startswith("D"))
+
+        index_pcts = [safe_float(row.get("pct_chg")) for row in index_rows]
+        index_pcts = [value for value in index_pcts if value is not None]
+        index_score = _clamp(50 + (sum(index_pcts) / len(index_pcts)) * 8, 0, 100) if index_pcts else 50
+        breadth_score = _clamp(up_count / len(pct_values) * 100, 0, 100) if pct_values else 50
+        turnover_score, turnover_ratio = self._market_turnover_score(trade_date, total_amount)
+        limit_score = _clamp(50 + (limit_up_count - limit_down_count) / max(len(pct_values), 1) * 100, 0, 100)
+        trend_score = round(index_score * 0.35 + breadth_score * 0.35 + turnover_score * 0.15 + limit_score * 0.15, 2)
+        risk_level = "risk_on" if trend_score >= 65 else "neutral" if trend_score >= 45 else "risk_off"
+        source = "Tushare index_daily + 本地历史宽度" if index_count else "本地历史宽度"
+        return {
+            "date": trade_date,
+            "trend_score": trend_score,
+            "risk_level": risk_level,
+            "index_score": round(index_score, 2),
+            "breadth_score": round(breadth_score, 2),
+            "turnover_score": round(turnover_score, 2),
+            "limit_score": round(limit_score, 2),
+            "up_count": up_count,
+            "down_count": down_count,
+            "flat_count": flat_count,
+            "limit_up_count": limit_up_count,
+            "limit_down_count": limit_down_count,
+            "strong_count": strong_count,
+            "weak_count": weak_count,
+            "total_amount": total_amount,
+            "source": source,
+            "summary_json": {
+                "index_codes": [row.get("index_code") for row in index_rows],
+                "index_pct_chg": {row.get("index_code"): row.get("pct_chg") for row in index_rows},
+                "turnover_ratio": turnover_ratio,
+            },
+            "updated_at": datetime.utcnow(),
+        }
+
+    def _market_turnover_score(self, trade_date: date, total_amount: float) -> tuple[float, Optional[float]]:
+        rows = self.db.query(
+            """
+            SELECT date, SUM(amount) AS amount
+            FROM historical_bars
+            WHERE date < ?
+              AND amount IS NOT NULL
+            GROUP BY date
+            ORDER BY date DESC
+            LIMIT 20
+            """,
+            [trade_date],
+        )
+        amounts = [safe_float(row.get("amount")) for row in rows]
+        amounts = [value for value in amounts if value and value > 0]
+        if not amounts or not total_amount:
+            return 50, None
+        average = sum(amounts) / len(amounts)
+        ratio = total_amount / average if average else None
+        if ratio is None:
+            return 50, None
+        return _clamp(50 + (ratio - 1) * 35, 0, 100), ratio
 
     def _fetch_tushare_optional(
         self,

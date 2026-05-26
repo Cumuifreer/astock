@@ -191,6 +191,7 @@ class TushareEnrichmentSource:
     )
     TOP_INST_FIELDS = "trade_date,ts_code,exalter,buy,buy_rate,sell,sell_rate,net_buy"
     HM_DETAIL_FIELDS = "trade_date,ts_code,ts_name,name,hm_name,buy_amount,sell_amount,net_amount"
+    INDEX_DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
 
     def __init__(
         self,
@@ -490,6 +491,51 @@ class TushareEnrichmentSource:
             )
             rows.append(row)
         return _clean_frame(rows, required=["code", "trade_date"])
+
+    def fetch_index_daily(self, index_codes: List[str], trade_date: Any) -> pd.DataFrame:
+        rows = []
+        errors = []
+        for index_code in index_codes:
+            try:
+                frame = self._call_api(
+                    "index_daily",
+                    ts_code=index_code,
+                    trade_date=_trade_date_arg(trade_date),
+                    fields=self.INDEX_DAILY_FIELDS,
+                )
+            except Exception as exc:
+                errors.append(f"{index_code}: {exc}")
+                self._sleep_between_codes()
+                continue
+            for item in _records(frame):
+                code = first_present(item, ["ts_code", "TS_CODE", "index_code", "INDEX_CODE"])
+                day = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
+                if not code or not day:
+                    continue
+                rows.append(
+                    {
+                        "index_code": str(code),
+                        "trade_date": day,
+                        "open": safe_float(first_present(item, ["open", "OPEN"])),
+                        "high": safe_float(first_present(item, ["high", "HIGH"])),
+                        "low": safe_float(first_present(item, ["low", "LOW"])),
+                        "close": safe_float(first_present(item, ["close", "CLOSE"])),
+                        "pre_close": safe_float(first_present(item, ["pre_close", "PRE_CLOSE"])),
+                        "change": safe_float(first_present(item, ["change", "CHANGE"])),
+                        "pct_chg": safe_float(first_present(item, ["pct_chg", "PCT_CHG"])),
+                        "volume": safe_float(first_present(item, ["vol", "VOL", "volume", "VOLUME"])),
+                        "amount": _normalize_tushare_amount(
+                            first_present(item, ["amount", "AMOUNT"]),
+                            amount_unit="thousand_yuan",
+                        ),
+                        "source": "Tushare index_daily",
+                        "updated_at": datetime.utcnow(),
+                    }
+                )
+            self._sleep_between_codes()
+        if not rows and errors:
+            raise SourceUnavailable(errors[0])
+        return _clean_frame(rows, required=["index_code", "trade_date"])
 
     def _call_api(self, api_name: str, **params: Any) -> pd.DataFrame:
         _, pro = self.client

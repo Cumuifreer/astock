@@ -88,20 +88,16 @@ CAPABILITY_DEFINITIONS = {
         "can_backfill": False,
         "participates_in_analysis": True,
     },
-    "概念标签": {
-        "fallback_sources": [],
-        "can_backfill": False,
-        "participates_in_analysis": False,
-    },
     "ST / 停牌状态": {
         "fallback_sources": ["Baostock", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
     },
     "市场环境": {
-        "fallback_sources": [],
+        "fallback_sources": ["Tushare index_daily", "本地历史宽度", "Tushare limit_list_d"],
         "can_backfill": False,
         "participates_in_analysis": False,
+        "coverage_kind": "dataset",
     },
     "每日指标": {
         "fallback_sources": ["Tushare daily_basic"],
@@ -122,6 +118,7 @@ CAPABILITY_DEFINITIONS = {
         "fallback_sources": ["Tushare limit_list_d"],
         "can_backfill": True,
         "participates_in_analysis": False,
+        "coverage_kind": "event",
     },
     "筹码分布": {
         "fallback_sources": ["Tushare cyq_perf", "Tushare cyq_chips"],
@@ -137,6 +134,7 @@ CAPABILITY_DEFINITIONS = {
         "fallback_sources": ["Tushare top_list", "Tushare top_inst", "Tushare hm_detail"],
         "can_backfill": True,
         "participates_in_analysis": False,
+        "coverage_kind": "event",
     },
 }
 
@@ -330,6 +328,14 @@ class DataService:
                    {STOCK_BOARD_CASE} AS board,
                    s.latest_price, s.pct_chg, s.amount, s.volume, s.turnover_rate,
                    f.float_market_value,
+                   dbs.volume_ratio,
+                   mf.main_net_amount,
+                   mf.net_mf_amount,
+                   cyq.winner_rate,
+                   cyq.cost_50pct,
+                   (SELECT COUNT(*) FROM tushare_ths_member c WHERE c.code = b.code) AS concept_count,
+                   (SELECT limit_type FROM tushare_limit_list_d l WHERE l.code = b.code ORDER BY trade_date DESC LIMIT 1) AS latest_limit_type,
+                   (SELECT net_amount FROM tushare_top_list t WHERE t.code = b.code ORDER BY trade_date DESC LIMIT 1) AS latest_top_net_amount,
                    (SELECT COUNT(*) FROM historical_bars h WHERE h.code = b.code) AS history_days,
                    (SELECT MAX(date) FROM historical_bars h WHERE h.code = b.code) AS latest_history_date
             FROM stock_basic b
@@ -339,6 +345,15 @@ class DataService:
             LEFT JOIN float_market_values f
               ON f.code = b.code
              AND f.date = (SELECT MAX(date) FROM float_market_values)
+            LEFT JOIN tushare_daily_basic dbs
+              ON dbs.code = b.code
+             AND dbs.trade_date = (SELECT MAX(trade_date) FROM tushare_daily_basic WHERE code = b.code)
+            LEFT JOIN tushare_moneyflow mf
+              ON mf.code = b.code
+             AND mf.trade_date = (SELECT MAX(trade_date) FROM tushare_moneyflow WHERE code = b.code)
+            LEFT JOIN tushare_cyq_perf cyq
+              ON cyq.code = b.code
+             AND cyq.trade_date = (SELECT MAX(trade_date) FROM tushare_cyq_perf WHERE code = b.code)
             {where}
             ORDER BY b.code
             LIMIT ? OFFSET ?
@@ -346,6 +361,91 @@ class DataService:
             params + [max(1, min(limit, 500)), max(0, offset)],
         )
         return {"rows": rows, "total": total, "limit": limit, "offset": offset}
+
+    def stock_detail(self, code: str) -> Dict[str, Any]:
+        target = code.strip().upper()
+        basic_rows = self.db.query(
+            f"""
+            SELECT b.code, b.name, b.exchange, b.list_date, b.source, b.is_st, b.suspended,
+                   {STOCK_BOARD_CASE} AS board,
+                   s.latest_price, s.pct_chg, s.amount, s.volume, s.turnover_rate,
+                   f.float_market_value,
+                   (SELECT COUNT(*) FROM historical_bars h WHERE h.code = b.code) AS history_days,
+                   (SELECT MAX(date) FROM historical_bars h WHERE h.code = b.code) AS latest_history_date
+            FROM stock_basic b
+            LEFT JOIN daily_snapshots s
+              ON s.code = b.code
+             AND s.date = (SELECT MAX(date) FROM daily_snapshots WHERE code = b.code)
+            LEFT JOIN float_market_values f
+              ON f.code = b.code
+             AND f.date = (SELECT MAX(date) FROM float_market_values WHERE code = b.code)
+            WHERE b.code = ?
+            LIMIT 1
+            """,
+            [target],
+        )
+        if not basic_rows:
+            return {"basic": None}
+        return {
+            "basic": basic_rows[0],
+            "daily_basic": self._latest_code_row("tushare_daily_basic", target),
+            "factor": self._latest_code_row("tushare_stk_factor", target),
+            "moneyflow": self._latest_code_row("tushare_moneyflow", target),
+            "cyq_perf": self._latest_code_row("tushare_cyq_perf", target),
+            "concepts": self.db.query(
+                """
+                SELECT con_code, con_name, weight, in_date, out_date, is_new, updated_at
+                FROM tushare_ths_member
+                WHERE code = ?
+                ORDER BY updated_at DESC, con_name
+                LIMIT 20
+                """,
+                [target],
+            ),
+            "limit_events": self.db.query(
+                """
+                SELECT trade_date, limit_type, open_times, fd_amount, up_stat
+                FROM tushare_limit_list_d
+                WHERE code = ?
+                ORDER BY trade_date DESC
+                LIMIT 10
+                """,
+                [target],
+            ),
+            "top_events": self.db.query(
+                """
+                SELECT trade_date, reason, net_amount, amount_rate
+                FROM tushare_top_list
+                WHERE code = ?
+                ORDER BY trade_date DESC
+                LIMIT 10
+                """,
+                [target],
+            ),
+            "history": self.db.query(
+                """
+                SELECT date, close, pct_chg, amount, turn
+                FROM historical_bars
+                WHERE code = ?
+                ORDER BY date DESC
+                LIMIT 30
+                """,
+                [target],
+            ),
+        }
+
+    def _latest_code_row(self, table: str, code: str) -> Optional[Dict[str, Any]]:
+        rows = self.db.query(
+            f"""
+            SELECT *
+            FROM {table}
+            WHERE code = ?
+            ORDER BY trade_date DESC
+            LIMIT 1
+            """,
+            [code],
+        )
+        return rows[0] if rows else None
 
     def latest_task(self, kind: str) -> Optional[Dict[str, Any]]:
         rows = self.db.query(
@@ -601,7 +701,7 @@ class DataService:
 
     def capabilities(self) -> List[Dict[str, Any]]:
         rows = self.db.query("SELECT * FROM data_capabilities ORDER BY capability")
-        if not rows:
+        if not rows or {row["capability"] for row in rows} != set(CAPABILITY_DEFINITIONS):
             self.refresh_capabilities()
             rows = self.db.query("SELECT * FROM data_capabilities ORDER BY capability")
         for row in rows:
@@ -613,6 +713,7 @@ class DataService:
         total_stocks = self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0
         latest_history = self.db.scalar("SELECT MAX(date) FROM historical_bars")
         latest_snapshot = self.db.scalar("SELECT MAX(date) FROM daily_snapshots")
+        latest_market_environment = self.db.scalar("SELECT MAX(date) FROM market_environment")
         latest_tushare_daily_basic = self.db.scalar("SELECT MAX(trade_date) FROM tushare_daily_basic")
         latest_tushare_stk_factor = self.db.scalar("SELECT MAX(trade_date) FROM tushare_stk_factor")
         latest_tushare_moneyflow = self.db.scalar("SELECT MAX(trade_date) FROM tushare_moneyflow")
@@ -744,10 +845,9 @@ class DataService:
                 "SELECT COUNT(DISTINCT code) FROM historical_bars WHERE high IS NOT NULL AND low IS NOT NULL AND prev_close IS NOT NULL"
             )
             or 0,
-            "概念标签": 0,
             "ST / 停牌状态": self.db.scalar("SELECT COUNT(DISTINCT code) FROM historical_bars WHERE is_st IS NOT NULL OR tradestatus IS NOT NULL")
             or 0,
-            "市场环境": 0,
+            "市场环境": self.db.scalar("SELECT COUNT(*) FROM market_environment") or 0,
             "每日指标": latest_code_count("tushare_daily_basic", latest_tushare_daily_basic),
             "技术因子": latest_code_count("tushare_stk_factor", latest_tushare_stk_factor),
             "资金流向": latest_code_count("tushare_moneyflow", latest_tushare_moneyflow),
@@ -769,10 +869,13 @@ class DataService:
 
         for capability, definition in CAPABILITY_DEFINITIONS.items():
             coverage = int(counts.get(capability, 0))
-            denominator = total_stocks if total_stocks else coverage
+            coverage_kind = definition.get("coverage_kind", "stock")
+            denominator = coverage if coverage_kind in {"event", "dataset"} else total_stocks if total_stocks else coverage
             latest_update = latest_snapshot if capability == "当天行情快照" else latest_history
             if capability == "流通市值":
                 latest_update = latest_float_market_value
+            elif capability == "市场环境":
+                latest_update = latest_market_environment
             elif capability == "每日指标":
                 latest_update = latest_tushare_daily_basic
             elif capability == "技术因子":
@@ -802,6 +905,12 @@ class DataService:
                     "updated_at": datetime.utcnow(),
                 }
             )
+        placeholders = ", ".join(["?"] * len(CAPABILITY_DEFINITIONS))
+        self.db.execute(
+            f"DELETE FROM data_capabilities WHERE capability NOT IN ({placeholders})",
+            list(CAPABILITY_DEFINITIONS.keys()),
+            write=True,
+        )
         self.db.upsert("data_capabilities", rows, ["capability"])
 
     @staticmethod

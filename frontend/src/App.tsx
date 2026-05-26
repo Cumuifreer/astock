@@ -22,6 +22,7 @@ import {
   Star,
   Trash2,
   Workflow,
+  X,
 } from 'lucide-react';
 
 import { api } from './api';
@@ -668,6 +669,9 @@ function HealthHints({ bootstrap }: { bootstrap: Bootstrap }) {
 
 function Warehouse() {
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
+  const [selectedCode, setSelectedCode] = useState<string | null>(null);
+  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState('');
@@ -702,6 +706,19 @@ function Warehouse() {
   useEffect(() => {
     void load();
   }, [offset, search, exchange, board]);
+
+  async function selectStock(code: string) {
+    setSelectedCode(code);
+    setDetailLoading(true);
+    try {
+      setDetail((await api.stockDetail(code)) as Record<string, unknown>);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '个股档案加载失败');
+    } finally {
+      setDetailLoading(false);
+    }
+  }
 
   return (
     <div className="page-stack">
@@ -747,15 +764,23 @@ function Warehouse() {
                 <th>涨跌幅</th>
                 <th>成交额</th>
                 <th>换手率</th>
-                <th>历史天数</th>
                 <th>流通市值</th>
+                <th>量比</th>
+                <th>主力净额</th>
+                <th>筹码胜率</th>
+                <th>题材</th>
+                <th>事件</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={10} className="empty-cell">暂无本地股票数据</td></tr>
+                <tr><td colSpan={14} className="empty-cell">暂无本地股票数据</td></tr>
               ) : rows.map((row) => (
-                <tr key={String(row.code)}>
+                <tr
+                  key={String(row.code)}
+                  className={selectedCode === String(row.code) ? 'selected-row' : ''}
+                  onClick={() => void selectStock(String(row.code))}
+                >
                   <td className="mono">{String(row.code || '')}</td>
                   <td>{String(row.name || '')}</td>
                   <td>{String(row.exchange || '')}</td>
@@ -764,8 +789,12 @@ function Warehouse() {
                   <td className={toneClass(Number(row.pct_chg || 0))}>{formatPercent(row.pct_chg)}</td>
                   <td>{formatMoney(row.amount)}</td>
                   <td>{formatPercent(row.turnover_rate)}</td>
-                  <td>{formatInt(row.history_days)}</td>
                   <td>{formatMoney(row.float_market_value)}</td>
+                  <td>{formatRatioX(row.volume_ratio)}</td>
+                  <td className={toneClass(Number(row.main_net_amount || 0))}>{formatMoney(row.main_net_amount)}</td>
+                  <td>{formatPercentRatio(row.winner_rate)}</td>
+                  <td>{formatInt(row.concept_count)}</td>
+                  <td>{warehouseEventLabel(row)}</td>
                 </tr>
               ))}
             </tbody>
@@ -777,6 +806,77 @@ function Warehouse() {
           <button className="ghost" disabled={offset + limit >= total} onClick={() => setOffset(offset + limit)}>下一页</button>
         </div>
       </section>
+      {(detail || detailLoading) && <StockDetailPanel detail={detail} loading={detailLoading} onClose={() => { setDetail(null); setSelectedCode(null); }} />}
+    </div>
+  );
+}
+
+function StockDetailPanel({
+  detail,
+  loading,
+  onClose,
+}: {
+  detail: Record<string, unknown> | null;
+  loading: boolean;
+  onClose: () => void;
+}) {
+  const basic = asRecord(detail?.basic);
+  const daily = asRecord(detail?.daily_basic);
+  const factor = asRecord(detail?.factor);
+  const moneyflow = asRecord(detail?.moneyflow);
+  const cyq = asRecord(detail?.cyq_perf);
+  const concepts = compactRecords(detail?.concepts);
+  const limitEvents = compactRecords(detail?.limit_events);
+  const topEvents = compactRecords(detail?.top_events);
+
+  return (
+    <section className="panel stock-profile">
+      <div className="stock-profile-head">
+        <div>
+          <PanelTitle icon={<Database size={18} />} title={loading ? '读取个股档案' : `${String(basic?.name || '-')} · ${String(basic?.code || '')}`} />
+          <p>{String(basic?.exchange || '-')} · {boardLabel(basic?.board)} · 历史 {formatInt(basic?.history_days)} 天</p>
+        </div>
+        <button className="ghost icon-button" onClick={onClose} aria-label="关闭个股档案">
+          <X size={16} />
+        </button>
+      </div>
+      {loading ? (
+        <EmptyState text="读取中。" />
+      ) : (
+        <>
+          <div className="profile-metrics">
+            <MetricCard label="最新价" value={formatPrice(basic?.latest_price)} sub={formatPercent(basic?.pct_chg)} icon={<CandlestickChart size={18} />} />
+            <MetricCard label="量比" value={formatRatioX(daily?.volume_ratio)} sub={`换手 ${formatPercent(daily?.turnover_rate ?? basic?.turnover_rate)}`} icon={<Gauge size={18} />} />
+            <MetricCard label="主力净额" value={formatMoney(moneyflow?.main_net_amount)} sub={`净流 ${formatMoney(moneyflow?.net_mf_amount)}`} icon={<Activity size={18} />} />
+            <MetricCard label="筹码胜率" value={formatPercentRatio(cyq?.winner_rate)} sub={`中位成本 ${formatPrice(cyq?.cost_50pct)}`} icon={<Layers3 size={18} />} />
+          </div>
+          <div className="profile-grid">
+            <ProfileBlock title="技术因子" rows={[
+              ['MACD', formatPrice(factor?.macd)],
+              ['KDJ', [formatPrice(factor?.kdj_k), formatPrice(factor?.kdj_d), formatPrice(factor?.kdj_j)].join(' / ')],
+              ['RSI6', formatPrice(factor?.rsi_6)],
+              ['BOLL', [formatPrice(factor?.boll_upper), formatPrice(factor?.boll_mid), formatPrice(factor?.boll_lower)].join(' / ')],
+            ]} />
+            <ProfileBlock title="题材成分" rows={(concepts.length ? concepts.slice(0, 8).map((item) => [String(item?.con_name || '-'), String(item?.con_code || '')]) : [['暂无', '-']])} />
+            <ProfileBlock title="涨跌停" rows={(limitEvents.length ? limitEvents.slice(0, 5).map((item) => [formatDate(item?.trade_date), `${String(item?.limit_type || '-')} · ${formatInt(item?.open_times)} 次`]) : [['暂无', '-']])} />
+            <ProfileBlock title="龙虎榜" rows={(topEvents.length ? topEvents.slice(0, 5).map((item) => [formatDate(item?.trade_date), `${formatMoney(item?.net_amount)} · ${String(item?.reason || '-')}`]) : [['暂无', '-']])} />
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ProfileBlock({ title, rows }: { title: string; rows: Array<[string, string]> }) {
+  return (
+    <div className="profile-block">
+      <h3>{title}</h3>
+      {rows.map(([label, value]) => (
+        <div key={`${title}-${label}-${value}`}>
+          <span>{label}</span>
+          <b>{value}</b>
+        </div>
+      ))}
     </div>
   );
 }
@@ -2471,9 +2571,7 @@ function DataMap({ capabilities, afterProbe }: { capabilities: Capability[]; aft
               <span className="mono">{row.currentLatest}</span>
               <span className="mono">{row.expectedLatest}</span>
               <div className="ledger-coverage">
-                <span>
-                  {formatInt(row.coverage)} / {formatInt(row.total)}
-                </span>
+                <span>{row.coverageText}</span>
                 <Progress value={row.percent} />
               </div>
               <span className={`ledger-status ${row.status}`}>{row.statusLabel}</span>
@@ -2672,6 +2770,10 @@ function taskSummaryStats(task: TaskRun): Array<{ label: string; value: string }
   const floatCount = nullableNumber(summary.float_market_value_count);
   if (floatCount !== null) {
     stats.push({ label: '流通市值', value: `${formatInt(floatCount)} 行` });
+  }
+  const marketCount = nullableNumber(summary.market_environment_count);
+  if (marketCount !== null) {
+    stats.push({ label: '市场环境', value: `${formatInt(marketCount)} 日` });
   }
   return stats;
 }
@@ -3157,6 +3259,26 @@ function boardLabel(value: unknown) {
   return '-';
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function compactRecords(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.reduce<Array<Record<string, unknown>>>((items, item) => {
+    const record = asRecord(item);
+    if (record) items.push(record);
+    return items;
+  }, []);
+}
+
+function warehouseEventLabel(row: Record<string, unknown>) {
+  const pieces = [];
+  if (row.latest_limit_type) pieces.push(String(row.latest_limit_type));
+  if (nullableNumber(row.latest_top_net_amount) !== null) pieces.push(`榜 ${formatMoney(row.latest_top_net_amount)}`);
+  return pieces.length ? pieces.join(' · ') : '-';
+}
+
 function formatPercent(value: unknown) {
   if (value === null || value === undefined || value === '') return '-';
   const number = Number(value);
@@ -3446,6 +3568,7 @@ function slotStatusLabel(status: string) {
 
 type DataLedgerStatus = 'normal' | 'stale' | 'partial' | 'empty';
 type ExpectedDateKind = 'history' | 'snapshot' | 'long_lived' | 'as_needed';
+type CoverageKind = 'stock' | 'event' | 'dataset';
 
 interface DataLedgerRow {
   key: string;
@@ -3456,11 +3579,12 @@ interface DataLedgerRow {
   coverage: number;
   total: number;
   percent: number;
+  coverageText: string;
   status: DataLedgerStatus;
   statusLabel: string;
 }
 
-const dataLedgerMeta: Record<string, { fields: string[]; expected: ExpectedDateKind }> = {
+const dataLedgerMeta: Record<string, { fields: string[]; expected: ExpectedDateKind; coverageKind?: CoverageKind }> = {
   '历史 K 线': {
     fields: ['code', 'date', 'open', 'high', 'low', 'close', 'volume', 'amount', 'turn'],
     expected: 'history',
@@ -3489,17 +3613,14 @@ const dataLedgerMeta: Record<string, { fields: string[]; expected: ExpectedDateK
     fields: ['code', 'date', 'high', 'low', 'prev_close', 'amplitude'],
     expected: 'history',
   },
-  概念标签: {
-    fields: ['code', 'concept_name', 'source', 'updated_at'],
-    expected: 'as_needed',
-  },
   'ST / 停牌状态': {
     fields: ['code', 'date', 'is_st', 'tradestatus'],
     expected: 'history',
   },
   市场环境: {
-    fields: ['date', 'index_code', 'trend_score', 'risk_level'],
+    fields: ['date', 'trend_score', 'breadth_score', 'risk_level'],
     expected: 'as_needed',
+    coverageKind: 'dataset',
   },
   每日指标: {
     fields: ['code', 'date', 'turnover_rate', 'volume_ratio', 'circ_mv'],
@@ -3516,6 +3637,7 @@ const dataLedgerMeta: Record<string, { fields: string[]; expected: ExpectedDateK
   涨跌停: {
     fields: ['code', 'trade_date', 'limit_type', 'open_times', 'fd_amount'],
     expected: 'history',
+    coverageKind: 'event',
   },
   筹码分布: {
     fields: ['code', 'trade_date', 'winner_rate', 'cost_50pct'],
@@ -3528,6 +3650,7 @@ const dataLedgerMeta: Record<string, { fields: string[]; expected: ExpectedDateK
   '龙虎榜/游资': {
     fields: ['code', 'trade_date', 'net_amount', 'hm_name'],
     expected: 'as_needed',
+    coverageKind: 'event',
   },
 };
 
@@ -3537,11 +3660,12 @@ function buildDataLedgerRows(capabilities: Capability[]): DataLedgerRow[] {
       fields: ['code', 'date', 'value'],
       expected: 'history' as ExpectedDateKind,
     };
-    const total = capability.coverage_count + capability.missing_count;
+    const coverageKind = meta.coverageKind || 'stock';
+    const total = coverageKind === 'stock' ? capability.coverage_count + capability.missing_count : capability.coverage_count;
     const percent = total ? Math.round((capability.coverage_count / total) * 100) : 0;
     const currentLatest = capability.latest_update ? formatDate(capability.latest_update) : '暂无';
     const expectedLatest = expectedLatestLabel(meta.expected);
-    const status = classifyLedgerStatus(capability.coverage_count, percent, currentLatest, expectedLatest);
+    const status = classifyLedgerStatus(capability.coverage_count, percent, currentLatest, expectedLatest, coverageKind);
     return {
       key: capability.capability,
       label: capability.capability,
@@ -3551,6 +3675,7 @@ function buildDataLedgerRows(capabilities: Capability[]): DataLedgerRow[] {
       coverage: capability.coverage_count,
       total,
       percent,
+      coverageText: ledgerCoverageText(capability.coverage_count, total, coverageKind),
       status,
       statusLabel: ledgerStatusLabel(status),
     };
@@ -3563,11 +3688,24 @@ function expectedLatestLabel(kind: ExpectedDateKind) {
   return expectedMarketDate(kind);
 }
 
-function classifyLedgerStatus(coverage: number, percent: number, currentLatest: string, expectedLatest: string): DataLedgerStatus {
+function classifyLedgerStatus(
+  coverage: number,
+  percent: number,
+  currentLatest: string,
+  expectedLatest: string,
+  coverageKind: CoverageKind,
+): DataLedgerStatus {
   if (coverage <= 0) return 'empty';
   if (isDateLabel(currentLatest) && isDateLabel(expectedLatest) && currentLatest < expectedLatest) return 'stale';
+  if (coverageKind !== 'stock') return 'normal';
   if (percent < 98) return 'partial';
   return 'normal';
+}
+
+function ledgerCoverageText(coverage: number, total: number, coverageKind: CoverageKind) {
+  if (coverageKind === 'event') return `${formatInt(coverage)} 事件`;
+  if (coverageKind === 'dataset') return `${formatInt(coverage)} 日`;
+  return `${formatInt(coverage)} / ${formatInt(total)}`;
 }
 
 function ledgerStatusLabel(status: DataLedgerStatus) {

@@ -96,6 +96,14 @@ def data_stocks(
     return data_service.list_stocks(limit=limit, offset=offset, search=search, exchange=exchange, board=board)
 
 
+@router.get("/data/stocks/{code}")
+def data_stock_detail(code: str) -> Dict[str, Any]:
+    detail = data_service.stock_detail(code)
+    if not detail.get("basic"):
+        raise HTTPException(status_code=404, detail="股票不存在。")
+    return detail
+
+
 @router.post("/tasks/update")
 def start_update(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     try:

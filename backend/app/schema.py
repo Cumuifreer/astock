@@ -15,7 +15,7 @@ from backend.app.services.strategy_service import (
 )
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 MIGRATIONS = [
@@ -261,6 +261,46 @@ MIGRATIONS = [
         source TEXT,
         updated_at TIMESTAMP,
         PRIMARY KEY (code, trade_date, hm_name)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tushare_index_daily (
+        index_code TEXT,
+        trade_date DATE,
+        open DOUBLE,
+        high DOUBLE,
+        low DOUBLE,
+        close DOUBLE,
+        pre_close DOUBLE,
+        change DOUBLE,
+        pct_chg DOUBLE,
+        volume DOUBLE,
+        amount DOUBLE,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (index_code, trade_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS market_environment (
+        date DATE PRIMARY KEY,
+        trend_score DOUBLE,
+        risk_level TEXT,
+        index_score DOUBLE,
+        breadth_score DOUBLE,
+        turnover_score DOUBLE,
+        limit_score DOUBLE,
+        up_count INTEGER,
+        down_count INTEGER,
+        flat_count INTEGER,
+        limit_up_count INTEGER,
+        limit_down_count INTEGER,
+        strong_count INTEGER,
+        weak_count INTEGER,
+        total_amount DOUBLE,
+        source TEXT,
+        summary_json TEXT,
+        updated_at TIMESTAMP
     )
     """,
     """

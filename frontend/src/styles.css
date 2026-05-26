@@ -963,6 +963,66 @@ h1 {
   margin: 0 0 12px;
 }
 
+.stock-profile {
+  display: grid;
+  gap: 16px;
+}
+
+.stock-profile-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.stock-profile-head p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.profile-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.profile-block {
+  border: 1px solid rgba(157, 196, 187, 0.16);
+  background: rgba(255, 255, 255, 0.018);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.profile-block h3 {
+  margin: 0 0 2px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.profile-block div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.profile-block b {
+  max-width: 62%;
+  color: var(--soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .filter-group {
   display: flex;
   align-items: center;
@@ -1942,7 +2002,7 @@ h1 {
 
 table {
   width: 100%;
-  min-width: 980px;
+  min-width: 1320px;
   border-collapse: collapse;
 }
 
@@ -1971,6 +2031,10 @@ td {
 
 tr:hover td {
   background: rgba(59, 240, 193, 0.035);
+}
+
+tr.selected-row td {
+  background: rgba(182, 255, 95, 0.055);
 }
 
 .mono {
@@ -2547,7 +2611,9 @@ a {
 
   .candidate-readout-grid,
   .score-card-grid,
-  .freshness-grid {
+  .freshness-grid,
+  .profile-metrics,
+  .profile-grid {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -2577,6 +2643,11 @@ a {
   .backtest-summary-grid,
   .runtime-console,
   .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-metrics,
+  .profile-grid {
     grid-template-columns: 1fr;
   }
 
