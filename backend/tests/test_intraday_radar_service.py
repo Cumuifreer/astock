@@ -652,6 +652,58 @@ def test_intraday_snapshot_prefers_tushare_realtime(tmp_path, monkeypatch):
     assert frame.iloc[0]["source"] == "Tushare 实时日线"
 
 
+def test_daily_update_snapshot_prefers_tushare_realtime(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+
+    class FakeTushareSource:
+        def fetch_realtime_daily(self, include_bj=False, exclude_star=False):
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "000001.SZ",
+                        "date": "2026-05-21",
+                        "name": "平安银行",
+                        "latest_price": 10.55,
+                        "pct_chg": 4.2,
+                        "high": 10.6,
+                        "low": 9.9,
+                        "volume": 3_100_000.0,
+                        "amount": 62_000_000.0,
+                        "turnover_rate": 1.3,
+                        "float_market_value": 120_000_000_000.0,
+                        "source": "Tushare 实时日线",
+                    }
+                ]
+            )
+
+    monkeypatch.setattr("backend.app.services.update_service.TushareRealtimeSource", FakeTushareSource)
+    monkeypatch.setattr(
+        "backend.app.services.update_service.settings",
+        SimpleNamespace(
+            tushare_realtime_enabled=True,
+            tushare_token="test-token",
+            tushare_timeout_seconds=5,
+            source_probe_ttl_minutes=60,
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.update_service.AkShareSource.fetch_sina_snapshot",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("AkShare should not be called")),
+    )
+
+    count = service._update_snapshots(force=True, include_bj=False, exclude_star=False, warnings=[])
+    row = db.query("SELECT * FROM daily_snapshots WHERE code = '000001.SZ'")[0]
+
+    assert count == 1
+    assert str(row["date"]).startswith("2026-05-21")
+    assert row["source"] == "Tushare 实时日线"
+    assert row["float_market_value"] == 120_000_000_000.0
+
+
 def test_intraday_cleanup_deletes_old_rows_after_history_exists(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

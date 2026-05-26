@@ -31,6 +31,20 @@ def _tushare_realtime_configured() -> bool:
     return bool(settings.tushare_realtime_enabled and settings.tushare_token)
 
 
+def _snapshot_date(value: Any, fallback: Optional[date] = None) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if value:
+        text = str(value)[:10]
+        try:
+            return date.fromisoformat(text)
+        except ValueError:
+            pass
+    return fallback or date.today()
+
+
 class TaskBusy(RuntimeError):
     pass
 
@@ -468,7 +482,11 @@ class UpdateService:
             stock_count = self._update_basics(force, include_bj, exclude_star, warnings)
             success_sources += 1 if stock_count else 0
 
-            self._patch_task(task_id, stage="刷新快照", source="AkShare 新浪")
+            self._patch_task(
+                task_id,
+                stage="刷新快照",
+                source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
+            )
             snapshot_count = self._update_snapshots(force or light, include_bj, exclude_star, warnings)
             if snapshot_count:
                 success_sources += 1
@@ -726,7 +744,11 @@ class UpdateService:
             raise RuntimeError(chosen.message or "盘中快照不可用。")
         return chosen.frame
 
-    def _upsert_realtime_daily_snapshots(self, frame: pd.DataFrame, trade_date: date) -> int:
+    def _upsert_realtime_daily_snapshots(
+        self,
+        frame: pd.DataFrame,
+        trade_date: Optional[date] = None,
+    ) -> int:
         if frame is None or frame.empty:
             return 0
         records = []
@@ -737,7 +759,7 @@ class UpdateService:
             records.append(
                 {
                     "code": code,
-                    "date": trade_date,
+                    "date": _snapshot_date(item.get("date"), trade_date),
                     "name": item.get("name") or code,
                     "latest_price": safe_float(item.get("latest_price")),
                     "pct_chg": safe_float(item.get("pct_chg")),
@@ -808,6 +830,20 @@ class UpdateService:
                 payload={"rows": today_rows, "cache": True},
             )
             return int(today_rows)
+        if _tushare_realtime_configured():
+            ts_source = TushareRealtimeSource()
+            ts_result = self.public_guard.call(
+                "Tushare 实时日线",
+                "当天行情快照",
+                lambda: ts_source.fetch_realtime_daily(include_bj=include_bj, exclude_star=exclude_star),
+                ttl_minutes=5,
+                max_attempts=1,
+                timeout_seconds=settings.tushare_timeout_seconds,
+            )
+            if ts_result.status == "available":
+                return self._upsert_realtime_daily_snapshots(ts_result.frame)
+            if ts_result.message:
+                warnings.append(f"Tushare 实时日线快照失败：{ts_result.message}")
         ak = AkShareSource()
         result = self.public_guard.call(
             "AkShare 新浪",
