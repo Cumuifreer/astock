@@ -22,9 +22,14 @@ from backend.app.sources.adata_source import ADataSource
 from backend.app.sources.akshare_source import AkShareSource
 from backend.app.sources.baostock_source import BaostockSource
 from backend.app.sources.base import SourceGuard
+from backend.app.sources.tushare_source import TushareRealtimeSource
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 HISTORY_CLOSE_HOUR = 16
+
+
+def _tushare_realtime_configured() -> bool:
+    return bool(settings.tushare_realtime_enabled and settings.tushare_token)
 
 
 class TaskBusy(RuntimeError):
@@ -157,7 +162,7 @@ class UpdateService:
             task_id,
             kind="intraday",
             stage="准备盘中采样",
-            source="AkShare 新浪",
+            source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
             summary={},
             payload=options or {},
         )
@@ -173,7 +178,7 @@ class UpdateService:
             task_id,
             kind="intraday",
             stage="准备盘中采样",
-            source="AkShare 新浪",
+            source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
             summary={"schedule_key": schedule_key, "scheduled": True},
             payload={
                 "sample_at": slot.isoformat(timespec="seconds"),
@@ -395,6 +400,19 @@ class UpdateService:
                 ),
             ),
         ]
+        if _tushare_realtime_configured():
+            probes.insert(
+                1,
+                (
+                    self.public_guard,
+                    "Tushare 实时日线",
+                    "盘中行情快照",
+                    lambda: TushareRealtimeSource().fetch_realtime_daily(
+                        include_bj=include_bj,
+                        exclude_star=exclude_star,
+                    ),
+                ),
+            )
         for guard, source, capability, fetcher in probes:
             result = guard.call(
                 source,
@@ -553,13 +571,18 @@ class UpdateService:
         trade_date = sample_at.date()
         warnings: List[str] = []
         try:
-            self._patch_task(task_id, stage="拉取盘中快照", source="AkShare 新浪")
+            self._patch_task(
+                task_id,
+                stage="拉取盘中快照",
+                source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
+            )
             frame = self._fetch_intraday_snapshot_frame(include_bj, exclude_star, warnings)
             snapshot_count = self.intraday_service.record_snapshots(
                 frame,
                 sample_at=sample_at,
                 trade_date=trade_date,
             )
+            daily_snapshot_count = self._upsert_realtime_daily_snapshots(frame, trade_date)
             self._patch_task(
                 task_id,
                 stage="生成盘中雷达",
@@ -581,6 +604,7 @@ class UpdateService:
                 warning=warnings[-1] if warnings else None,
                 summary={
                     "snapshot_count": snapshot_count,
+                    "daily_snapshot_count": daily_snapshot_count,
                     "candidate_count": candidate_count,
                     "strict_count": radar_result.get("summary", {}).get("strict_count", candidate_count),
                     "score_count": radar_result.get("summary", {}).get("score_count", 0),
@@ -643,6 +667,21 @@ class UpdateService:
         exclude_star: bool,
         warnings: List[str],
     ) -> pd.DataFrame:
+        if _tushare_realtime_configured():
+            ts_source = TushareRealtimeSource()
+            ts_result = self.public_guard.call(
+                "Tushare 实时日线",
+                "盘中行情快照",
+                lambda: ts_source.fetch_realtime_daily(include_bj=include_bj, exclude_star=exclude_star),
+                ttl_minutes=5,
+                max_attempts=1,
+                timeout_seconds=settings.tushare_timeout_seconds,
+            )
+            if ts_result.status == "available":
+                return ts_result.frame
+            if ts_result.message:
+                warnings.append(f"Tushare 实时日线失败：{ts_result.message}")
+
         ak = AkShareSource()
         result = self.public_guard.call(
             "AkShare 新浪",
@@ -686,6 +725,37 @@ class UpdateService:
         if chosen.status != "available":
             raise RuntimeError(chosen.message or "盘中快照不可用。")
         return chosen.frame
+
+    def _upsert_realtime_daily_snapshots(self, frame: pd.DataFrame, trade_date: date) -> int:
+        if frame is None or frame.empty:
+            return 0
+        records = []
+        for item in frame.to_dict("records"):
+            code = item.get("code")
+            if not code:
+                continue
+            records.append(
+                {
+                    "code": code,
+                    "date": trade_date,
+                    "name": item.get("name") or code,
+                    "latest_price": safe_float(item.get("latest_price")),
+                    "pct_chg": safe_float(item.get("pct_chg")),
+                    "high": safe_float(item.get("high")),
+                    "low": safe_float(item.get("low")),
+                    "volume": safe_float(item.get("volume")),
+                    "amount": safe_float(item.get("amount")),
+                    "turnover_rate": safe_float(item.get("turnover_rate")),
+                    "float_market_value": safe_float(item.get("float_market_value")),
+                    "source": item.get("source") or "盘中实时日线",
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+        if not records:
+            return 0
+        count = self.db.upsert("daily_snapshots", records, ["code", "date"])
+        self._merge_snapshot_names(pd.DataFrame(records))
+        return count
 
     def _update_basics(
         self,

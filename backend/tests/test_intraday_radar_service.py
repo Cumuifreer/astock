@@ -604,3 +604,49 @@ def test_intraday_task_records_snapshot_and_runs_radar(tmp_path, monkeypatch):
     assert task["kind"] == "intraday"
     assert radar["summary"]["candidate_count"] == 1
     assert radar["rows"][0]["status"] == "刚突破"
+
+
+def test_intraday_snapshot_prefers_tushare_realtime(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+
+    class FakeTushareSource:
+        def fetch_realtime_daily(self, include_bj=False, exclude_star=False):
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "000001.SZ",
+                        "date": "2026-05-21",
+                        "name": "平安银行",
+                        "latest_price": 10.55,
+                        "pct_chg": 4.2,
+                        "high": 10.6,
+                        "low": 9.9,
+                        "volume": 3_100_000.0,
+                        "amount": 62_000_000.0,
+                        "source": "Tushare 实时日线",
+                    }
+                ]
+            )
+
+    monkeypatch.setattr("backend.app.services.update_service.TushareRealtimeSource", FakeTushareSource)
+    monkeypatch.setattr(
+        "backend.app.services.update_service.settings",
+        SimpleNamespace(
+            tushare_realtime_enabled=True,
+            tushare_token="test-token",
+            tushare_timeout_seconds=5,
+            source_probe_ttl_minutes=60,
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.update_service.AkShareSource.fetch_sina_snapshot",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("AkShare should not be called")),
+    )
+
+    frame = service._fetch_intraday_snapshot_frame(include_bj=False, exclude_star=False, warnings=[])
+
+    assert frame.iloc[0]["source"] == "Tushare 实时日线"

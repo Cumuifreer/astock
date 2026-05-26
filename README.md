@@ -14,6 +14,7 @@ A-Share Signal 是一个私人使用的 A 股技术分析 Web 应用。它只做
 ## 数据源
 
 - Baostock：历史 K 线主源，使用前复权，保存成交量、成交额、换手率 `turn`、ST、停牌状态。
+- Tushare 实时日线：可选增强源。配置 token 后，盘中雷达会优先用 Tushare 中转实时 K 线采样，并同步写入当天快照；不可用时自动回退到 AkShare / AData。
 - AkShare 新浪：当天行情快照主源，保存最新价、涨跌幅、最高、最低、成交量、成交额、名称，能取到流通市值时一并缓存。
 - AkShare 腾讯：当天行情快照备用源。系统会检测当前 AkShare 是否暴露兼容接口；不可用时会记录原因并在数据地图显示。
 - AData：可选备用源。安装后自动检测，用于股票基础信息、快照、历史行情 fallback；接口返回空或不可用不会影响主流程。
@@ -48,6 +49,14 @@ curl -sS http://127.0.0.1:8000/api/intraday
 ```
 
 适合的采样时间可以从 09:35、10:00、10:30、11:00、11:25、13:00、13:30、14:00、14:30、14:55 开始。轻量服务器上不建议全市场 5 分钟一次。
+
+如果配置了 Tushare 实时日线，盘中雷达会优先使用它；失败时仍会回退到 AkShare 新浪、AkShare 腾讯、AData 和本地缓存。Tushare 初始化集中在 `backend/app/sources/tushare_client.py`，密钥只从环境变量读取，不要写进代码：
+
+```bash
+export ASHARE_TUSHARE_TOKEN=your-token
+export ASHARE_TUSHARE_HTTP_URL=http://101.35.233.113:8020/
+export ASHARE_TUSHARE_REALTIME=1
+```
 
 如果用 systemd 定时触发，可以让 timer 在这些时间运行：
 
@@ -158,6 +167,9 @@ Environment="ASHARE_DB_PATH=/opt/ashare-signal/data/ashare_signal.duckdb"
 Environment="DEEPSEEK_API_KEY=replace-with-your-key"
 Environment="ASHARE_DAILY_BRIEF_MODEL=deepseek-v4-flash"
 Environment="ASHARE_DAILY_BRIEF_TIME=08:20,18:20"
+Environment="ASHARE_TUSHARE_TOKEN=replace-with-your-token"
+Environment="ASHARE_TUSHARE_HTTP_URL=http://101.35.233.113:8020/"
+Environment="ASHARE_TUSHARE_REALTIME=1"
 ExecStart=/opt/ashare-signal/.venv/bin/python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=5
