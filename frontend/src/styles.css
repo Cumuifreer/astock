@@ -2253,6 +2253,12 @@ h1 {
   padding-bottom: 10px;
 }
 
+.rule-workspace-main {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
 .indicator-select {
   position: relative;
   min-width: 0;
@@ -2507,6 +2513,28 @@ h1 {
   margin-top: 3px;
 }
 
+.rule-resonance-badge {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  margin-top: 6px;
+  min-height: 20px;
+  align-items: center;
+  border: 1px solid rgba(182, 255, 95, 0.2);
+  background: rgba(182, 255, 95, 0.045);
+  color: var(--soft);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.rule-resonance-badge.active {
+  border-color: rgba(182, 255, 95, 0.44);
+  background: rgba(182, 255, 95, 0.09);
+  color: var(--lime);
+}
+
 .rule-card-actions {
   display: inline-flex;
   align-items: center;
@@ -2639,8 +2667,40 @@ h1 {
   line-height: 1.45;
 }
 
-.strategy-resonance-builder {
-  border-color: rgba(182, 255, 95, 0.18);
+.inline-resonance-panel {
+  border: 1px solid rgba(182, 255, 95, 0.16);
+  background: rgba(182, 255, 95, 0.025);
+  border-radius: 5px;
+  padding: 9px;
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+
+.inline-resonance-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.inline-resonance-head span {
+  display: block;
+  color: var(--lime);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.inline-resonance-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.inline-resonance-head small {
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .resonance-draft {
@@ -2652,11 +2712,49 @@ h1 {
   padding-bottom: 10px;
 }
 
-.resonance-draft-selects {
+.rule-resonance-chip-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 7px;
   min-width: 0;
+}
+
+.rule-resonance-chip-grid button {
+  min-height: 48px;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(5, 12, 13, 0.66);
+  color: var(--soft);
+  border-radius: 5px;
+  padding: 7px 8px;
+  text-align: left;
+  display: grid;
+  gap: 3px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.rule-resonance-chip-grid button.active {
+  border-color: rgba(182, 255, 95, 0.52);
+  background: rgba(182, 255, 95, 0.09);
+  color: var(--text);
+}
+
+.rule-resonance-chip-grid strong,
+.rule-resonance-chip-grid span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-resonance-chip-grid strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.rule-resonance-chip-grid span {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .resonance-draft-actions {
@@ -2668,7 +2766,6 @@ h1 {
 }
 
 .resonance-draft-actions select,
-.resonance-draft-selects select,
 .resonance-condition select {
   min-height: 32px;
   border: 1px solid rgba(157, 196, 187, 0.18);
@@ -2679,7 +2776,6 @@ h1 {
   min-width: 0;
 }
 
-.resonance-draft-selects select,
 .resonance-condition select {
   width: 100%;
 }

@@ -1408,12 +1408,7 @@ function StrategyPanel(props: {
               />
             </div>
           </details>
-          <StrategyRuleBuilder
-            library={props.indicatorLibrary}
-            strategy={props.strategy}
-            setStrategy={props.setStrategy}
-          />
-          <StrategyResonanceBuilder
+          <StrategyRuleWorkspace
             library={props.indicatorLibrary}
             strategy={props.strategy}
             setStrategy={props.setStrategy}
@@ -1424,7 +1419,7 @@ function StrategyPanel(props: {
   );
 }
 
-function StrategyRuleBuilder({
+function StrategyRuleWorkspace({
   library,
   strategy,
   setStrategy,
@@ -1434,6 +1429,8 @@ function StrategyRuleBuilder({
   setStrategy: (config: StrategyConfig) => void;
 }) {
   const [selectedId, setSelectedId] = useState('');
+  const [draftRuleIds, setDraftRuleIds] = useState<string[]>([]);
+  const [draftBonus, setDraftBonus] = useState(8);
   const indicatorById = useMemo(
     () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
     [library.indicators],
@@ -1454,12 +1451,34 @@ function StrategyRuleBuilder({
     if (rule.enabled !== false && rule.action in acc) acc[rule.action as RuleAction] += 1;
     return acc;
   }, { filter: 0, score: 0, risk: 0, display: 0 });
+  const resonances = Array.isArray(strategy.strategy_resonances) ? strategy.strategy_resonances : [];
+  const resonanceEligibleRules = useMemo(
+    () => rules
+      .filter((rule) => rule.enabled !== false)
+      .filter((rule) => rule.action === 'filter' || rule.action === 'score')
+      .filter((rule) => Boolean(indicatorById[rule.indicator_id])),
+    [indicatorById, rules],
+  );
+  const validDraftRuleIds = draftRuleIds.filter((id) => resonanceEligibleRules.some((rule) => rule.id === id));
+  const ruleResonanceCounts = resonances.reduce<Record<string, number>>((acc, resonance) => {
+    if (resonance.enabled === false || resonance.source === 'legacy_unmatched') return acc;
+    (resonance.rule_ids || []).forEach((ruleId) => {
+      acc[ruleId] = (acc[ruleId] || 0) + 1;
+    });
+    return acc;
+  }, {});
 
   const updateRules = (nextRules: StrategyRule[]) => {
     setStrategy({ ...strategy, strategy_rules: nextRules });
   };
+  const updateResonances = (nextResonances: StrategyResonance[]) => {
+    setStrategy({ ...strategy, strategy_resonances: nextResonances });
+  };
   const patchRule = (ruleId: string, patch: Partial<StrategyRule>) => {
     updateRules(rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)));
+  };
+  const patchResonance = (resonanceId: string, patch: Partial<StrategyResonance>) => {
+    updateResonances(resonances.map((resonance) => (resonance.id === resonanceId ? { ...resonance, ...patch } : resonance)));
   };
   const addRule = (indicator = selectedIndicator) => {
     if (!indicator) return;
@@ -1469,16 +1488,77 @@ function StrategyRuleBuilder({
   const removeRule = (ruleId: string) => {
     updateRules(rules.filter((rule) => rule.id !== ruleId));
   };
+  const toggleDraftRuleId = (ruleId: string) => {
+    setDraftRuleIds((current) => (
+      current.includes(ruleId)
+        ? current.filter((id) => id !== ruleId)
+        : [...current, ruleId]
+    ));
+  };
+  const addResonance = () => {
+    if (validDraftRuleIds.length < 2) return;
+    const selectedRules = validDraftRuleIds
+      .map((id) => resonanceEligibleRules.find((rule) => rule.id === id))
+      .filter(Boolean) as StrategyRule[];
+    updateResonances([
+      ...resonances,
+      {
+        id: createResonanceId(),
+        name: selectedRules.map((rule) => indicatorById[rule.indicator_id]?.name || rule.indicator_id).slice(0, 3).join(' + '),
+        rule_ids: validDraftRuleIds,
+        bonus: draftBonus,
+        enabled: true,
+        source: 'rule_ids',
+      },
+    ]);
+    setDraftRuleIds([]);
+  };
+  const removeResonance = (resonanceId: string) => {
+    updateResonances(resonances.filter((resonance) => resonance.id !== resonanceId));
+  };
+  const restoreLegacyResonance = (resonance: StrategyResonance) => {
+    const conditions = (resonance.legacy_conditions || []).filter((condition) => Boolean(indicatorById[condition.indicator_id]));
+    if (conditions.length < 2) return;
+    const createdRules: StrategyRule[] = conditions.map((condition) => ({
+      id: createRuleId(condition.indicator_id),
+      indicator_id: condition.indicator_id,
+      action: 'score',
+      operator: condition.operator,
+      value: condition.value ?? defaultValueForIndicator(indicatorById[condition.indicator_id]),
+      value2: condition.value2,
+      window_days: condition.window_days,
+      weight: 0,
+      missing_policy: condition.missing_policy || 'neutral',
+      enabled: true,
+    }));
+    const restoredResonances = resonances.map((item) => (
+      item.id === resonance.id
+        ? {
+            id: item.id,
+            name: item.name || '组合共振',
+            rule_ids: createdRules.map((rule) => rule.id),
+            bonus: item.bonus || 8,
+            enabled: true,
+            source: 'rule_ids',
+          }
+        : item
+    ));
+    setStrategy({
+      ...strategy,
+      strategy_rules: [...rules, ...createdRules],
+      strategy_resonances: restoredResonances,
+    });
+  };
   const categories = library.categories
     .filter((item) => usableIndicators.some((indicator) => indicator.category_id === item.id));
 
   return (
-    <section className="strategy-rule-builder wide">
+    <section className="strategy-rule-builder strategy-rule-workspace wide">
       <div className="rule-builder-head">
         <div>
-          <span className="section-kicker">指标规则</span>
-          <h3>补充指标条件</h3>
-          <p>运行参数里已有的指标不再重复出现；这里放资金、事件、筹码等补充条件。</p>
+          <span className="section-kicker">策略规则</span>
+          <h3>补充指标与组合共振</h3>
+          <p>先添加筛选、加权、风险或展示规则；筛选/加权规则可以直接组合成共振加分。</p>
         </div>
         <div className="rule-builder-stats">
           {(Object.keys(ruleActionMeta) as RuleAction[]).map((action) => (
@@ -1487,6 +1567,10 @@ function StrategyRuleBuilder({
               <em>{ruleActionMeta[action].label}</em>
             </span>
           ))}
+          <span>
+            <b>{resonances.filter((item) => item.enabled !== false).length}</b>
+            <em>共振</em>
+          </span>
         </div>
       </div>
 
@@ -1505,28 +1589,46 @@ function StrategyRuleBuilder({
           </button>
         </aside>
 
-        <div className="rule-board">
-          {rules.length === 0 && (
-            <div className="rule-empty-state">
-              <strong>还没有指标规则</strong>
-              <span>从上方分类指标中加入条件。保存并运行后，后端会按显式规则过滤、加权、扣风险或展示。</span>
-            </div>
-          )}
-          {rules.map((rule) => {
-            const indicator = indicatorById[rule.indicator_id];
-            if (!indicator) {
-              return null;
-            }
-            return (
-              <StrategyRuleCard
-                key={rule.id}
-                rule={rule}
-                indicator={indicator}
-                patch={(patch) => patchRule(rule.id, patch)}
-                remove={() => removeRule(rule.id)}
-              />
-            );
-          })}
+        <div className="rule-workspace-main">
+          <div className="rule-board">
+            {rules.length === 0 && (
+              <div className="rule-empty-state">
+                <strong>还没有指标规则</strong>
+                <span>从左侧分类指标中加入条件。保存并运行后，后端会按显式规则过滤、加权、扣风险或展示。</span>
+              </div>
+            )}
+            {rules.map((rule) => {
+              const indicator = indicatorById[rule.indicator_id];
+              if (!indicator) {
+                return null;
+              }
+              const canResonate = rule.enabled !== false && (rule.action === 'filter' || rule.action === 'score');
+              return (
+                <StrategyRuleCard
+                  key={rule.id}
+                  rule={rule}
+                  indicator={indicator}
+                  resonanceEligible={canResonate}
+                  resonanceCount={ruleResonanceCounts[rule.id] || 0}
+                  patch={(patch) => patchRule(rule.id, patch)}
+                  remove={() => removeRule(rule.id)}
+                />
+              );
+            })}
+          </div>
+          <StrategyResonancePanel
+            resonances={resonances}
+            rules={resonanceEligibleRules}
+            indicatorById={indicatorById}
+            draftRuleIds={validDraftRuleIds}
+            draftBonus={draftBonus}
+            setDraftBonus={setDraftBonus}
+            toggleDraftRuleId={toggleDraftRuleId}
+            addResonance={addResonance}
+            patchResonance={patchResonance}
+            removeResonance={removeResonance}
+            restoreLegacyResonance={restoreLegacyResonance}
+          />
         </div>
       </div>
     </section>
@@ -1536,11 +1638,15 @@ function StrategyRuleBuilder({
 function StrategyRuleCard({
   rule,
   indicator,
+  resonanceEligible = false,
+  resonanceCount = 0,
   patch,
   remove,
 }: {
   rule: StrategyRule;
   indicator: IndicatorDefinition;
+  resonanceEligible?: boolean;
+  resonanceCount?: number;
   patch: (patch: Partial<StrategyRule>) => void;
   remove: () => void;
 }) {
@@ -1582,6 +1688,11 @@ function StrategyRuleCard({
         <div>
           <strong>{indicator.name}</strong>
           <span>{ruleSummary(rule, indicator)}</span>
+          {resonanceEligible && (
+            <small className={resonanceCount > 0 ? 'rule-resonance-badge active' : 'rule-resonance-badge'}>
+              {resonanceCount > 0 ? `参与 ${resonanceCount} 组共振` : '可组合共振'}
+            </small>
+          )}
         </div>
         <div className="rule-card-actions">
           <label className="rule-enabled-toggle">
@@ -1800,130 +1911,63 @@ function IndicatorSelect({
   );
 }
 
-function StrategyResonanceBuilder({
-  library,
-  strategy,
-  setStrategy,
+function StrategyResonancePanel({
+  resonances,
+  rules,
+  indicatorById,
+  draftRuleIds,
+  draftBonus,
+  setDraftBonus,
+  toggleDraftRuleId,
+  addResonance,
+  patchResonance,
+  removeResonance,
+  restoreLegacyResonance,
 }: {
-  library: IndicatorLibrary;
-  strategy: StrategyConfig;
-  setStrategy: (config: StrategyConfig) => void;
+  resonances: StrategyResonance[];
+  rules: StrategyRule[];
+  indicatorById: Record<string, IndicatorDefinition>;
+  draftRuleIds: string[];
+  draftBonus: number;
+  setDraftBonus: (value: number) => void;
+  toggleDraftRuleId: (ruleId: string) => void;
+  addResonance: () => void;
+  patchResonance: (resonanceId: string, patch: Partial<StrategyResonance>) => void;
+  removeResonance: (resonanceId: string) => void;
+  restoreLegacyResonance: (resonance: StrategyResonance) => void;
 }) {
-  const [draftRuleIds, setDraftRuleIds] = useState<string[]>(['', '']);
-  const [draftBonus, setDraftBonus] = useState(8);
-  const indicatorById = useMemo(
-    () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
-    [library.indicators],
-  );
-  const resonanceEligibleRules = useMemo(
-    () => (Array.isArray(strategy.strategy_rules) ? strategy.strategy_rules : [])
-      .filter((rule) => rule.enabled !== false)
-      .filter((rule) => rule.action === 'filter' || rule.action === 'score')
-      .filter((rule) => Boolean(indicatorById[rule.indicator_id])),
-    [indicatorById, strategy.strategy_rules],
-  );
-  const resonances = Array.isArray(strategy.strategy_resonances) ? strategy.strategy_resonances : [];
   const legacyResonanceCount = resonances.filter((item) => item.source === 'legacy_unmatched').length;
-  const canDraftResonance = resonanceEligibleRules.length >= 2;
-  const uniqueDraftRuleIds = Array.from(new Set(draftRuleIds.filter((id) => resonanceEligibleRules.some((rule) => rule.id === id))));
-
-  const updateResonances = (nextResonances: StrategyResonance[]) => {
-    setStrategy({ ...strategy, strategy_resonances: nextResonances });
-  };
-  const patchResonance = (resonanceId: string, patch: Partial<StrategyResonance>) => {
-    updateResonances(resonances.map((resonance) => (resonance.id === resonanceId ? { ...resonance, ...patch } : resonance)));
-  };
-  const addDraftSlot = () => {
-    setDraftRuleIds([...draftRuleIds, '']);
-  };
-  const setDraftRuleId = (index: number, ruleId: string) => {
-    const next = [...draftRuleIds];
-    next[index] = ruleId;
-    setDraftRuleIds(next);
-  };
-  const addResonance = () => {
-    if (uniqueDraftRuleIds.length < 2) return;
-    const rules = uniqueDraftRuleIds.map((id) => resonanceEligibleRules.find((rule) => rule.id === id)).filter(Boolean) as StrategyRule[];
-    updateResonances([
-      ...resonances,
-      {
-        id: createResonanceId(),
-        name: rules.map((rule) => indicatorById[rule.indicator_id]?.name || rule.indicator_id).slice(0, 3).join(' + '),
-        rule_ids: uniqueDraftRuleIds,
-        bonus: draftBonus,
-        enabled: true,
-      },
-    ]);
-    setDraftRuleIds(['', '']);
-  };
-  const removeResonance = (resonanceId: string) => {
-    updateResonances(resonances.filter((resonance) => resonance.id !== resonanceId));
-  };
-  const restoreLegacyResonance = (resonance: StrategyResonance) => {
-    const conditions = (resonance.legacy_conditions || []).filter((condition) => Boolean(indicatorById[condition.indicator_id]));
-    if (conditions.length < 2) return;
-    const createdRules: StrategyRule[] = conditions.map((condition) => ({
-      id: createRuleId(condition.indicator_id),
-      indicator_id: condition.indicator_id,
-      action: 'score',
-      operator: condition.operator,
-      value: condition.value ?? defaultValueForIndicator(indicatorById[condition.indicator_id]),
-      value2: condition.value2,
-      window_days: condition.window_days,
-      weight: 0,
-      missing_policy: condition.missing_policy || 'neutral',
-      enabled: true,
-    }));
-    const restoredResonances = resonances.map((item) => (
-      item.id === resonance.id
-        ? {
-            id: item.id,
-            name: item.name || '组合共振',
-            rule_ids: createdRules.map((rule) => rule.id),
-            bonus: item.bonus || 8,
-            enabled: true,
-            source: 'rule_ids',
-          }
-        : item
-    ));
-    setStrategy({
-      ...strategy,
-      strategy_rules: [...(Array.isArray(strategy.strategy_rules) ? strategy.strategy_rules : []), ...createdRules],
-      strategy_resonances: restoredResonances,
-    });
-  };
+  const canDraftResonance = rules.length >= 2;
 
   return (
-    <section className="strategy-rule-builder strategy-resonance-builder wide">
-      <div className="rule-builder-head">
+    <div className="inline-resonance-panel">
+      <div className="inline-resonance-head">
         <div>
-          <span className="section-kicker">组合共振</span>
-          <h3>已有规则同时命中后加分</h3>
-          <p>共振只引用上方规则，不再单独填写阈值；命中后加固定分，排序解释更稳定。</p>
+          <span>组合共振</span>
+          <p>从上面的筛选/加权规则里选两个以上，同时命中后额外加分。</p>
         </div>
-        <div className="rule-builder-stats">
-          <span>
-            <b>{resonances.filter((item) => item.enabled !== false).length}</b>
-            <em>启用</em>
-          </span>
-          <span>
-            <b>{resonances.length}</b>
-            <em>组合</em>
-          </span>
-        </div>
+        <small>{resonances.filter((item) => item.enabled !== false).length} 启用 / {resonances.length} 组</small>
       </div>
 
       {canDraftResonance ? (
-        <div className="resonance-draft">
-          <div className="resonance-draft-selects">
-            {draftRuleIds.map((ruleId, index) => (
-              <select key={`${index}-${ruleId || 'blank'}`} value={ruleId} onChange={(event) => setDraftRuleId(index, event.target.value)}>
-                <option value="">选择规则 {index + 1}</option>
-                {resonanceEligibleRules.map((rule) => (
-                  <option key={rule.id} value={rule.id}>{strategyRuleSelectLabel(rule, indicatorById)}</option>
-                ))}
-              </select>
-            ))}
+        <div className="resonance-draft chip-mode">
+          <div className="rule-resonance-chip-grid">
+            {rules.map((rule) => {
+              const selected = draftRuleIds.includes(rule.id);
+              const indicator = indicatorById[rule.indicator_id];
+              if (!indicator) return null;
+              return (
+                <button
+                  key={rule.id}
+                  className={selected ? 'active' : ''}
+                  type="button"
+                  onClick={() => toggleDraftRuleId(rule.id)}
+                >
+                  <strong>{indicator.name}</strong>
+                  <span>{ruleActionMeta[rule.action]?.label || rule.action} · {ruleSummary(rule, indicator)}</span>
+                </button>
+              );
+            })}
           </div>
           <div className="resonance-draft-actions">
             <select value={draftBonus} onChange={(event) => setDraftBonus(Number(event.target.value))}>
@@ -1931,20 +1975,16 @@ function StrategyResonanceBuilder({
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
-            <button className="ghost compact" type="button" onClick={addDraftSlot}>
+            <button className="primary compact" type="button" disabled={draftRuleIds.length < 2} onClick={addResonance}>
               <Plus size={14} />
-              再加一项
-            </button>
-            <button className="primary compact" type="button" disabled={uniqueDraftRuleIds.length < 2} onClick={addResonance}>
-              <Plus size={14} />
-              新增共振
+              生成共振
             </button>
           </div>
         </div>
       ) : (
         <div className="rule-empty-state resonance-empty-state">
           <strong>还没有可用于共振的规则</strong>
-          <span>先在补充指标条件里创建至少两个筛选或加分规则；共振只引用这些规则，不单独填写阈值。</span>
+          <span>至少需要两个已启用的筛选或加权规则；风险和展示规则不会触发正向共振。</span>
           {legacyResonanceCount > 0 && <span>检测到旧共振，可在下方卡片中恢复为补充规则。</span>}
         </div>
       )}
@@ -1953,14 +1993,14 @@ function StrategyResonanceBuilder({
         {resonances.length === 0 && canDraftResonance && (
           <div className="rule-empty-state">
             <strong>还没有组合共振</strong>
-            <span>先在补充指标条件里创建规则，再组合成“题材 + 量能 + 强弱：+8 分”。</span>
+            <span>点选上方规则 chip 后生成，例如“题材 + 量能 + 强弱：+8 分”。</span>
           </div>
         )}
         {resonances.map((resonance) => (
           <StrategyResonanceCard
             key={resonance.id}
             resonance={resonance}
-            rules={resonanceEligibleRules}
+            rules={rules}
             indicatorById={indicatorById}
             patch={(patch) => patchResonance(resonance.id, patch)}
             remove={() => removeResonance(resonance.id)}
@@ -1968,7 +2008,7 @@ function StrategyResonanceBuilder({
           />
         ))}
       </div>
-    </section>
+    </div>
   );
 }
 
