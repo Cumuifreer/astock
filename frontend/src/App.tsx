@@ -54,8 +54,10 @@ import type {
   SignalModeField,
   SignalModeTemplate,
   StrategyConfig,
+  StrategyInteraction,
   StrategyPreset,
   StrategyRule,
+  StrategyRuleCondition,
   StrategyVersion,
   TaskRun,
   WatchlistBatch,
@@ -122,10 +124,19 @@ const analysisModes: Array<{ id: string; label: string; sub: string }> = [
 
 const ruleActionMeta: Record<RuleAction, { label: string; verb: string; note: string }> = {
   filter: { label: '筛选', verb: '不达标剔除', note: '用于硬条件' },
-  score: { label: '加权', verb: '达标加分', note: '用于排序强化' },
+  score: { label: '加权', verb: '达标加权', note: '用于排序强化' },
   risk: { label: '扣风险', verb: '达标扣分', note: '用于过热或异常' },
   display: { label: '只展示', verb: '不参与运算', note: '用于看板观察' },
 };
+
+const interactionMultiplierOptions = [
+  { value: 1.05, label: '轻微增强 x1.05' },
+  { value: 1.1, label: '标准增强 x1.10' },
+  { value: 1.2, label: '强确认 x1.20' },
+  { value: 1.35, label: '强共振 x1.35' },
+  { value: 0.9, label: '轻微降权 x0.90' },
+  { value: 0.8, label: '风险降权 x0.80' },
+];
 
 const ruleOperatorMeta: Record<RuleOperator, { label: string; summary: string }> = {
   gte: { label: '≥', summary: '高于或等于' },
@@ -1118,7 +1129,7 @@ function IndicatorLibraryPage({
         <div className="indicator-summary">
           <span><b>{formatInt(library.summary.indicator_count)}</b><em>指标</em></span>
           <span><b>{formatInt(library.summary.active_count)}</b><em>分析可用</em></span>
-          <span><b>{formatInt(library.summary.interaction_rule_count)}</b><em>组合规则</em></span>
+          <span><b>{formatInt(library.summary.interaction_rule_count)}</b><em>可做组合</em></span>
         </div>
       </section>
 
@@ -1219,8 +1230,8 @@ function IndicatorLibraryPage({
       </section>
 
       <section className="panel indicator-mode-note">
-        <PanelTitle icon={<SlidersHorizontal size={18} />} title="信号模式在策略页管理" />
-        <p>这里保持为指标字典：查字段含义、数据源、计算方法和分析状态。真正的模板编辑和运行参数统一放到策略页，避免同一件事在两个地方配置。</p>
+        <PanelTitle icon={<SlidersHorizontal size={18} />} title="策略页直接引用指标" />
+        <p>这里保持为指标字典：查字段含义、数据源、计算方法和分析状态。到策略页后可以直接把指标加入筛选、加权、风控、展示或组合倍率。</p>
       </section>
     </div>
   );
@@ -1742,17 +1753,7 @@ function StrategyPanel(props: {
   const activeAnalysisMode = analysisModes.find((mode) => mode.id === (props.strategy.analysis_mode || 'strict')) || analysisModes[0];
   const suggestedName = suggestStrategyName(props.strategy);
   const nameLooksGeneric = !props.strategyName.trim() || /^未命名策略/.test(props.strategyName.trim());
-  const activeProfile = activeSignalProfile(props.strategy, props.indicatorLibrary);
-  const selectedSignalModeId = activeProfile?.id || props.indicatorLibrary.signal_modes[0]?.id || '';
-  const selectSignalMode = (modeId: string) => {
-    const mode = props.indicatorLibrary.signal_modes.find((item) => item.id === modeId);
-    if (!mode) return;
-    props.setStrategy({
-      ...props.strategy,
-      signal_mode: mode.runtime_signal_mode || mode.id,
-      signal_profile: cloneSignalProfile(mode),
-    });
-  };
+  const strategyProfile = strategyParameterProfile(props.indicatorLibrary);
 
   useEffect(() => {
     let alive = true;
@@ -1876,15 +1877,7 @@ function StrategyPanel(props: {
               </button>
             )}
           </div>
-          <div className="strategy-mode-selectors wide">
-            <label>
-              <span>信号模式</span>
-              <select value={selectedSignalModeId} onChange={(event) => selectSignalMode(event.target.value)}>
-                {props.indicatorLibrary.signal_modes.map((mode) => (
-                  <option key={mode.id} value={mode.id}>{mode.name}</option>
-                ))}
-              </select>
-            </label>
+          <div className="strategy-mode-selectors wide single">
             <label>
               <span>运行方式</span>
               <select value={props.strategy.analysis_mode || 'strict'} onChange={(event) => update('analysis_mode', event.target.value)}>
@@ -1893,43 +1886,26 @@ function StrategyPanel(props: {
                 ))}
               </select>
             </label>
+            <span className="strategy-mode-note">策略由指标条件、组合倍率和运行参数共同决定；需要的形态/趋势计算会自动启用。</span>
           </div>
           <StrategyRuleBuilder
             library={props.indicatorLibrary}
             strategy={props.strategy}
             setStrategy={props.setStrategy}
           />
-          {activeProfile ? (
-            <details className="legacy-strategy-controls wide">
-              <summary>
-                <span>{activeProfile.name} 参数</span>
-                <small>保留原有模式里的窗口、形态和高级阈值</small>
-              </summary>
-              <div className="legacy-strategy-body">
-                <SignalModeFieldForm
-                  profile={activeProfile}
-                  library={props.indicatorLibrary}
-                  strategy={props.strategy}
-                  update={update}
-                />
-              </div>
-            </details>
-          ) : (
-            <div className="field-note wide">指标库里还没有可用的信号模式。</div>
-          )}
-          <details className="signal-mode-admin wide">
+          <details className="legacy-strategy-controls wide" open>
             <summary>
-              <span>信号模式管理</span>
-              <small>维护可选模板，平时不用打开。</small>
+              <span>运行参数</span>
+              <small>基础股票池、形态窗口、趋势参数和输出设置统一在这里填写。</small>
             </summary>
-            <SignalModeManager
-              library={props.indicatorLibrary}
-              createMode={props.createMode}
-              saveMode={props.saveMode}
-              duplicateMode={props.duplicateMode}
-              deleteMode={props.deleteMode}
-              embedded
-            />
+            <div className="legacy-strategy-body">
+              <SignalModeFieldForm
+                profile={strategyProfile}
+                library={props.indicatorLibrary}
+                strategy={props.strategy}
+                update={update}
+              />
+            </div>
           </details>
         </div>
       </section>
@@ -2000,8 +1976,9 @@ function StrategyRuleBuilder({
     <section className="strategy-rule-builder wide">
       <div className="rule-builder-head">
         <div>
-          <span className="section-kicker">FILTERS</span>
-          <h3>筛选条件</h3>
+          <span className="section-kicker">规则入口</span>
+          <h3>指标条件</h3>
+          <p>选一个指标，决定它是硬筛选、排序加权、风险降权还是只展示。</p>
         </div>
         <div className="rule-builder-stats">
           {(Object.keys(ruleActionMeta) as RuleAction[]).map((action) => (
@@ -2073,7 +2050,246 @@ function StrategyRuleBuilder({
           })}
         </div>
       </div>
+      <StrategyInteractionBuilder
+        library={library}
+        strategy={strategy}
+        setStrategy={setStrategy}
+      />
     </section>
+  );
+}
+
+function StrategyInteractionBuilder({
+  library,
+  strategy,
+  setStrategy,
+}: {
+  library: IndicatorLibrary;
+  strategy: StrategyConfig;
+  setStrategy: (config: StrategyConfig) => void;
+}) {
+  const usableIndicators = library.indicators.filter((indicator) => (
+    indicator.data_status === 'executable' && (indicator.usage || []).includes('interaction')
+  ));
+  const indicatorById = useMemo(
+    () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
+    [library.indicators],
+  );
+  const [firstId, setFirstId] = useState(usableIndicators[0]?.id || '');
+  const [secondId, setSecondId] = useState(usableIndicators[1]?.id || usableIndicators[0]?.id || '');
+  const interactions = Array.isArray(strategy.strategy_interactions) ? strategy.strategy_interactions : [];
+  const patchInteractions = (next: StrategyInteraction[]) => {
+    setStrategy({ ...strategy, strategy_interactions: next });
+  };
+  const addInteraction = () => {
+    const ids = Array.from(new Set([firstId, secondId].filter(Boolean)));
+    if (ids.length < 2) return;
+    const conditions = ids
+      .map((id) => indicatorById[id])
+      .filter((indicator): indicator is IndicatorDefinition => Boolean(indicator))
+      .map((indicator) => defaultRuleCondition(indicator));
+    patchInteractions([
+      ...interactions,
+      {
+        id: createInteractionId(),
+        name: conditions.map((condition) => indicatorById[condition.indicator_id]?.name || condition.indicator_id).join(' + '),
+        conditions,
+        multiplier: 1.1,
+        enabled: true,
+      },
+    ]);
+  };
+  const patchInteraction = (id: string, patch: Partial<StrategyInteraction>) => {
+    patchInteractions(interactions.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+  const removeInteraction = (id: string) => {
+    patchInteractions(interactions.filter((item) => item.id !== id));
+  };
+
+  return (
+    <section className="interaction-builder">
+      <div className="interaction-head">
+        <div>
+          <span className="section-kicker">组合共振</span>
+          <h3>组合倍率</h3>
+          <p>多个指标同时满足时，把最终信号强度按倍率增强或折减，比如 x1.10、x1.20。</p>
+        </div>
+        <div className="interaction-create">
+          <select value={firstId} onChange={(event) => setFirstId(event.target.value)}>
+            {usableIndicators.map((indicator) => (
+              <option key={indicator.id} value={indicator.id}>{indicator.name}</option>
+            ))}
+          </select>
+          <select value={secondId} onChange={(event) => setSecondId(event.target.value)}>
+            {usableIndicators.map((indicator) => (
+              <option key={indicator.id} value={indicator.id}>{indicator.name}</option>
+            ))}
+          </select>
+          <button className="primary compact" type="button" disabled={!firstId || !secondId || firstId === secondId} onClick={addInteraction}>
+            <Plus size={14} />
+            新增组合
+          </button>
+        </div>
+      </div>
+      {interactions.length === 0 ? (
+        <div className="rule-empty-state compact">
+          <strong>还没有组合条件</strong>
+          <span>例如：突破上沿距离达标 + 量比放大 + 题材热度高，信号强度 x1.20。</span>
+        </div>
+      ) : (
+        <div className="interaction-list">
+          {interactions.map((interaction) => (
+            <StrategyInteractionCard
+              key={interaction.id}
+              interaction={interaction}
+              usableIndicators={usableIndicators}
+              indicatorById={indicatorById}
+              patch={(patch) => patchInteraction(interaction.id, patch)}
+              remove={() => removeInteraction(interaction.id)}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StrategyInteractionCard({
+  interaction,
+  usableIndicators,
+  indicatorById,
+  patch,
+  remove,
+}: {
+  interaction: StrategyInteraction;
+  usableIndicators: IndicatorDefinition[];
+  indicatorById: Record<string, IndicatorDefinition>;
+  patch: (patch: Partial<StrategyInteraction>) => void;
+  remove: () => void;
+}) {
+  const updateCondition = (index: number, condition: StrategyRuleCondition) => {
+    patch({ conditions: interaction.conditions.map((item, itemIndex) => (itemIndex === index ? condition : item)) });
+  };
+  const addCondition = () => {
+    const nextIndicator = usableIndicators.find((indicator) => !interaction.conditions.some((condition) => condition.indicator_id === indicator.id));
+    if (!nextIndicator) return;
+    patch({ conditions: [...interaction.conditions, defaultRuleCondition(nextIndicator)] });
+  };
+  const removeCondition = (index: number) => {
+    if (interaction.conditions.length <= 2) return;
+    patch({ conditions: interaction.conditions.filter((_, itemIndex) => itemIndex !== index) });
+  };
+  return (
+    <article className={`interaction-card ${interaction.enabled === false ? 'disabled' : ''}`}>
+      <header>
+        <label>
+          <span>名称</span>
+          <input value={interaction.name} onChange={(event) => patch({ name: event.target.value })} />
+        </label>
+        <label>
+          <span>效果</span>
+          <select value={String(interaction.multiplier || 1.1)} onChange={(event) => patch({ multiplier: Number(event.target.value) })}>
+            {interactionMultiplierOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="rule-enabled-toggle">
+          <input type="checkbox" checked={interaction.enabled !== false} onChange={(event) => patch({ enabled: event.target.checked })} />
+          启用
+        </label>
+        <button className="table-action" type="button" onClick={remove} title="移除组合">
+          <X size={14} />
+        </button>
+      </header>
+      <div className="interaction-conditions">
+        {interaction.conditions.map((condition, index) => {
+          const indicator = indicatorById[condition.indicator_id] || usableIndicators[0];
+          return (
+            <InteractionConditionEditor
+              key={`${interaction.id}-${index}-${condition.indicator_id}`}
+              condition={condition}
+              indicator={indicator}
+              indicators={usableIndicators}
+              patch={(next) => updateCondition(index, next)}
+              remove={() => removeCondition(index)}
+              canRemove={interaction.conditions.length > 2}
+            />
+          );
+        })}
+      </div>
+      <button className="ghost compact add-condition-button" type="button" onClick={addCondition}>
+        <Plus size={14} />
+        添加指标
+      </button>
+    </article>
+  );
+}
+
+function InteractionConditionEditor({
+  condition,
+  indicator,
+  indicators,
+  patch,
+  remove,
+  canRemove,
+}: {
+  condition: StrategyRuleCondition;
+  indicator: IndicatorDefinition;
+  indicators: IndicatorDefinition[];
+  patch: (condition: StrategyRuleCondition) => void;
+  remove: () => void;
+  canRemove: boolean;
+}) {
+  const operators = supportedRuleOperators(indicator, 'filter');
+  const operator = operators.includes(condition.operator) ? condition.operator : operators[0] || 'gte';
+  const numeric = isNumericIndicator(indicator);
+  const setIndicator = (indicatorId: string) => {
+    const nextIndicator = indicators.find((item) => item.id === indicatorId) || indicator;
+    patch(defaultRuleCondition(nextIndicator));
+  };
+  const setValue = (key: 'value' | 'value2', value: string) => {
+    patch({ ...condition, [key]: value === '' ? null : numeric ? Number(value) : value });
+  };
+  return (
+    <div className="interaction-condition">
+      <select value={condition.indicator_id} onChange={(event) => setIndicator(event.target.value)}>
+        {indicators.map((item) => (
+          <option key={item.id} value={item.id}>{item.name}</option>
+        ))}
+      </select>
+      <select value={operator} onChange={(event) => patch({ ...condition, operator: event.target.value as RuleOperator })}>
+        {operators.map((item) => (
+          <option key={item} value={item}>{ruleOperatorMeta[item]?.label || item}</option>
+        ))}
+      </select>
+      {operator !== 'is_true' && (
+        <div className="rule-value-input">
+          <input
+            type={numeric ? 'number' : 'text'}
+            step={numeric ? ruleInputStep(indicator) : undefined}
+            value={String(condition.value ?? '')}
+            onChange={(event) => setValue('value', event.target.value)}
+            placeholder={ruleValuePlaceholder(indicator)}
+          />
+          {indicator.unit && <em>{indicator.unit}</em>}
+        </div>
+      )}
+      {operator === 'between' && (
+        <div className="rule-value-input">
+          <input
+            type={numeric ? 'number' : 'text'}
+            step={numeric ? ruleInputStep(indicator) : undefined}
+            value={String(condition.value2 ?? '')}
+            onChange={(event) => setValue('value2', event.target.value)}
+          />
+          {indicator.unit && <em>{indicator.unit}</em>}
+        </div>
+      )}
+      <button className="table-action" type="button" disabled={!canRemove} onClick={remove} title="移除指标">
+        <X size={14} />
+      </button>
+    </div>
   );
 }
 
@@ -2187,7 +2403,7 @@ function StrategyRuleCard({
             )}
             {(action === 'score' || action === 'risk') && (
               <label>
-                <span>{action === 'risk' ? '扣分' : '加分'}</span>
+                <span>{action === 'risk' ? '扣分' : '权重'}</span>
                 <div className="rule-value-input">
                   <input
                     type="number"
@@ -2316,9 +2532,9 @@ function SignalModeFieldForm({
     <>
       <div className="strategy-profile-note wide">
         <strong>{profile.name}</strong>
-        <span>{profile.description || profile.note || '按这个信号模式填写下方参数。'}</span>
+        <span>{profile.description || profile.note || '按当前策略填写下方运行参数。'}</span>
       </div>
-      {groups.length === 0 && pairedEditableGroups.length === 0 && <div className="field-note wide">这个信号模式目前只有基础股票池，暂时没有需要填写的策略参数。</div>}
+      {groups.length === 0 && pairedEditableGroups.length === 0 && <div className="field-note wide">当前策略只有基础股票池，暂时没有需要填写的运行参数。</div>}
       {groups.map((group) => (
         <Fragment key={group.id}>
           <div className="form-section wide">
@@ -2730,6 +2946,7 @@ function CandidateScoreDetails({ row }: { row: Candidate }) {
     { key: 'trend', label: '趋势', note: 'RPS、均线与 MACD' },
     { key: 'theme', label: '题材', note: '题材热度和涨停扩散' },
     { key: 'custom_rules', label: '规则', note: '自定义指标规则' },
+    { key: 'custom_multiplier', label: '倍率', note: '组合条件命中后的乘数' },
     { key: 'freshness', label: '新鲜度', note: '越靠近触发点越高' },
     { key: 'risk', label: '风险扣分', note: '过热、偏离和追高' },
   ];
@@ -2771,11 +2988,14 @@ function CandidateScoreDetails({ row }: { row: Candidate }) {
             {scoreItems.map((item) => {
               const value = breakdown[item.key];
               const isRisk = item.key === 'risk';
-              const width = Math.min(Math.abs(Number(value || 0)) / (isRisk ? 20 : 30), 1) * 100;
+              const isMultiplier = item.key === 'custom_multiplier';
+              const width = isMultiplier
+                ? Math.min(Math.abs(Number(value || 1) - 1) / 0.6, 1) * 100
+                : Math.min(Math.abs(Number(value || 0)) / (isRisk ? 20 : 30), 1) * 100;
               return (
-                <div className={isRisk ? 'score-card risk' : 'score-card'} key={item.key}>
+                <div className={isRisk ? 'score-card risk' : isMultiplier ? 'score-card multiplier' : 'score-card'} key={item.key}>
                   <span>{item.label}</span>
-                  <strong>{formatSignedScore(value, isRisk)}</strong>
+                  <strong>{isMultiplier ? formatMultiplier(value) : formatSignedScore(value, isRisk)}</strong>
                   <div className="score-meter"><i style={{ width: `${width}%` }} /></div>
                   <small>{item.note}</small>
                 </div>
@@ -4525,52 +4745,33 @@ function InitialLoading() {
 }
 
 function strategySummary(strategy: StrategyConfig) {
-  const mode = signalModes.find((item) => item.id === strategy.signal_mode)?.label || '自定义';
-  if (strategy.signal_mode === 'platform_setup') {
-    return `${mode} · ${strategy.platform_setup_lookback_days}日 · 距上沿≤${formatPercentRatio(strategy.platform_setup_max_distance_to_high)} · 近5日≤${formatPercentRatio(strategy.platform_setup_max_recent_gain_5d)}`;
-  }
-  if (strategy.signal_mode === 'platform_breakout') {
-    const clearance = strategy.platform_breakout_clearance_mode !== 'off'
-      ? ` · 上沿≥${formatPercentRatio(strategy.platform_breakout_clearance)}`
-      : '';
-    const maxClearance = strategy.platform_breakout_max_clearance_mode !== 'off'
-      ? ` · 上沿≤${formatPercentRatio(strategy.platform_breakout_max_clearance)}`
-      : '';
-    const firstBreak = strategy.platform_breakout_first_mode === 'must' ? ' · 首次' : '';
-    return `${mode} · ${strategy.platform_lookback_days}日 · 区间≤${formatPercentRatio(strategy.platform_max_range)}${clearance}${maxClearance}${firstBreak} · 量比≥${formatPrice(strategy.platform_breakout_volume_ratio)}x · 涨幅≥${formatPercent(strategy.platform_breakout_pct_chg_min)}`;
-  }
-  if (strategy.signal_mode === 'trend_resonance') {
-    return `${mode} · EMA${strategy.trend_ema_fast_window}/${strategy.trend_ema_mid_window}/${strategy.trend_ema_long_window} · MACD ${strategy.trend_macd_fast}-${strategy.trend_macd_slow}-${strategy.trend_macd_signal} · 随机 ${strategy.trend_stoch_window}-${strategy.trend_stoch_k_smooth}-${strategy.trend_stoch_d_smooth}`;
-  }
-  const rpsKey = `RPS${strategy.rps_window}`;
-  const amount = formatMoneyCompact(strategy.min_amount || 0);
-  const direction = strategy.breakout_pullback_direction === 'breakout'
-    ? '右侧'
-    : strategy.breakout_pullback_direction === 'pullback'
-      ? '左侧'
-      : '双形态';
-  return `${mode} · ${direction} · 成交额≥${amount} · ${rpsKey} · MA${strategy.ma_short_window}/${strategy.ma_long_window}`;
+  const rules = Array.isArray(strategy.strategy_rules)
+    ? strategy.strategy_rules.filter((rule) => rule.enabled !== false).length
+    : 0;
+  const interactions = Array.isArray(strategy.strategy_interactions)
+    ? strategy.strategy_interactions.filter((interaction) => interaction.enabled !== false).length
+    : 0;
+  const parts = [
+    rules > 0 ? `${rules} 条指标` : '基础参数',
+    interactions > 0 ? `${interactions} 个组合倍率` : '',
+    `成交额≥${formatMoneyCompact(strategy.min_amount || 0)}`,
+    `RPS${strategy.rps_window}`,
+    `MA${strategy.ma_short_window}/${strategy.ma_long_window}`,
+  ].filter(Boolean);
+  return parts.join(' · ');
 }
 
 function suggestStrategyName(strategy: StrategyConfig) {
-  const mode = signalModes.find((item) => item.id === strategy.signal_mode)?.label || '自定义';
   const analysis = strategy.analysis_mode === 'score' ? '评分' : '严格';
-  if (strategy.signal_mode === 'platform_setup') {
-    return `${mode}-${analysis}-${strategy.platform_setup_lookback_days}日-距上沿${formatPercentRatio(strategy.platform_setup_max_distance_to_high)}`;
-  }
-  if (strategy.signal_mode === 'platform_breakout') {
-    return `${mode}-${analysis}-${strategy.platform_lookback_days}日-量比${formatPrice(strategy.platform_breakout_volume_ratio)}x`;
-  }
-  if (strategy.signal_mode === 'trend_resonance') {
-    return `${mode}-${analysis}-EMA${strategy.trend_ema_fast_window}/${strategy.trend_ema_mid_window}/${strategy.trend_ema_long_window}`;
-  }
-  if (strategy.breakout_pullback_direction === 'pullback') {
-    return `${mode}-${analysis}-左侧-RPS${strategy.rps_window}`;
-  }
-  if (strategy.breakout_pullback_direction === 'breakout') {
-    return `${mode}-${analysis}-右侧-放量${formatRatioX(strategy.volume_ratio_min)}`;
-  }
-  return `${mode}-${analysis}-MA${strategy.ma_short_window}/${strategy.ma_long_window}`;
+  const rules = Array.isArray(strategy.strategy_rules)
+    ? strategy.strategy_rules.filter((rule) => rule.enabled !== false).length
+    : 0;
+  const interactions = Array.isArray(strategy.strategy_interactions)
+    ? strategy.strategy_interactions.filter((interaction) => interaction.enabled !== false).length
+    : 0;
+  const core = rules > 0 ? `${rules}指标` : `RPS${strategy.rps_window}`;
+  const combo = interactions > 0 ? `-${interactions}组合` : '';
+  return `自定义策略-${analysis}-${core}${combo}`;
 }
 
 function dataHealthHints(bootstrap: Bootstrap) {
@@ -4743,11 +4944,45 @@ function defaultStrategyRule(indicator: IndicatorDefinition): StrategyRule {
   };
 }
 
+function defaultRuleCondition(indicator: IndicatorDefinition): StrategyRuleCondition {
+  const recommendation = (indicator.recommended_rules || []).find((item) => item.action === 'filter')
+    || (indicator.recommended_rules || [])[0];
+  const operator = recommendation?.operator || defaultOperatorForIndicator(indicator);
+  const missingPolicy = indicator.default_missing_policy === 'skip'
+    ? 'skip'
+    : indicator.default_missing_policy === 'allow'
+      ? 'keep'
+      : 'neutral';
+  return {
+    id: createInteractionConditionId(indicator.id),
+    indicator_id: indicator.id,
+    operator,
+    value: recommendation?.value ?? defaultValueForIndicator(indicator),
+    value2: recommendation?.value2 ?? (operator === 'between' ? indicator.range_hint?.max ?? '' : undefined),
+    window_days: recommendation?.window_days,
+    missing_policy: missingPolicy,
+  };
+}
+
 function createRuleId(indicatorId: string) {
   const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   return `rule-${indicatorId}-${random}`;
+}
+
+function createInteractionId() {
+  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return `combo-${random}`;
+}
+
+function createInteractionConditionId(indicatorId: string) {
+  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return `combo-condition-${indicatorId}-${random}`;
 }
 
 function isNumericIndicator(indicator: IndicatorDefinition) {
@@ -4805,7 +5040,7 @@ function indicatorReadinessLabel(indicator: IndicatorDefinition) {
 function indicatorUsageLabel(values: string[] = []) {
   const labels: Record<string, string> = {
     filter: '过滤',
-    score: '加分',
+    score: '加权',
     risk: '扣分',
     sort: '排序',
     display: '展示',
@@ -4836,6 +5071,26 @@ function missingPolicyLabel(value: string) {
     neutral: '缺失中性',
   };
   return labels[value] || value || '-';
+}
+
+function strategyParameterProfile(library: IndicatorLibrary): SignalModeTemplate {
+  const fields = library.indicators
+    .filter((indicator) => indicator.kind === 'strategy_param')
+    .map((indicator) => ({
+      indicator_id: indicator.id,
+      role: 'filter',
+      group_id: indicator.group_id || indicator.category_id,
+      group_label: indicator.group_label || indicator.category_id,
+    }));
+  return {
+    id: 'strategy-parameters',
+    name: '策略参数',
+    description: '当前策略使用的运行参数。',
+    note: '',
+    runtime_signal_mode: 'breakout_or_pullback',
+    fields,
+    rule_groups: [],
+  };
 }
 
 function activeSignalProfile(strategy: StrategyConfig, library: IndicatorLibrary): SignalModeTemplate | null {
@@ -4979,6 +5234,7 @@ function candidateScoreBreakdown(row: Candidate) {
     freshness: nullableNumber(raw.freshness),
     risk: nullableNumber(raw.risk),
     custom_rules: nullableNumber(raw.custom_rules),
+    custom_multiplier: nullableNumber(raw.custom_multiplier),
   };
 }
 
@@ -5044,6 +5300,12 @@ function formatSignedScore(value: unknown, isRisk = false) {
   if (number === null) return '-';
   if (isRisk && number === 0) return '0.00';
   return number > 0 ? `+${number.toFixed(2)}` : number.toFixed(2);
+}
+
+function formatMultiplier(value: unknown) {
+  const number = nullableNumber(value);
+  if (number === null) return '-';
+  return `x${number.toFixed(2)}`;
 }
 
 function formatDays(value: unknown) {

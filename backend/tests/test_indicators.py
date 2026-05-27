@@ -595,6 +595,83 @@ def test_strategy_rules_filter_score_and_risk_candidates():
     assert any(step["step_name"] == "题材热度规则" for step in funnel)
 
 
+def test_strategy_interactions_apply_multiplier_to_candidate_scores():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "组合增强",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "topic_heat": 82.0,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "000002.SZ",
+                "name": "普通候选",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "topic_heat": 42.0,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "trend_filter": "none",
+        "min_price": 0,
+        "min_amount": 0,
+        "min_rps20": None,
+        "max_turnover": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "max_amplitude": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+        "strategy_interactions": [
+            {
+                "id": "hot-volume-confirm",
+                "name": "题材放量确认",
+                "conditions": [
+                    {"indicator_id": "topic_heat", "operator": "gte", "value": 70},
+                    {"indicator_id": "volume_ratio", "operator": "gte", "value": 2},
+                ],
+                "multiplier": 1.2,
+                "enabled": True,
+            }
+        ],
+    }
+
+    candidates, _, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert [candidate["code"] for candidate in candidates] == ["000001.SZ", "000002.SZ"]
+    assert candidates[0]["score_breakdown"]["custom_multiplier"] == 1.2
+    assert candidates[1]["score_breakdown"]["custom_multiplier"] == 1.0
+    assert candidates[0]["signal_score"] > candidates[1]["signal_score"] * 1.15
+
+
 def test_platform_breakout_filters_remove_overheated_clearance_when_required():
     rows = pd.DataFrame(
         [

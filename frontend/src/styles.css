@@ -1698,6 +1698,11 @@ h1 {
   background: rgba(255, 255, 255, 0.014);
 }
 
+.strategy-mode-selectors.single {
+  grid-template-columns: minmax(220px, 0.35fr) minmax(260px, 1fr);
+  align-items: end;
+}
+
 .strategy-mode-selectors label,
 .indicator-add-controls,
 .indicator-add-stack {
@@ -2130,6 +2135,14 @@ h1 {
   line-height: 1.05;
 }
 
+.rule-builder-head p,
+.interaction-head p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.42;
+}
+
 .rule-builder-stats {
   display: flex;
   gap: 6px;
@@ -2474,6 +2487,117 @@ h1 {
   color: var(--muted);
   border-radius: 6px;
   line-height: 1.45;
+}
+
+.interaction-builder {
+  border-top: 1px solid rgba(157, 196, 187, 0.12);
+  padding-top: 10px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.interaction-head {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(360px, 0.92fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.interaction-head h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.05;
+}
+
+.interaction-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+}
+
+.interaction-create select,
+.interaction-card select,
+.interaction-card input,
+.interaction-condition select {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid rgba(157, 196, 187, 0.16);
+  background: #071012;
+  color: var(--text);
+  border-radius: 5px;
+  padding: 0 9px;
+  outline: none;
+}
+
+.interaction-list {
+  display: grid;
+  gap: 8px;
+}
+
+.interaction-card {
+  border: 1px solid rgba(182, 255, 95, 0.18);
+  background:
+    linear-gradient(135deg, rgba(182, 255, 95, 0.045), rgba(59, 240, 193, 0.02)),
+    rgba(5, 12, 13, 0.58);
+  border-radius: 6px;
+  padding: 9px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.interaction-card.disabled {
+  opacity: 0.56;
+}
+
+.interaction-card header {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(150px, 0.45fr) auto auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.interaction-card header label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  min-width: 0;
+}
+
+.interaction-card header .rule-enabled-toggle {
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  border-radius: 5px;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.interaction-conditions {
+  display: grid;
+  gap: 6px;
+}
+
+.interaction-condition {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.75fr) minmax(82px, 0.22fr) minmax(130px, 0.45fr) minmax(34px, auto);
+  gap: 6px;
+  align-items: center;
+}
+
+.interaction-condition .rule-value-input {
+  min-width: 0;
+}
+
+.add-condition-button {
+  justify-self: start;
 }
 
 .legacy-strategy-controls {
@@ -3134,6 +3258,10 @@ h1 {
 
 .score-card.risk strong {
   color: var(--red);
+}
+
+.score-card.multiplier strong {
+  color: var(--lime);
 }
 
 .score-meter {
@@ -4505,7 +4633,11 @@ a {
   .signal-manager-layout,
   .strategy-signal-context,
   .indicator-add-strip,
-  .rule-builder-layout {
+  .rule-builder-layout,
+  .interaction-head,
+  .interaction-create,
+  .interaction-card header,
+  .interaction-condition {
     grid-template-columns: 1fr;
   }
 
@@ -4621,6 +4753,36 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .rule-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .rule-builder-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+
+  .rule-builder-stats span {
+    min-width: 0;
+  }
+
+  .rule-indicator-list {
+    display: grid;
+    max-height: 180px;
+    overflow: auto;
+  }
+
+  .rule-indicator-list button {
+    flex: initial;
+    min-height: 50px;
+  }
+
+  .add-rule-button {
+    width: 100%;
+    justify-content: center;
+  }
+
   .indicator-sidebar,
   .indicator-list-panel,
   .indicator-detail {
@@ -4642,6 +4804,7 @@ a {
   .signal-manager-head,
   .signal-section-head,
   .rule-builder-head,
+  .interaction-head,
   .strategy-rule-card header,
   .legacy-strategy-controls summary {
     display: grid;
@@ -4743,7 +4906,8 @@ a {
 
   .mode-tabs,
   .analysis-mode-tabs,
-  .strategy-mode-selectors {
+  .strategy-mode-selectors,
+  .strategy-mode-selectors.single {
     grid-template-columns: 1fr;
   }
 

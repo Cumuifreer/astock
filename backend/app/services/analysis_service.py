@@ -710,6 +710,8 @@ def _strategy_rule_indicator(rule: Dict[str, Any], action: str) -> Optional[Dict
     indicator = INDICATOR_BY_ID.get(str(rule.get("indicator_id") or ""))
     if not indicator or indicator.get("data_status") != "executable":
         return None
+    if action == "interaction" and "interaction" in (indicator.get("usage") or []):
+        return indicator
     if action not in (indicator.get("supported_actions") or []):
         return None
     return indicator
@@ -839,6 +841,27 @@ def _strategy_rule_matches_row(row: Dict[str, Any], rule: Dict[str, Any], action
         return False
     series = pd.Series([row.get(column)])
     return bool(_strategy_rule_mask(series, rule).iloc[0])
+
+
+def _strategy_interaction_matches_row(row: Dict[str, Any], interaction: Dict[str, Any]) -> bool:
+    if not interaction.get("enabled", True):
+        return False
+    conditions = interaction.get("conditions") or []
+    if len(conditions) < 2:
+        return False
+    return all(_strategy_rule_matches_row(row, condition, "interaction") for condition in conditions)
+
+
+def _strategy_interaction_multiplier(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
+    multiplier = 1.0
+    for interaction in strategy.get("strategy_interactions") or []:
+        if not _strategy_interaction_matches_row(row, interaction):
+            continue
+        value = safe_float(interaction.get("multiplier"))
+        if value is None:
+            value = 1.0
+        multiplier *= float(value)
+    return round(max(0.5, min(1.6, multiplier)), 2)
 
 
 def _strategy_rule_score_adjustment(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
@@ -1215,7 +1238,8 @@ def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
 
 
 def _with_strategy_rule_adjustment(score: float, row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
-    return round(max(score + _strategy_rule_score_adjustment(row, strategy), 0), 2)
+    adjusted = max(score + _strategy_rule_score_adjustment(row, strategy), 0)
+    return round(max(adjusted * _strategy_interaction_multiplier(row, strategy), 0), 2)
 
 
 def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
@@ -1591,6 +1615,7 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
         "freshness": round(max(freshness, 0.0), 2),
         "risk": round(-max(risk, 0.0), 2),
         "custom_rules": _strategy_rule_score_adjustment(row, strategy),
+        "custom_multiplier": _strategy_interaction_multiplier(row, strategy),
     }
 
 
@@ -2039,6 +2064,7 @@ class AnalysisService:
         rps_scores = compute_rps_scores(bars[["code", "date", "close"]], windows=(20, 60, 120))
         _emit_analysis_progress(progress, "计算技术形态", 4)
         output = []
+        analysis_engines = set(strategy.get("analysis_engines") or [])
         for code, group in bars.groupby("code"):
             group = group.sort_values("date")
             latest_bar = group.iloc[-1].to_dict()
@@ -2072,9 +2098,9 @@ class AnalysisService:
                 )
             )
             platform_metrics = compute_platform_breakout_metrics(group, strategy)
-            if strategy.get("signal_mode") == "platform_setup":
+            if "platform_setup" in analysis_engines:
                 platform_metrics.update(compute_platform_setup_metrics(group, strategy))
-            if strategy.get("signal_mode") == "trend_resonance":
+            if "trend_resonance" in analysis_engines:
                 platform_metrics.update(compute_trend_resonance_metrics(group, strategy))
             output.append(
                 {

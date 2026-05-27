@@ -250,6 +250,37 @@ def test_save_preset_preserves_signal_profile_rules(tmp_path):
     assert saved_profile["rule_groups"][0]["rules"][0]["editable"] is True
 
 
+def test_normalize_strategy_config_infers_analysis_engines_from_rules_and_interactions():
+    normalized = normalize_strategy_config(
+        {
+            "signal_mode": "breakout_or_pullback",
+            "strategy_rules": [
+                {
+                    "indicator_id": "platform_setup_distance_to_high",
+                    "action": "filter",
+                    "operator": "lte",
+                    "value": 0.03,
+                }
+            ],
+            "strategy_interactions": [
+                {
+                    "id": "trend-confirm",
+                    "name": "趋势确认",
+                    "conditions": [
+                        {"indicator_id": "trend_ema_mid_distance", "operator": "lte", "value": 0.08},
+                        {"indicator_id": "topic_heat", "operator": "gte", "value": 70},
+                    ],
+                    "multiplier": 2.2,
+                }
+            ],
+        }
+    )
+
+    assert "platform_setup" in normalized["analysis_engines"]
+    assert "trend_resonance" in normalized["analysis_engines"]
+    assert normalized["strategy_interactions"][0]["multiplier"] == 1.6
+
+
 def test_migrate_backfills_initial_version_for_existing_custom_presets(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

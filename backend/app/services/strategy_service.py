@@ -101,12 +101,20 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "missing_float_market_value_policy": "allow",
     "include_bj": False,
     "exclude_star_board": False,
+    "analysis_engines": [],
     "strategy_rules": [],
+    "strategy_interactions": [],
 }
 
 RULE_ACTIONS = {"filter", "score", "risk", "display"}
 RULE_OPERATORS = {"gte", "lte", "gt", "lt", "between", "eq", "neq", "is_true", "recent"}
 RULE_MISSING_POLICIES = {"skip", "keep", "neutral", "allow"}
+ANALYSIS_ENGINES = ("platform_breakout", "platform_setup", "trend_resonance")
+LEGACY_SIGNAL_MODE_ENGINES = {
+    "platform_breakout": "platform_breakout",
+    "platform_setup": "platform_setup",
+    "trend_resonance": "trend_resonance",
+}
 
 
 def _coerce_number(value: Any) -> Optional[float]:
@@ -167,6 +175,107 @@ def _normalize_strategy_rules(value: Any) -> List[Dict[str, Any]]:
             }
         )
     return normalized
+
+
+def _normalize_rule_condition(raw: Dict[str, Any], index: int) -> Optional[Dict[str, Any]]:
+    indicator_id = str(raw.get("indicator_id") or "").strip()
+    if not indicator_id:
+        return None
+    operator = str(raw.get("operator") or "gte")
+    if operator not in RULE_OPERATORS:
+        operator = "gte"
+    missing_policy = str(raw.get("missing_policy") or "neutral")
+    if missing_policy not in RULE_MISSING_POLICIES:
+        missing_policy = "neutral"
+    value_one = raw.get("value")
+    value_two = raw.get("value2")
+    numeric_one = _coerce_number(value_one)
+    numeric_two = _coerce_number(value_two)
+    if numeric_one is not None:
+        value_one = numeric_one
+    if numeric_two is not None:
+        value_two = numeric_two
+    return {
+        "id": str(raw.get("id") or f"{indicator_id}-{index + 1}"),
+        "indicator_id": indicator_id,
+        "operator": operator,
+        "value": value_one,
+        "value2": value_two,
+        "window_days": int(_coerce_number(raw.get("window_days")) or 0),
+        "missing_policy": missing_policy,
+    }
+
+
+def _normalize_strategy_interactions(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            continue
+        conditions = [
+            condition
+            for condition in (
+                _normalize_rule_condition(condition_raw, condition_index)
+                for condition_index, condition_raw in enumerate(raw.get("conditions") or [])
+                if isinstance(condition_raw, dict)
+            )
+            if condition is not None
+        ]
+        if len(conditions) < 2:
+            continue
+        rule_id = str(raw.get("id") or f"interaction-{index + 1}").strip()
+        if not rule_id or rule_id in seen:
+            rule_id = f"interaction-{index + 1}"
+        seen.add(rule_id)
+        multiplier = _coerce_number(raw.get("multiplier"))
+        if multiplier is None:
+            multiplier = 1.0
+        multiplier = max(0.5, min(1.6, float(multiplier)))
+        normalized.append(
+            {
+                "id": rule_id,
+                "name": str(raw.get("name") or "组合条件"),
+                "conditions": conditions,
+                "multiplier": round(multiplier, 2),
+                "enabled": bool(raw.get("enabled", True)),
+            }
+        )
+    return normalized
+
+
+def _engine_for_indicator(indicator_id: str) -> Optional[str]:
+    if indicator_id.startswith("trend_"):
+        return "trend_resonance"
+    if indicator_id.startswith("platform_setup"):
+        return "platform_setup"
+    if indicator_id.startswith("platform_"):
+        return "platform_breakout"
+    return None
+
+
+def _normalize_analysis_engines(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item) in ANALYSIS_ENGINES]
+
+
+def _infer_analysis_engines(strategy: Dict[str, Any]) -> List[str]:
+    engines = set(_normalize_analysis_engines(strategy.get("analysis_engines")))
+    legacy_engine = LEGACY_SIGNAL_MODE_ENGINES.get(str(strategy.get("signal_mode") or ""))
+    if legacy_engine:
+        engines.add(legacy_engine)
+    for rule in strategy.get("strategy_rules") or []:
+        engine = _engine_for_indicator(str(rule.get("indicator_id") or ""))
+        if engine:
+            engines.add(engine)
+    for interaction in strategy.get("strategy_interactions") or []:
+        for condition in interaction.get("conditions") or []:
+            engine = _engine_for_indicator(str(condition.get("indicator_id") or ""))
+            if engine:
+                engines.add(engine)
+    return [engine for engine in ANALYSIS_ENGINES if engine in engines]
 
 
 SYSTEM_PRESETS = [
@@ -297,6 +406,7 @@ def insert_strategy_versions(db: Database, rows: List[Dict[str, Any]]) -> int:
 def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     merged = {**DEFAULT_STRATEGY_CONFIG, **(config or {})}
     merged["strategy_rules"] = _normalize_strategy_rules(merged.get("strategy_rules"))
+    merged["strategy_interactions"] = _normalize_strategy_interactions(merged.get("strategy_interactions"))
     raw_signal_mode = merged.get("signal_mode")
     if raw_signal_mode in {"breakout", "pullback"}:
         merged["signal_mode"] = "breakout_or_pullback"
@@ -367,6 +477,7 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
         merged["platform_setup_macd_mode"] = "dif_above_dea"
     if merged.get("analysis_mode") not in {"strict", "score"}:
         merged["analysis_mode"] = "strict"
+    merged["analysis_engines"] = _infer_analysis_engines(merged)
     return merged
 
 

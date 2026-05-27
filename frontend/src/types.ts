@@ -148,6 +148,24 @@ export interface StrategyRule {
   enabled: boolean;
 }
 
+export interface StrategyRuleCondition {
+  id?: string;
+  indicator_id: string;
+  operator: RuleOperator;
+  value?: number | string | boolean | null;
+  value2?: number | string | null;
+  window_days?: number;
+  missing_policy: 'skip' | 'keep' | 'neutral' | 'allow' | string;
+}
+
+export interface StrategyInteraction {
+  id: string;
+  name: string;
+  conditions: StrategyRuleCondition[];
+  multiplier: number;
+  enabled: boolean;
+}
+
 export interface IndicatorLibrary {
   categories: IndicatorCategory[];
   indicators: IndicatorDefinition[];
@@ -278,7 +296,9 @@ export interface StrategyConfig {
   missing_float_market_value_policy: string;
   include_bj: boolean;
   exclude_star_board: boolean;
+  analysis_engines?: string[];
   strategy_rules: StrategyRule[];
+  strategy_interactions?: StrategyInteraction[];
   signal_profile?: SignalModeTemplate | null;
 }
 
