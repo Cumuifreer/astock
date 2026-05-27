@@ -101,7 +101,72 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "missing_float_market_value_policy": "allow",
     "include_bj": False,
     "exclude_star_board": False,
+    "strategy_rules": [],
 }
+
+RULE_ACTIONS = {"filter", "score", "risk", "display"}
+RULE_OPERATORS = {"gte", "lte", "gt", "lt", "between", "eq", "neq", "is_true", "recent"}
+RULE_MISSING_POLICIES = {"skip", "keep", "neutral", "allow"}
+
+
+def _coerce_number(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number else None
+
+
+def _normalize_strategy_rules(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            continue
+        indicator_id = str(raw.get("indicator_id") or "").strip()
+        if not indicator_id:
+            continue
+        action = str(raw.get("action") or "display")
+        if action not in RULE_ACTIONS:
+            action = "display"
+        operator = str(raw.get("operator") or "gte")
+        if operator not in RULE_OPERATORS:
+            operator = "gte"
+        rule_id = str(raw.get("id") or f"{indicator_id}-{action}-{index + 1}").strip()
+        if not rule_id or rule_id in seen:
+            rule_id = f"{indicator_id}-{action}-{index + 1}"
+        seen.add(rule_id)
+        missing_policy = str(raw.get("missing_policy") or "neutral")
+        if missing_policy not in RULE_MISSING_POLICIES:
+            missing_policy = "neutral"
+        value_one = raw.get("value")
+        value_two = raw.get("value2")
+        numeric_one = _coerce_number(value_one)
+        numeric_two = _coerce_number(value_two)
+        if numeric_one is not None:
+            value_one = numeric_one
+        if numeric_two is not None:
+            value_two = numeric_two
+        weight = _coerce_number(raw.get("weight"))
+        normalized.append(
+            {
+                "id": rule_id,
+                "indicator_id": indicator_id,
+                "action": action,
+                "operator": operator,
+                "value": value_one,
+                "value2": value_two,
+                "window_days": int(_coerce_number(raw.get("window_days")) or 0),
+                "weight": weight if weight is not None else None,
+                "missing_policy": missing_policy,
+                "enabled": bool(raw.get("enabled", True)),
+            }
+        )
+    return normalized
 
 
 SYSTEM_PRESETS = [
@@ -231,6 +296,7 @@ def insert_strategy_versions(db: Database, rows: List[Dict[str, Any]]) -> int:
 
 def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     merged = {**DEFAULT_STRATEGY_CONFIG, **(config or {})}
+    merged["strategy_rules"] = _normalize_strategy_rules(merged.get("strategy_rules"))
     raw_signal_mode = merged.get("signal_mode")
     if raw_signal_mode in {"breakout", "pullback"}:
         merged["signal_mode"] = "breakout_or_pullback"

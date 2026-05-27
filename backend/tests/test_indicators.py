@@ -468,6 +468,133 @@ def test_platform_breakout_filters_keep_matching_shape():
     assert candidates[0]["interpretation"]["conclusion"]
 
 
+def test_strategy_rules_filter_score_and_risk_candidates():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "规则强",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 8.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.0,
+                "ma_distance": 0.02,
+                "topic_heat": 82.0,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "000002.SZ",
+                "name": "规则弱",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 8.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.0,
+                "ma_distance": 0.02,
+                "topic_heat": 42.0,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "000003.SZ",
+                "name": "规则风险",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 13.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.0,
+                "ma_distance": 0.02,
+                "topic_heat": 82.0,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "trend_filter": "none",
+        "min_price": 0,
+        "min_amount": 0,
+        "min_rps20": None,
+        "min_rps60": None,
+        "min_rps120": None,
+        "min_turnover": None,
+        "max_turnover": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "max_amplitude": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+        "strategy_rules": [
+            {
+                "id": "theme-hot",
+                "indicator_id": "topic_heat",
+                "action": "filter",
+                "operator": "gte",
+                "value": 60,
+                "missing_policy": "skip",
+                "enabled": True,
+            },
+            {
+                "id": "volume-bonus",
+                "indicator_id": "volume_ratio",
+                "action": "score",
+                "operator": "gte",
+                "value": 1.5,
+                "weight": 7,
+                "missing_policy": "neutral",
+                "enabled": True,
+            },
+            {
+                "id": "turnover-risk",
+                "indicator_id": "turnover_rate",
+                "action": "risk",
+                "operator": "gte",
+                "value": 12,
+                "weight": 5,
+                "missing_policy": "neutral",
+                "enabled": True,
+            },
+            {
+                "id": "display-only-ignored",
+                "indicator_id": "top_list_net_amount",
+                "action": "filter",
+                "operator": "gte",
+                "value": 1,
+                "missing_policy": "skip",
+                "enabled": True,
+            },
+        ],
+    }
+
+    candidates, funnel, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert [candidate["code"] for candidate in candidates] == ["000001.SZ", "000003.SZ"]
+    assert candidates[0]["signal_score"] == candidates[1]["signal_score"] + 5
+    assert candidates[0]["score_breakdown"]["custom_rules"] == 7
+    assert candidates[1]["score_breakdown"]["custom_rules"] == 2
+    assert any(step["step_name"] == "题材热度规则" for step in funnel)
+
+
 def test_platform_breakout_filters_remove_overheated_clearance_when_required():
     rows = pd.DataFrame(
         [

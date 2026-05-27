@@ -56,6 +56,41 @@ export interface IndicatorDefinition {
   control: IndicatorControl;
   group_id: string;
   group_label: string;
+  value_type?: IndicatorValueType;
+  unit?: string;
+  range_hint?: { min?: number; max?: number };
+  direction?: 'higher_better' | 'lower_better' | 'range_better' | 'neutral' | 'event' | string;
+  supported_actions?: RuleAction[];
+  supported_operators?: RuleOperator[];
+  default_operator?: RuleOperator;
+  recommended_rules?: IndicatorRecommendation[];
+  analysis_field?: string | null;
+  data_status?: 'executable' | 'display_only' | 'planned' | 'parameter' | string;
+}
+
+export type IndicatorValueType =
+  | 'number'
+  | 'money'
+  | 'percent'
+  | 'ratio'
+  | 'multiple'
+  | 'score'
+  | 'boolean'
+  | 'choice'
+  | 'event'
+  | string;
+
+export type RuleAction = 'filter' | 'score' | 'risk' | 'display';
+export type RuleOperator = 'gte' | 'lte' | 'gt' | 'lt' | 'between' | 'eq' | 'neq' | 'is_true' | 'recent';
+
+export interface IndicatorRecommendation {
+  label: string;
+  action: RuleAction;
+  operator: RuleOperator;
+  value?: number | string | boolean;
+  value2?: number | string;
+  weight?: number;
+  window_days?: number;
 }
 
 export interface IndicatorControl {
@@ -98,6 +133,19 @@ export interface SignalModeField {
   role: 'filter' | 'score' | 'risk' | 'display' | string;
   group_id: string;
   group_label: string;
+}
+
+export interface StrategyRule {
+  id: string;
+  indicator_id: string;
+  action: RuleAction;
+  operator: RuleOperator;
+  value?: number | string | boolean | null;
+  value2?: number | string | null;
+  window_days?: number;
+  weight?: number | null;
+  missing_policy: 'skip' | 'keep' | 'neutral' | 'allow' | string;
+  enabled: boolean;
 }
 
 export interface IndicatorLibrary {
@@ -230,6 +278,7 @@ export interface StrategyConfig {
   missing_float_market_value_policy: string;
   include_bj: boolean;
   exclude_star_board: boolean;
+  strategy_rules: StrategyRule[];
   signal_profile?: SignalModeTemplate | null;
 }
 

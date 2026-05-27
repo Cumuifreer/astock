@@ -18,6 +18,206 @@ INDICATOR_CATEGORIES: List[Dict[str, str]] = [
     {"id": "market", "label": "市场环境", "description": "市场宽度、指数趋势和涨跌停温度。"},
 ]
 
+RULE_ACTIONS = {"filter", "score", "risk", "display"}
+NUMERIC_OPERATORS = ["gte", "lte", "gt", "lt", "between", "eq", "neq"]
+BOOLEAN_OPERATORS = ["is_true", "eq", "neq"]
+CHOICE_OPERATORS = ["eq", "neq"]
+EVENT_OPERATORS = ["recent", "eq", "neq"]
+
+RULE_META_BY_ID: Dict[str, Dict[str, Any]] = {
+    "latest_price": {
+        "value_type": "money",
+        "unit": "元",
+        "direction": "range_better",
+        "recommended_rules": [
+            {"label": "剔除低价股", "action": "filter", "operator": "gte", "value": 4},
+        ],
+    },
+    "amount": {
+        "value_type": "money",
+        "unit": "元",
+        "direction": "higher_better",
+        "recommended_rules": [
+            {"label": "流动性 8000万+", "action": "filter", "operator": "gte", "value": 80_000_000},
+            {"label": "强成交 2亿+", "action": "score", "operator": "gte", "value": 200_000_000, "weight": 8},
+        ],
+    },
+    "turnover_rate": {
+        "value_type": "percent",
+        "unit": "%",
+        "direction": "range_better",
+        "recommended_rules": [
+            {"label": "活跃 1%+", "action": "filter", "operator": "gte", "value": 1},
+            {"label": "换手过热", "action": "risk", "operator": "gte", "value": 12, "weight": 8},
+        ],
+    },
+    "volume_ratio": {
+        "value_type": "multiple",
+        "unit": "倍",
+        "direction": "higher_better",
+        "recommended_rules": [
+            {"label": "温和放量", "action": "filter", "operator": "gte", "value": 1.1},
+            {"label": "突破放量", "action": "score", "operator": "gte", "value": 2.5, "weight": 10},
+        ],
+    },
+    "float_market_value": {
+        "value_type": "money",
+        "unit": "元",
+        "direction": "range_better",
+        "recommended_rules": [
+            {"label": "20亿以上", "action": "filter", "operator": "gte", "value": 2_000_000_000},
+            {"label": "500亿以下", "action": "filter", "operator": "lte", "value": 50_000_000_000},
+        ],
+    },
+    "topic_count": {"value_type": "number", "unit": "个", "direction": "higher_better"},
+    "topic_heat": {
+        "value_type": "score",
+        "unit": "分",
+        "range_hint": {"min": 0, "max": 100},
+        "direction": "higher_better",
+        "recommended_rules": [
+            {"label": "主线热度 60+", "action": "score", "operator": "gte", "value": 60, "weight": 8},
+            {"label": "强主线 75+", "action": "filter", "operator": "gte", "value": 75},
+        ],
+    },
+    "theme_limit_count": {"value_type": "number", "unit": "只", "direction": "higher_better"},
+    "limit_event": {"value_type": "event", "unit": "事件", "direction": "event"},
+    "top_list_net_amount": {"value_type": "money", "unit": "元", "direction": "higher_better"},
+    "main_net_amount": {"value_type": "money", "unit": "元", "direction": "higher_better"},
+    "net_mf_amount": {"value_type": "money", "unit": "元", "direction": "higher_better"},
+    "cyq_winner_rate": {"value_type": "percent", "unit": "%", "direction": "range_better"},
+    "cost_50pct": {"value_type": "money", "unit": "元", "direction": "range_better"},
+    "is_st": {"value_type": "boolean", "unit": "", "direction": "lower_better", "default_operator": "is_true"},
+    "market_breadth": {
+        "value_type": "score",
+        "unit": "分",
+        "range_hint": {"min": 0, "max": 100},
+        "direction": "higher_better",
+    },
+}
+
+
+def _default_value_type(indicator_id: str, category_id: str) -> str:
+    if indicator_id.startswith("rps") or indicator_id.endswith("_heat"):
+        return "score"
+    if "amount" in indicator_id or "market_value" in indicator_id or indicator_id.startswith("cost_"):
+        return "money"
+    if any(token in indicator_id for token in ("ratio", "range", "clearance", "distance", "amplitude", "gain")):
+        return "ratio"
+    if category_id == "event":
+        return "event"
+    if indicator_id.startswith("is_") or indicator_id.endswith("_required"):
+        return "boolean"
+    return "number"
+
+
+def _default_unit(value_type: str) -> str:
+    return {
+        "money": "元",
+        "percent": "%",
+        "ratio": "比例",
+        "multiple": "倍",
+        "score": "分",
+        "event": "事件",
+        "boolean": "",
+    }.get(value_type, "")
+
+
+def _default_operators(value_type: str) -> List[str]:
+    if value_type == "boolean":
+        return BOOLEAN_OPERATORS
+    if value_type == "event":
+        return EVENT_OPERATORS
+    if value_type == "choice":
+        return CHOICE_OPERATORS
+    return NUMERIC_OPERATORS
+
+
+def _default_operator(value_type: str, direction: str) -> str:
+    if value_type == "boolean":
+        return "is_true"
+    if value_type == "event":
+        return "recent"
+    if direction == "lower_better":
+        return "lte"
+    if direction == "range_better":
+        return "between"
+    return "gte"
+
+
+def _rule_builder_meta(
+    indicator_id: str,
+    category_id: str,
+    usage: List[str],
+    *,
+    status: str,
+    analysis_ready: bool,
+    kind: str,
+    control: Optional[Dict[str, Any]] = None,
+    analysis_field: Optional[str] = None,
+    value_type: Optional[str] = None,
+    unit: Optional[str] = None,
+    range_hint: Optional[Dict[str, Any]] = None,
+    direction: Optional[str] = None,
+    supported_actions: Optional[List[str]] = None,
+    supported_operators: Optional[List[str]] = None,
+    default_operator: Optional[str] = None,
+    recommended_rules: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    configured = RULE_META_BY_ID.get(indicator_id, {})
+    if kind == "strategy_param":
+        inferred_type = (control or {}).get("type") or "number"
+        if inferred_type == "money":
+            inferred_type = "money"
+        elif inferred_type == "boolean":
+            inferred_type = "boolean"
+        elif inferred_type == "select":
+            inferred_type = "choice"
+        else:
+            inferred_type = "number"
+        resolved_type = str(value_type or configured.get("value_type") or inferred_type)
+        return {
+            "value_type": resolved_type,
+            "unit": unit if unit is not None else str(configured.get("unit") or (control or {}).get("unit") or _default_unit(resolved_type)),
+            "range_hint": range_hint if range_hint is not None else configured.get("range_hint"),
+            "direction": direction or str(configured.get("direction") or "neutral"),
+            "supported_actions": [],
+            "supported_operators": supported_operators or _default_operators(resolved_type),
+            "default_operator": default_operator or str(configured.get("default_operator") or _default_operator(resolved_type, "neutral")),
+            "recommended_rules": recommended_rules or configured.get("recommended_rules") or [],
+            "analysis_field": analysis_field or configured.get("analysis_field") or None,
+            "data_status": "parameter",
+        }
+
+    resolved_type = str(value_type or configured.get("value_type") or _default_value_type(indicator_id, category_id))
+    resolved_direction = direction or str(configured.get("direction") or "higher_better")
+    if status == "planned":
+        actions: List[str] = []
+        data_status = "planned"
+    elif not analysis_ready:
+        actions = ["display"]
+        data_status = "display_only"
+    else:
+        usage_actions = [item for item in usage if item in RULE_ACTIONS]
+        actions = list(dict.fromkeys(supported_actions or usage_actions or ["display"]))
+        if resolved_type != "event" and "filter" not in actions:
+            actions.insert(0, "filter")
+        if "display" not in actions:
+            actions.append("display")
+        data_status = "executable"
+    return {
+        "value_type": resolved_type,
+        "unit": unit if unit is not None else str(configured.get("unit") or _default_unit(resolved_type)),
+        "range_hint": range_hint if range_hint is not None else configured.get("range_hint"),
+        "direction": resolved_direction,
+        "supported_actions": actions,
+        "supported_operators": supported_operators or configured.get("supported_operators") or _default_operators(resolved_type),
+        "default_operator": default_operator or str(configured.get("default_operator") or _default_operator(resolved_type, resolved_direction)),
+        "recommended_rules": recommended_rules or configured.get("recommended_rules") or [],
+        "analysis_field": analysis_field or configured.get("analysis_field") or indicator_id,
+        "data_status": data_status,
+    }
+
 
 def data_indicator(
     indicator_id: str,
@@ -32,7 +232,17 @@ def data_indicator(
     missing: str = "neutral",
     analysis_ready: bool = True,
     paired_strategy_ids: Optional[List[str]] = None,
+    analysis_field: Optional[str] = None,
+    value_type: Optional[str] = None,
+    unit: Optional[str] = None,
+    range_hint: Optional[Dict[str, Any]] = None,
+    direction: Optional[str] = None,
+    supported_actions: Optional[List[str]] = None,
+    supported_operators: Optional[List[str]] = None,
+    default_operator: Optional[str] = None,
+    recommended_rules: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
+    control = {"type": "readonly"}
     return {
         "id": indicator_id,
         "name": name,
@@ -46,9 +256,27 @@ def data_indicator(
         "default_missing_policy": missing,
         "analysis_ready": analysis_ready,
         "paired_strategy_ids": paired_strategy_ids or [],
-        "control": {"type": "readonly"},
+        "control": control,
         "group_id": category_id,
         "group_label": next((item["label"] for item in INDICATOR_CATEGORIES if item["id"] == category_id), category_id),
+        **_rule_builder_meta(
+            indicator_id,
+            category_id,
+            usage,
+            status=status,
+            analysis_ready=analysis_ready,
+            kind="data",
+            control=control,
+            analysis_field=analysis_field,
+            value_type=value_type,
+            unit=unit,
+            range_hint=range_hint,
+            direction=direction,
+            supported_actions=supported_actions,
+            supported_operators=supported_operators,
+            default_operator=default_operator,
+            recommended_rules=recommended_rules,
+        ),
     }
 
 
@@ -65,6 +293,7 @@ def strategy_param(
     usage: Optional[List[str]] = None,
     missing: str = "allow",
 ) -> Dict[str, Any]:
+    resolved_usage = usage or ["filter"]
     return {
         "id": key,
         "name": name,
@@ -75,12 +304,22 @@ def strategy_param(
         "source": "策略配置",
         "formula": formula or "由用户在信号模式参数中设置，分析运行时读取该参数。",
         "description": description,
-        "usage": usage or ["filter"],
+        "usage": resolved_usage,
         "default_missing_policy": missing,
         "analysis_ready": True,
         "control": control,
         "group_id": group_id,
         "group_label": group_label,
+        **_rule_builder_meta(
+            key,
+            category_id,
+            resolved_usage,
+            status="active",
+            analysis_ready=True,
+            kind="strategy_param",
+            control=control,
+            analysis_field=None,
+        ),
     }
 
 

@@ -1882,7 +1882,7 @@ h1 {
 
 .indicator-add-controls {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(100px, 0.35fr) auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(260px, 0.8fr) auto;
   gap: 8px;
   width: min(680px, 100%);
 }
@@ -1974,7 +1974,7 @@ h1 {
 }
 
 .mode-field-item {
-  grid-template-columns: minmax(0, 1fr) minmax(112px, 0.22fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.36fr) auto;
   min-height: 54px;
   border: 1px solid rgba(157, 196, 187, 0.12);
   background: rgba(5, 12, 13, 0.5);
@@ -2010,6 +2010,36 @@ h1 {
   min-height: 34px;
 }
 
+.signal-role-chips {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  min-width: 0;
+}
+
+.signal-role-chips button {
+  min-height: 34px;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--soft);
+  border-radius: 5px;
+  padding: 0 7px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.signal-role-chips button.active {
+  border-color: rgba(59, 240, 193, 0.46);
+  background: rgba(59, 240, 193, 0.09);
+  color: var(--accent);
+}
+
+.signal-role-chips.compact {
+  min-width: 220px;
+}
+
 .signal-rule-board.compact {
   grid-template-columns: 1fr;
 }
@@ -2041,6 +2071,411 @@ h1 {
 
 .signal-rule-card .remove-rule {
   justify-self: start;
+}
+
+.strategy-rule-builder {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(59, 240, 193, 0.22);
+  background:
+    linear-gradient(135deg, rgba(59, 240, 193, 0.055), rgba(182, 255, 95, 0.018)),
+    rgba(255, 255, 255, 0.014);
+  border-radius: 8px;
+  padding: 14px;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.rule-builder-head,
+.strategy-rule-card header,
+.legacy-strategy-controls summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.rule-builder-head h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1.05;
+}
+
+.rule-builder-stats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.rule-builder-stats span {
+  min-width: 72px;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(5, 12, 13, 0.7);
+  padding: 8px 10px;
+}
+
+.rule-builder-stats b,
+.rule-builder-stats em {
+  display: block;
+}
+
+.rule-builder-stats b {
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.rule-builder-stats em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 11px;
+  margin-top: 5px;
+}
+
+.rule-builder-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.32fr) minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+
+.rule-picker,
+.rule-board,
+.strategy-rule-card {
+  min-width: 0;
+}
+
+.rule-picker {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.rule-picker-search input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(157, 196, 187, 0.18);
+  background: #071012;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0 11px;
+  outline: none;
+}
+
+.rule-category-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rule-category-rail button,
+.missing-policy-row button,
+.rule-recommendations button,
+.rule-operator-row button {
+  min-height: 30px;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--soft);
+  border-radius: 5px;
+  padding: 0 9px;
+  cursor: pointer;
+}
+
+.rule-category-rail button.active,
+.missing-policy-row button.active,
+.rule-operator-row button.active {
+  border-color: rgba(59, 240, 193, 0.44);
+  background: rgba(59, 240, 193, 0.09);
+  color: var(--accent);
+}
+
+.rule-indicator-list {
+  display: grid;
+  gap: 7px;
+  max-height: 430px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.rule-indicator-list button {
+  min-height: 68px;
+  border: 1px solid rgba(157, 196, 187, 0.12);
+  background: rgba(5, 12, 13, 0.58);
+  color: var(--soft);
+  text-align: left;
+  border-radius: 7px;
+  padding: 9px 10px;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.rule-indicator-list button.active {
+  border-color: rgba(59, 240, 193, 0.5);
+  background: rgba(59, 240, 193, 0.075);
+}
+
+.rule-indicator-list strong,
+.rule-indicator-list span,
+.rule-indicator-list em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rule-indicator-list strong {
+  color: var(--text);
+}
+
+.rule-indicator-list span,
+.rule-indicator-list em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.add-rule-button {
+  justify-self: stretch;
+}
+
+.rule-board {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.rule-empty-state {
+  min-height: 124px;
+  border: 1px dashed rgba(157, 196, 187, 0.16);
+  background: rgba(255, 255, 255, 0.016);
+  border-radius: 7px;
+  padding: 18px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+}
+
+.rule-empty-state strong {
+  color: var(--text);
+}
+
+.rule-empty-state span {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.strategy-rule-card {
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(5, 12, 13, 0.64);
+  border-radius: 7px;
+  padding: 12px;
+  display: grid;
+  gap: 11px;
+}
+
+.strategy-rule-card.filter {
+  border-color: rgba(127, 183, 255, 0.28);
+}
+
+.strategy-rule-card.score {
+  border-color: rgba(182, 255, 95, 0.28);
+}
+
+.strategy-rule-card.risk {
+  border-color: rgba(255, 92, 122, 0.26);
+}
+
+.strategy-rule-card.disabled {
+  opacity: 0.56;
+}
+
+.strategy-rule-card header strong,
+.strategy-rule-card header span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.strategy-rule-card header strong {
+  color: var(--text);
+}
+
+.strategy-rule-card header span {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.rule-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.rule-enabled-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.rule-action-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rule-action-row button {
+  min-height: 52px;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(255, 255, 255, 0.018);
+  color: var(--soft);
+  border-radius: 6px;
+  padding: 8px 9px;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.rule-action-row button.active {
+  border-color: rgba(59, 240, 193, 0.48);
+  background: rgba(59, 240, 193, 0.08);
+  color: var(--text);
+}
+
+.rule-action-row strong,
+.rule-action-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rule-action-row strong {
+  font-size: 13px;
+}
+
+.rule-action-row span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.rule-operator-row,
+.missing-policy-row,
+.rule-recommendations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.rule-value-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(130px, 1fr));
+  gap: 9px;
+}
+
+.rule-value-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.rule-value-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 40px;
+  border: 1px solid rgba(157, 196, 187, 0.16);
+  background: #071012;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.rule-value-input input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 0 10px;
+  outline: none;
+}
+
+.rule-value-input em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 12px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.rule-recommendations {
+  border-top: 1px solid rgba(157, 196, 187, 0.12);
+  padding-top: 10px;
+}
+
+.rule-recommendations button {
+  color: var(--lime);
+  border-color: rgba(182, 255, 95, 0.22);
+  background: rgba(182, 255, 95, 0.055);
+}
+
+.display-rule-note {
+  border: 1px solid rgba(157, 196, 187, 0.12);
+  background: rgba(255, 255, 255, 0.018);
+  padding: 10px 11px;
+  color: var(--muted);
+  border-radius: 6px;
+  line-height: 1.45;
+}
+
+.legacy-strategy-controls {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(157, 196, 187, 0.13);
+  background: rgba(255, 255, 255, 0.014);
+  border-radius: 7px;
+  min-width: 0;
+}
+
+.legacy-strategy-controls summary {
+  cursor: pointer;
+  padding: 12px;
+  list-style: none;
+}
+
+.legacy-strategy-controls summary::-webkit-details-marker {
+  display: none;
+}
+
+.legacy-strategy-controls summary span,
+.legacy-strategy-controls summary small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.legacy-strategy-controls summary span {
+  color: var(--text);
+  font-weight: 800;
+}
+
+.legacy-strategy-controls summary small {
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.legacy-strategy-body {
+  padding: 0 12px 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
 }
 
 .signal-studio {
@@ -4010,7 +4445,8 @@ a {
   .profile-editor-grid,
   .signal-manager-layout,
   .strategy-signal-context,
-  .indicator-add-strip {
+  .indicator-add-strip,
+  .rule-builder-layout {
     grid-template-columns: 1fr;
   }
 
@@ -4114,10 +4550,14 @@ a {
   .signal-preset-grid,
   .signal-rule-board,
   .signal-manager-layout,
+  .rule-builder-layout,
+  .rule-action-row,
+  .rule-value-grid,
   .strategy-mode-selectors,
   .strategy-signal-context,
   .rule-edit-grid,
   .indicator-add-controls,
+  .signal-role-chips,
   .indicator-pair-hint {
     grid-template-columns: 1fr;
   }
@@ -4141,7 +4581,10 @@ a {
   }
 
   .signal-manager-head,
-  .signal-section-head {
+  .signal-section-head,
+  .rule-builder-head,
+  .strategy-rule-card header,
+  .legacy-strategy-controls summary {
     display: grid;
   }
 
@@ -4160,6 +4603,14 @@ a {
 
   .signal-rule-topline {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .mode-field-item {
+    grid-template-columns: 1fr;
+  }
+
+  .rule-card-actions {
+    justify-content: flex-start;
   }
 
   .signal-rule-topline .table-action {
@@ -4224,6 +4675,8 @@ a {
   .strategy-mode-selectors,
   .strategy-profile-note,
   .strategy-signal-context,
+  .strategy-rule-builder,
+  .legacy-strategy-controls,
   .field-note,
   .wide-panel {
     grid-column: auto;

@@ -121,7 +121,7 @@ def test_all_strategy_form_fields_are_defined_in_indicator_library():
     }
 
     assert required_keys.issubset(strategy_keys)
-    assert set(DEFAULT_STRATEGY_CONFIG) - strategy_keys == {"analysis_mode", "signal_mode"}
+    assert set(DEFAULT_STRATEGY_CONFIG) - strategy_keys == {"analysis_mode", "signal_mode", "strategy_rules"}
     assert all(key in DEFAULT_STRATEGY_CONFIG for key in strategy_keys if key)
     assert all(indicator.get("control", {}).get("type") for indicator in indicators.values() if indicator.get("kind") == "strategy_param")
 
@@ -151,3 +151,33 @@ def test_signal_modes_reference_existing_indicators_and_new_mode_starts_with_sto
         "missing_float_market_value_policy",
     ]
     assert blank["rule_groups"] == []
+
+
+def test_indicator_library_exposes_rule_builder_metadata():
+    library = indicator_library()
+    indicators = {indicator["id"]: indicator for indicator in library["indicators"]}
+
+    amount = indicators["amount"]
+    assert amount["value_type"] == "money"
+    assert amount["unit"] == "元"
+    assert amount["analysis_field"] == "amount"
+    assert "filter" in amount["supported_actions"]
+    assert "score" in amount["supported_actions"]
+    assert {"gte", "lte", "between"}.issubset(set(amount["supported_operators"]))
+    assert amount["default_operator"] == "gte"
+    assert amount["data_status"] == "executable"
+    assert amount["recommended_rules"]
+
+    topic_heat = indicators["topic_heat"]
+    assert topic_heat["value_type"] == "score"
+    assert topic_heat["unit"] == "分"
+    assert topic_heat["range_hint"] == {"min": 0, "max": 100}
+    assert topic_heat["direction"] == "higher_better"
+
+    top_list = indicators["top_list_net_amount"]
+    assert top_list["data_status"] == "display_only"
+    assert top_list["supported_actions"] == ["display"]
+
+    min_price = indicators["min_price"]
+    assert min_price["value_type"] == "number"
+    assert min_price["supported_actions"] == []

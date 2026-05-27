@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 import pandas as pd
 
 from backend.app.db import Database
+from backend.app.services.indicator_registry import INDICATOR_BY_ID
 from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
 from backend.app.services.strategy_service import normalize_strategy_config
 
@@ -531,6 +532,7 @@ def apply_strategy_filters(
         mark("流通市值", before, working, "缺失时按策略配置降级")
 
     working = _apply_theme_filters(working, strategy, funnel)
+    working = _apply_strategy_rule_filters(working, strategy, funnel)
 
     if strategy.get("analysis_mode") == "score":
         if strategy.get("signal_mode") == "platform_breakout":
@@ -702,6 +704,156 @@ def _numeric_filter(
         }
     )
     return filtered
+
+
+def _strategy_rule_indicator(rule: Dict[str, Any], action: str) -> Optional[Dict[str, Any]]:
+    indicator = INDICATOR_BY_ID.get(str(rule.get("indicator_id") or ""))
+    if not indicator or indicator.get("data_status") != "executable":
+        return None
+    if action not in (indicator.get("supported_actions") or []):
+        return None
+    return indicator
+
+
+def _apply_strategy_rule_filters(
+    frame: pd.DataFrame,
+    strategy: Dict[str, Any],
+    funnel: List[Dict[str, Any]],
+) -> pd.DataFrame:
+    working = frame
+    for rule in strategy.get("strategy_rules") or []:
+        if not rule.get("enabled", True) or rule.get("action") != "filter":
+            continue
+        indicator = _strategy_rule_indicator(rule, "filter")
+        if not indicator:
+            continue
+        column = str(indicator.get("analysis_field") or indicator.get("id") or "")
+        if column not in working.columns:
+            funnel.append(
+                {
+                    "step_name": f"{indicator.get('name') or column}规则",
+                    "before_count": int(len(working)),
+                    "after_count": int(len(working)),
+                    "removed_count": 0,
+                    "note": "字段尚未进入分析帧，规则已忽略",
+                }
+            )
+            continue
+        before = len(working)
+        mask = _strategy_rule_mask(working[column], rule)
+        working = working[mask]
+        funnel.append(
+            {
+                "step_name": f"{indicator.get('name') or column}规则",
+                "before_count": int(before),
+                "after_count": int(len(working)),
+                "removed_count": int(before - len(working)),
+                "note": _strategy_rule_note(indicator, rule),
+            }
+        )
+    return working
+
+
+def _strategy_rule_mask(series: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+    operator = str(rule.get("operator") or "gte")
+    value = rule.get("value")
+    value2 = rule.get("value2")
+    missing_policy = str(rule.get("missing_policy") or "neutral")
+    missing_mask = series.isna()
+    if operator == "is_true":
+        mask = series.fillna(False).astype(bool)
+    elif operator in {"eq", "neq"} and isinstance(value, bool):
+        mask = series.fillna(False).astype(bool) == value
+        if operator == "neq":
+            mask = ~mask
+    else:
+        numeric = pd.to_numeric(series, errors="coerce")
+        target = safe_float(value)
+        target2 = safe_float(value2)
+        if target is None and operator not in {"eq", "neq"}:
+            mask = pd.Series(True, index=series.index)
+        elif operator == "gte":
+            mask = numeric >= float(target)
+        elif operator == "lte":
+            mask = numeric <= float(target)
+        elif operator == "gt":
+            mask = numeric > float(target)
+        elif operator == "lt":
+            mask = numeric < float(target)
+        elif operator == "between":
+            if target is None or target2 is None:
+                mask = pd.Series(True, index=series.index)
+            else:
+                low = min(float(target), float(target2))
+                high = max(float(target), float(target2))
+                mask = (numeric >= low) & (numeric <= high)
+        elif operator == "eq":
+            if target is None:
+                mask = series.astype(str) == str(value)
+            else:
+                mask = numeric == float(target)
+        elif operator == "neq":
+            if target is None:
+                mask = series.astype(str) != str(value)
+            else:
+                mask = numeric != float(target)
+        elif operator == "recent":
+            window = int(rule.get("window_days") or safe_float(value) or 0)
+            mask = numeric <= window if window > 0 else pd.Series(True, index=series.index)
+        else:
+            mask = pd.Series(True, index=series.index)
+    if missing_policy in {"keep", "allow", "neutral"}:
+        mask = mask | missing_mask
+    return mask.fillna(False)
+
+
+def _strategy_rule_note(indicator: Dict[str, Any], rule: Dict[str, Any]) -> str:
+    operator_labels = {
+        "gte": ">=",
+        "lte": "<=",
+        "gt": ">",
+        "lt": "<",
+        "between": "介于",
+        "eq": "=",
+        "neq": "!=",
+        "is_true": "为真",
+        "recent": "最近",
+    }
+    operator = operator_labels.get(str(rule.get("operator") or ""), str(rule.get("operator") or ""))
+    unit = str(indicator.get("unit") or "")
+    value = rule.get("value")
+    value2 = rule.get("value2")
+    if rule.get("operator") == "between":
+        return f"{operator} {value} - {value2}{unit}"
+    if rule.get("operator") == "is_true":
+        return operator
+    return f"{operator} {value}{unit}".strip()
+
+
+def _strategy_rule_matches_row(row: Dict[str, Any], rule: Dict[str, Any], action: str) -> bool:
+    indicator = _strategy_rule_indicator(rule, action)
+    if not indicator:
+        return False
+    column = str(indicator.get("analysis_field") or indicator.get("id") or "")
+    if column not in row:
+        return False
+    series = pd.Series([row.get(column)])
+    return bool(_strategy_rule_mask(series, rule).iloc[0])
+
+
+def _strategy_rule_score_adjustment(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
+    adjustment = 0.0
+    for rule in strategy.get("strategy_rules") or []:
+        if not rule.get("enabled", True) or rule.get("action") not in {"score", "risk"}:
+            continue
+        action = str(rule.get("action"))
+        if not _strategy_rule_matches_row(row, rule, action):
+            continue
+        weight = safe_float(rule.get("weight"))
+        if weight is None:
+            weight = 5.0
+        adjustment += float(weight) if action == "score" else -float(weight)
+    return round(adjustment, 2)
 
 
 def _apply_theme_filters(
@@ -1062,6 +1214,10 @@ def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
     return "趋势观察"
 
 
+def _with_strategy_rule_adjustment(score: float, row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
+    return round(max(score + _strategy_rule_score_adjustment(row, strategy), 0), 2)
+
+
 def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
     rps = safe_float(row.get(f"rps{int(strategy.get('rps_window') or 20)}")) or safe_float(row.get("rps20")) or 0
     theme_bonus = _theme_score_bonus(row, strategy)
@@ -1124,7 +1280,7 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
             score += 5
         if ma_convergence is not None and ma_convergence <= max_ma_convergence and row.get("platform_setup_ma_turning_up"):
             score += 5
-        return round(max(score + theme_bonus, 0), 2)
+        return _with_strategy_rule_adjustment(score + theme_bonus, row, strategy)
     if strategy.get("signal_mode") == "platform_breakout":
         platform_range = safe_float(row.get("platform_range"))
         bullish_ratio = safe_float(row.get("platform_bullish_ratio"))
@@ -1230,7 +1386,7 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
             score += 5 if row.get("platform_ma_rising") else -3
         if ma_rising_mode != "off" and row.get("platform_ma_rising") and macd_bonus > 0:
             score += 4
-        return round(max(score + theme_bonus, 0), 2)
+        return _with_strategy_rule_adjustment(score + theme_bonus, row, strategy)
     if strategy.get("signal_mode") == "trend_resonance":
         score = float(rps) * 0.38
         if row.get("trend_price_above_ema_long"):
@@ -1272,12 +1428,16 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
             score -= 8
         score += min((safe_float(row.get("volume_ratio")) or 0) * 4, 10)
         score += min((safe_float(row.get("turnover_rate")) or 0) * 0.8, 8)
-        return round(max(score + theme_bonus, 0), 2)
+        return _with_strategy_rule_adjustment(score + theme_bonus, row, strategy)
     volume_ratio = min((safe_float(row.get("volume_ratio")) or 0) * 8, 20)
     trend_bonus = 12 if (safe_float(row.get("ma_short")) or 0) > (safe_float(row.get("ma_long")) or 0) else 0
     turnover = min((safe_float(row.get("turnover_rate")) or 0) * 1.5, 12)
     amplitude_penalty = min((safe_float(row.get("amplitude")) or 0) * 40, 8)
-    return round(float(rps) * 0.65 + volume_ratio + trend_bonus + turnover - amplitude_penalty + theme_bonus, 2)
+    return _with_strategy_rule_adjustment(
+        float(rps) * 0.65 + volume_ratio + trend_bonus + turnover - amplitude_penalty + theme_bonus,
+        row,
+        strategy,
+    )
 
 
 def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, float]:
@@ -1430,6 +1590,7 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
         "theme": round(theme, 2),
         "freshness": round(max(freshness, 0.0), 2),
         "risk": round(-max(risk, 0.0), 2),
+        "custom_rules": _strategy_rule_score_adjustment(row, strategy),
     }
 
 

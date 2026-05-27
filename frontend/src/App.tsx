@@ -49,10 +49,13 @@ import type {
   FunnelStep,
   RuntimeHealth,
   RuntimeSlot,
+  RuleAction,
+  RuleOperator,
   SignalModeField,
   SignalModeTemplate,
   StrategyConfig,
   StrategyPreset,
+  StrategyRule,
   StrategyVersion,
   TaskRun,
   WatchlistBatch,
@@ -117,11 +120,29 @@ const analysisModes: Array<{ id: string; label: string; sub: string }> = [
   { id: 'score', label: '综合评分', sub: '基础合格后按信号强弱排序' },
 ];
 
-const signalFieldRoles = [
-  { id: 'filter', label: '过滤' },
-  { id: 'score', label: '加分' },
-  { id: 'risk', label: '风控' },
-  { id: 'display', label: '展示' },
+const ruleActionMeta: Record<RuleAction, { label: string; verb: string; note: string }> = {
+  filter: { label: '筛选', verb: '不达标剔除', note: '用于硬条件' },
+  score: { label: '加权', verb: '达标加分', note: '用于排序强化' },
+  risk: { label: '扣风险', verb: '达标扣分', note: '用于过热或异常' },
+  display: { label: '只展示', verb: '不参与运算', note: '用于看板观察' },
+};
+
+const ruleOperatorMeta: Record<RuleOperator, { label: string; summary: string }> = {
+  gte: { label: '≥', summary: '高于或等于' },
+  lte: { label: '≤', summary: '低于或等于' },
+  gt: { label: '>', summary: '高于' },
+  lt: { label: '<', summary: '低于' },
+  between: { label: '介于', summary: '介于' },
+  eq: { label: '=', summary: '等于' },
+  neq: { label: '≠', summary: '不等于' },
+  is_true: { label: '为真', summary: '为真' },
+  recent: { label: '最近', summary: '最近出现' },
+};
+
+const missingPolicyOptions = [
+  { id: 'neutral', label: '缺失中性' },
+  { id: 'keep', label: '缺失保留' },
+  { id: 'skip', label: '缺失剔除' },
 ];
 
 const reviewStatuses = ['观察中', '已验证', '已放弃', '已错过'];
@@ -1528,9 +1549,7 @@ function SignalModeManager({
                       </optgroup>
                     )}
                   </select>
-                  <select value={addRole} onChange={(event) => setAddRole(event.target.value)}>
-                    {signalFieldRoles.map((role) => <option key={role.id} value={role.id}>{role.label}</option>)}
-                  </select>
+                  <SignalRoleChips value={addRole} onChange={setAddRole} />
                   <button className="ghost compact" type="button" disabled={!selectedAddId} onClick={addField}>
                     <Plus size={13} />
                     加入
@@ -1579,9 +1598,7 @@ function SignalModeManager({
                             <span>{indicator.kind === 'strategy_param' ? '可填写参数' : indicator.source}</span>
                             {pairNames.length > 0 && <small>可配：{pairNames.join('、')}</small>}
                           </div>
-                          <select value={field.role || 'filter'} onChange={(event) => patchField(field.indicator_id, { role: event.target.value })}>
-                            {signalFieldRoles.map((role) => <option key={role.id} value={role.id}>{role.label}</option>)}
-                          </select>
+                          <SignalRoleChips value={field.role || 'filter'} onChange={(role) => patchField(field.indicator_id, { role })} compact />
                           <button className="table-action" type="button" onClick={() => removeField(field.indicator_id)} title="移除指标">
                             <X size={13} />
                           </button>
@@ -1882,18 +1899,353 @@ function StrategyPanel(props: {
               </select>
             </label>
           </div>
+          <StrategyRuleBuilder
+            library={props.indicatorLibrary}
+            strategy={props.strategy}
+            setStrategy={props.setStrategy}
+          />
           {activeProfile ? (
-            <SignalModeFieldForm
-              profile={activeProfile}
-              library={props.indicatorLibrary}
-              strategy={props.strategy}
-              update={update}
-            />
+            <details className="legacy-strategy-controls wide">
+              <summary>
+                <span>{activeProfile.name} 参数</span>
+                <small>保留原有模式里的窗口、形态和高级阈值</small>
+              </summary>
+              <div className="legacy-strategy-body">
+                <SignalModeFieldForm
+                  profile={activeProfile}
+                  library={props.indicatorLibrary}
+                  strategy={props.strategy}
+                  update={update}
+                />
+              </div>
+            </details>
           ) : (
             <div className="field-note wide">指标库里还没有可用的信号模式。</div>
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function StrategyRuleBuilder({
+  library,
+  strategy,
+  setStrategy,
+}: {
+  library: IndicatorLibrary;
+  strategy: StrategyConfig;
+  setStrategy: (config: StrategyConfig) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('all');
+  const [selectedId, setSelectedId] = useState('');
+  const indicatorById = useMemo(
+    () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
+    [library.indicators],
+  );
+  const categoryById = useMemo(
+    () => Object.fromEntries(library.categories.map((item) => [item.id, item])),
+    [library.categories],
+  );
+  const usableIndicators = useMemo(
+    () => library.indicators
+      .filter((indicator) => indicator.kind === 'data' && indicator.status !== 'planned')
+      .filter((indicator) => (indicator.supported_actions || []).length > 0)
+      .sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN')),
+    [library.indicators],
+  );
+  const visibleIndicators = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return usableIndicators.filter((indicator) => {
+      if (category !== 'all' && indicator.category_id !== category) return false;
+      if (!needle) return true;
+      return `${indicator.name} ${indicator.id} ${indicator.source}`.toLowerCase().includes(needle);
+    });
+  }, [category, query, usableIndicators]);
+  const selectedIndicator = indicatorById[selectedId] || visibleIndicators[0] || usableIndicators[0];
+  const rules = Array.isArray(strategy.strategy_rules) ? strategy.strategy_rules : [];
+  const actionCounts = rules.reduce<Record<RuleAction, number>>((acc, rule) => {
+    if (rule.enabled !== false && rule.action in acc) acc[rule.action as RuleAction] += 1;
+    return acc;
+  }, { filter: 0, score: 0, risk: 0, display: 0 });
+
+  const updateRules = (nextRules: StrategyRule[]) => {
+    setStrategy({ ...strategy, strategy_rules: nextRules });
+  };
+  const patchRule = (ruleId: string, patch: Partial<StrategyRule>) => {
+    updateRules(rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)));
+  };
+  const addRule = (indicator = selectedIndicator) => {
+    if (!indicator) return;
+    updateRules([...rules, defaultStrategyRule(indicator)]);
+    setSelectedId(indicator.id);
+  };
+  const removeRule = (ruleId: string) => {
+    updateRules(rules.filter((rule) => rule.id !== ruleId));
+  };
+  const categories = library.categories
+    .filter((item) => usableIndicators.some((indicator) => indicator.category_id === item.id));
+
+  return (
+    <section className="strategy-rule-builder wide">
+      <div className="rule-builder-head">
+        <div>
+          <span className="section-kicker">Rule Builder</span>
+          <h3>指标规则</h3>
+        </div>
+        <div className="rule-builder-stats">
+          {(Object.keys(ruleActionMeta) as RuleAction[]).map((action) => (
+            <span key={action}>
+              <b>{actionCounts[action]}</b>
+              <em>{ruleActionMeta[action].label}</em>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="rule-builder-layout">
+        <aside className="rule-picker">
+          <div className="rule-picker-search">
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索指标" />
+          </div>
+          <div className="rule-category-rail">
+            <button className={category === 'all' ? 'active' : ''} type="button" onClick={() => setCategory('all')}>
+              全部
+            </button>
+            {categories.map((item) => (
+              <button key={item.id} className={category === item.id ? 'active' : ''} type="button" onClick={() => setCategory(item.id)}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div className="rule-indicator-list">
+            {visibleIndicators.map((indicator) => (
+              <button
+                key={indicator.id}
+                className={selectedIndicator?.id === indicator.id ? 'active' : ''}
+                type="button"
+                onClick={() => setSelectedId(indicator.id)}
+              >
+                <strong>{indicator.name}</strong>
+                <span>{categoryById[indicator.category_id]?.label || indicator.category_id}</span>
+                <em>{indicatorRuleCapabilityLabel(indicator)}</em>
+              </button>
+            ))}
+            {visibleIndicators.length === 0 && <EmptyState text="没有匹配指标。" />}
+          </div>
+          <button className="primary compact add-rule-button" type="button" disabled={!selectedIndicator} onClick={() => addRule()}>
+            <Plus size={14} />
+            加入规则
+          </button>
+        </aside>
+
+        <div className="rule-board">
+          {rules.length === 0 && (
+            <div className="rule-empty-state">
+              <strong>还没有自定义指标规则</strong>
+              <span>左侧选择指标后加入，保存并运行时会进入后端过滤和评分。</span>
+            </div>
+          )}
+          {rules.map((rule) => {
+            const indicator = indicatorById[rule.indicator_id];
+            if (!indicator) {
+              return null;
+            }
+            return (
+              <StrategyRuleCard
+                key={rule.id}
+                rule={rule}
+                indicator={indicator}
+                patch={(patch) => patchRule(rule.id, patch)}
+                remove={() => removeRule(rule.id)}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function StrategyRuleCard({
+  rule,
+  indicator,
+  patch,
+  remove,
+}: {
+  rule: StrategyRule;
+  indicator: IndicatorDefinition;
+  patch: (patch: Partial<StrategyRule>) => void;
+  remove: () => void;
+}) {
+  const actions = supportedRuleActions(indicator);
+  const action = actions.includes(rule.action) ? rule.action : actions[0] || 'display';
+  const operators = supportedRuleOperators(indicator, action);
+  const operator = operators.includes(rule.operator) ? rule.operator : operators[0] || 'gte';
+  const numeric = isNumericIndicator(indicator);
+  const unit = indicator.unit || '';
+  const displayOnly = action === 'display';
+  const applyAction = (nextAction: RuleAction) => {
+    patch({
+      action: nextAction,
+      operator: nextAction === 'display' ? operator : defaultOperatorForIndicator(indicator),
+      value: nextAction === 'display' ? rule.value : defaultValueForIndicator(indicator),
+      value2: undefined,
+    });
+  };
+  const setValue = (key: 'value' | 'value2', value: string) => {
+    patch({ [key]: value === '' ? null : numeric ? Number(value) : value } as Partial<StrategyRule>);
+  };
+  const applyRecommendation = (recommendation: NonNullable<IndicatorDefinition['recommended_rules']>[number]) => {
+    patch({
+      action: recommendation.action,
+      operator: recommendation.operator,
+      value: recommendation.value ?? rule.value ?? defaultValueForIndicator(indicator),
+      value2: recommendation.value2 ?? rule.value2,
+      weight: recommendation.weight ?? rule.weight ?? null,
+      window_days: recommendation.window_days ?? rule.window_days,
+      enabled: true,
+    });
+  };
+
+  return (
+    <article className={`strategy-rule-card ${action} ${rule.enabled === false ? 'disabled' : ''}`}>
+      <header>
+        <div>
+          <strong>{indicator.name}</strong>
+          <span>{ruleSummary(rule, indicator)}</span>
+        </div>
+        <div className="rule-card-actions">
+          <label className="rule-enabled-toggle">
+            <input type="checkbox" checked={rule.enabled !== false} onChange={(event) => patch({ enabled: event.target.checked })} />
+            启用
+          </label>
+          <button className="table-action" type="button" onClick={remove} title="移除规则">
+            <X size={14} />
+          </button>
+        </div>
+      </header>
+
+      <div className="rule-action-row">
+        {actions.map((item) => (
+          <button key={item} type="button" className={action === item ? 'active' : ''} onClick={() => applyAction(item)}>
+            <strong>{ruleActionMeta[item].label}</strong>
+            <span>{ruleActionMeta[item].note}</span>
+          </button>
+        ))}
+      </div>
+
+      {!displayOnly ? (
+        <>
+          <div className="rule-operator-row">
+            {operators.map((item) => (
+              <button key={item} type="button" className={operator === item ? 'active' : ''} onClick={() => patch({ operator: item })}>
+                {ruleOperatorMeta[item]?.label || item}
+              </button>
+            ))}
+          </div>
+          <div className="rule-value-grid">
+            {operator !== 'is_true' && (
+              <label>
+                <span>{operator === 'between' ? '下限' : '数值'}</span>
+                <div className="rule-value-input">
+                  <input
+                    type={numeric ? 'number' : 'text'}
+                    step={numeric ? ruleInputStep(indicator) : undefined}
+                    value={String(rule.value ?? '')}
+                    onChange={(event) => setValue('value', event.target.value)}
+                    placeholder={ruleValuePlaceholder(indicator)}
+                  />
+                  {unit && <em>{unit}</em>}
+                </div>
+              </label>
+            )}
+            {operator === 'between' && (
+              <label>
+                <span>上限</span>
+                <div className="rule-value-input">
+                  <input
+                    type={numeric ? 'number' : 'text'}
+                    step={numeric ? ruleInputStep(indicator) : undefined}
+                    value={String(rule.value2 ?? '')}
+                    onChange={(event) => setValue('value2', event.target.value)}
+                    placeholder={indicator.range_hint?.max !== undefined ? String(indicator.range_hint.max) : ''}
+                  />
+                  {unit && <em>{unit}</em>}
+                </div>
+              </label>
+            )}
+            {(action === 'score' || action === 'risk') && (
+              <label>
+                <span>{action === 'risk' ? '扣分' : '加分'}</span>
+                <div className="rule-value-input">
+                  <input
+                    type="number"
+                    step="1"
+                    value={rule.weight ?? ''}
+                    onChange={(event) => patch({ weight: event.target.value === '' ? null : Number(event.target.value) })}
+                    placeholder="5"
+                  />
+                  <em>分</em>
+                </div>
+              </label>
+            )}
+          </div>
+          <div className="missing-policy-row">
+            {missingPolicyOptions.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className={(rule.missing_policy || 'neutral') === option.id ? 'active' : ''}
+                onClick={() => patch({ missing_policy: option.id })}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="display-rule-note">
+          <span>{indicator.data_status === 'display_only' ? '已接入数据仓库，尚未进入分析过滤。' : '保存后随候选指标展示，不改变筛选结果。'}</span>
+        </div>
+      )}
+
+      {(indicator.recommended_rules || []).length > 0 && (
+        <div className="rule-recommendations">
+          {(indicator.recommended_rules || []).map((recommendation) => (
+            <button key={`${recommendation.label}-${recommendation.action}`} type="button" onClick={() => applyRecommendation(recommendation)}>
+              {recommendation.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function SignalRoleChips({
+  value,
+  onChange,
+  compact = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className={compact ? 'signal-role-chips compact' : 'signal-role-chips'}>
+      {(Object.keys(ruleActionMeta) as RuleAction[]).map((action) => (
+        <button
+          key={action}
+          type="button"
+          className={value === action ? 'active' : ''}
+          onClick={() => onChange(action)}
+          title={ruleActionMeta[action].verb}
+        >
+          {ruleActionMeta[action].label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -2368,6 +2720,7 @@ function CandidateScoreDetails({ row }: { row: Candidate }) {
     { key: 'pattern', label: '形态', note: '平台、K线和结构' },
     { key: 'trend', label: '趋势', note: 'RPS、均线与 MACD' },
     { key: 'theme', label: '题材', note: '题材热度和涨停扩散' },
+    { key: 'custom_rules', label: '规则', note: '自定义指标规则' },
     { key: 'freshness', label: '新鲜度', note: '越靠近触发点越高' },
     { key: 'risk', label: '风险扣分', note: '过热、偏离和追高' },
   ];
@@ -4329,6 +4682,103 @@ function indicatorStatusClass(indicator: IndicatorDefinition) {
   return 'available';
 }
 
+function supportedRuleActions(indicator: IndicatorDefinition): RuleAction[] {
+  const actions = (indicator.supported_actions || [])
+    .filter((action): action is RuleAction => action in ruleActionMeta);
+  return actions.length > 0 ? actions : ['display'];
+}
+
+function supportedRuleOperators(indicator: IndicatorDefinition, action: RuleAction): RuleOperator[] {
+  if (action === 'display') return [indicator.default_operator || 'gte'];
+  const operators = (indicator.supported_operators || [])
+    .filter((operator): operator is RuleOperator => operator in ruleOperatorMeta);
+  return operators.length > 0 ? operators : ['gte', 'lte', 'between'];
+}
+
+function defaultOperatorForIndicator(indicator: IndicatorDefinition): RuleOperator {
+  const operators = supportedRuleOperators(indicator, 'filter');
+  return (indicator.default_operator && operators.includes(indicator.default_operator))
+    ? indicator.default_operator
+    : operators[0] || 'gte';
+}
+
+function defaultValueForIndicator(indicator: IndicatorDefinition) {
+  const recommendation = (indicator.recommended_rules || [])[0];
+  if (recommendation?.value !== undefined) return recommendation.value;
+  if (indicator.default_operator === 'between' && indicator.range_hint?.min !== undefined) return indicator.range_hint.min;
+  return '';
+}
+
+function defaultStrategyRule(indicator: IndicatorDefinition): StrategyRule {
+  const actions = supportedRuleActions(indicator);
+  const action = actions.includes('filter') ? 'filter' : actions[0] || 'display';
+  const recommendation = (indicator.recommended_rules || []).find((item) => item.action === action)
+    || (indicator.recommended_rules || [])[0];
+  const operator = recommendation?.operator || defaultOperatorForIndicator(indicator);
+  const missingPolicy = indicator.default_missing_policy === 'skip'
+    ? 'skip'
+    : indicator.default_missing_policy === 'allow'
+      ? 'keep'
+      : 'neutral';
+  return {
+    id: createRuleId(indicator.id),
+    indicator_id: indicator.id,
+    action,
+    operator,
+    value: recommendation?.value ?? defaultValueForIndicator(indicator),
+    value2: recommendation?.value2 ?? (operator === 'between' ? indicator.range_hint?.max ?? '' : undefined),
+    window_days: recommendation?.window_days,
+    weight: recommendation?.weight ?? null,
+    missing_policy: missingPolicy,
+    enabled: true,
+  };
+}
+
+function createRuleId(indicatorId: string) {
+  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return `rule-${indicatorId}-${random}`;
+}
+
+function isNumericIndicator(indicator: IndicatorDefinition) {
+  return !['boolean', 'choice', 'event'].includes(String(indicator.value_type || 'number'));
+}
+
+function ruleInputStep(indicator: IndicatorDefinition) {
+  if (indicator.value_type === 'money') return '1000000';
+  if (indicator.value_type === 'percent' || indicator.value_type === 'ratio' || indicator.value_type === 'multiple') return '0.01';
+  return '1';
+}
+
+function ruleValuePlaceholder(indicator: IndicatorDefinition) {
+  const recommendation = (indicator.recommended_rules || [])[0];
+  if (recommendation?.value !== undefined) return String(recommendation.value);
+  if (indicator.range_hint?.min !== undefined) return String(indicator.range_hint.min);
+  if (indicator.value_type === 'score') return '60';
+  if (indicator.value_type === 'multiple') return '1.5';
+  return '';
+}
+
+function indicatorRuleCapabilityLabel(indicator: IndicatorDefinition) {
+  if (indicator.data_status === 'display_only') return '只展示';
+  return supportedRuleActions(indicator).map((action) => ruleActionMeta[action].label).join(' / ');
+}
+
+function ruleSummary(rule: StrategyRule, indicator: IndicatorDefinition) {
+  const action = rule.action in ruleActionMeta ? rule.action : 'display';
+  if (action === 'display') return ruleActionMeta.display.verb;
+  const operator = ruleOperatorMeta[rule.operator]?.summary || rule.operator;
+  const unit = indicator.unit || '';
+  const left = rule.value === null || rule.value === undefined || rule.value === '' ? '未设定' : `${rule.value}${unit}`;
+  if (rule.operator === 'between') {
+    const right = rule.value2 === null || rule.value2 === undefined || rule.value2 === '' ? '未设定' : `${rule.value2}${unit}`;
+    return `${operator} ${left} - ${right}，${ruleActionMeta[action].verb}`;
+  }
+  if (rule.operator === 'is_true') return `${operator}，${ruleActionMeta[action].verb}`;
+  return `${operator} ${left}，${ruleActionMeta[action].verb}`;
+}
+
 function indicatorStatusLabel(indicator: IndicatorDefinition) {
   if (indicator.status === 'planned') return '待接入';
   if (indicator.kind === 'strategy_param') return '可填写';
@@ -4519,6 +4969,7 @@ function candidateScoreBreakdown(row: Candidate) {
     theme: nullableNumber(raw.theme),
     freshness: nullableNumber(raw.freshness),
     risk: nullableNumber(raw.risk),
+    custom_rules: nullableNumber(raw.custom_rules),
   };
 }
 
