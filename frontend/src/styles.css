@@ -1166,6 +1166,43 @@ h1 {
   gap: 12px;
 }
 
+.indicator-library-missing {
+  max-width: 760px;
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.indicator-library-missing.compact {
+  max-width: none;
+}
+
+.indicator-library-missing p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.indicator-library-missing div {
+  border: 1px solid rgba(255, 92, 122, 0.22);
+  background: rgba(255, 92, 122, 0.045);
+  padding: 10px 12px;
+  display: grid;
+  gap: 5px;
+}
+
+.indicator-library-missing span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.indicator-library-missing code {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .indicator-hero {
   display: flex;
   justify-content: space-between;

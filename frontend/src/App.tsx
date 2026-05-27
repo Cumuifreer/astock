@@ -137,24 +137,29 @@ const missingPolicyOptions = [
   { id: 'skip', label: '缺失剔除' },
 ];
 
-const emptyIndicatorLibrary: IndicatorLibrary = {
-  categories: [],
-  indicators: [],
-  signal_modes: [],
-  summary: {
-    category_count: 0,
-    indicator_count: 0,
-    active_count: 0,
-    available_count: 0,
-    planned_count: 0,
-    strategy_param_count: 0,
-    signal_mode_count: 0,
-    interaction_rule_count: 0,
-  },
-};
-
 const reviewStatuses = ['观察中', '已验证', '已放弃', '已错过'];
 const batchReviewStatuses = ['观察中', '有效', '一般', '误报', '已归档'];
+
+function hasIndicatorLibraryData(library: IndicatorLibrary | null | undefined): library is IndicatorLibrary {
+  return Boolean(library?.indicators?.length && library?.categories?.length);
+}
+
+async function bootstrapWithIndicatorLibrary(): Promise<Bootstrap> {
+  const next = await api.bootstrap();
+  const library = (next as Bootstrap & { indicator_library?: IndicatorLibrary }).indicator_library;
+  if (hasIndicatorLibraryData(library)) {
+    return next;
+  }
+  try {
+    const fallbackLibrary = await api.indicators();
+    if (hasIndicatorLibraryData(fallbackLibrary)) {
+      return { ...next, indicator_library: fallbackLibrary };
+    }
+  } catch {
+    // The page will render an explicit unavailable state instead of pretending the library is empty.
+  }
+  return next;
+}
 
 function App() {
   const [tab, setTab] = useState<Tab>('overview');
@@ -173,7 +178,7 @@ function App() {
   }
 
   async function loadAndSelect(presetId?: string | null) {
-    const next = await api.bootstrap();
+    const next = await bootstrapWithIndicatorLibrary();
     setBootstrap(next);
     if (presetId !== undefined) {
       const fallback =
@@ -189,7 +194,7 @@ function App() {
   async function load(silent = false) {
     try {
       if (!silent) setLoading(true);
-      const next = await api.bootstrap();
+      const next = await bootstrapWithIndicatorLibrary();
       setBootstrap(next);
       if (!strategy) {
         setStrategy(cleanPlatformBreakoutModes(next.default_strategy));
@@ -324,7 +329,8 @@ function App() {
 
   const page = useMemo(() => {
     if (!bootstrap || !strategy) return null;
-    const indicatorLibrary = bootstrap.indicator_library || emptyIndicatorLibrary;
+    const indicatorLibrary = (bootstrap as Bootstrap & { indicator_library?: IndicatorLibrary }).indicator_library;
+    const indicatorLibraryReady = hasIndicatorLibraryData(indicatorLibrary);
     if (tab === 'overview') {
       return (
         <Overview
@@ -336,13 +342,12 @@ function App() {
     }
     if (tab === 'warehouse') return <Warehouse />;
     if (tab === 'indicators') {
-      return (
-        <IndicatorLibraryPage
-          library={indicatorLibrary}
-        />
-      );
+      return indicatorLibraryReady
+        ? <IndicatorLibraryPage library={indicatorLibrary} />
+        : <IndicatorLibraryUnavailable />;
     }
     if (tab === 'strategy') {
+      if (!indicatorLibraryReady) return <IndicatorLibraryUnavailable compact />;
       return (
         <StrategyPanel
           indicatorLibrary={indicatorLibrary}
@@ -1020,6 +1025,19 @@ function conceptProfileRows(concepts: Array<Record<string, unknown>>): Array<[Re
   ]);
 }
 
+function IndicatorLibraryUnavailable({ compact = false }: { compact?: boolean }) {
+  return (
+    <section className={compact ? 'panel indicator-library-missing compact' : 'panel indicator-library-missing'}>
+      <PanelTitle icon={<ShieldAlert size={18} />} title="指标库未加载" />
+      <p>前端没有从后端拿到指标定义。请确认本地或服务器后端已经更新并重启；指标库加载成功后，策略页会显示按分类排列的运行参数和指标规则。</p>
+      <div>
+        <span>预期接口</span>
+        <code>/api/bootstrap · /api/indicators</code>
+      </div>
+    </section>
+  );
+}
+
 function IndicatorLibraryPage({
   library,
 }: {
@@ -1337,6 +1355,11 @@ function StrategyPanel(props: {
             </label>
             <span className="strategy-mode-note">策略由特征参数、过滤条件、评分项和风险项共同决定；需要的形态/趋势计算会自动启用。</span>
           </div>
+          <StrategyRuleBuilder
+            library={props.indicatorLibrary}
+            strategy={props.strategy}
+            setStrategy={props.setStrategy}
+          />
           <details className="legacy-strategy-controls wide" open>
             <summary>
               <span>运行参数</span>
@@ -1354,6 +1377,147 @@ function StrategyPanel(props: {
         </div>
       </section>
     </div>
+  );
+}
+
+function StrategyRuleBuilder({
+  library,
+  strategy,
+  setStrategy,
+}: {
+  library: IndicatorLibrary;
+  strategy: StrategyConfig;
+  setStrategy: (config: StrategyConfig) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('all');
+  const [selectedId, setSelectedId] = useState('');
+  const indicatorById = useMemo(
+    () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
+    [library.indicators],
+  );
+  const categoryById = useMemo(
+    () => Object.fromEntries(library.categories.map((item) => [item.id, item])),
+    [library.categories],
+  );
+  const usableIndicators = useMemo(
+    () => library.indicators
+      .filter((indicator) => indicator.kind === 'data' && indicator.status !== 'planned')
+      .filter((indicator) => (indicator.supported_actions || []).length > 0)
+      .sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN')),
+    [library.indicators],
+  );
+  const visibleIndicators = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return usableIndicators.filter((indicator) => {
+      if (category !== 'all' && indicator.category_id !== category) return false;
+      if (!needle) return true;
+      return `${indicator.name} ${indicator.id} ${indicator.source} ${indicator.description}`.toLowerCase().includes(needle);
+    });
+  }, [category, query, usableIndicators]);
+  const selectedIndicator = indicatorById[selectedId] || visibleIndicators[0] || usableIndicators[0];
+  const rules = Array.isArray(strategy.strategy_rules) ? strategy.strategy_rules : [];
+  const actionCounts = rules.reduce<Record<RuleAction, number>>((acc, rule) => {
+    if (rule.enabled !== false && rule.action in acc) acc[rule.action as RuleAction] += 1;
+    return acc;
+  }, { filter: 0, score: 0, risk: 0, display: 0 });
+
+  const updateRules = (nextRules: StrategyRule[]) => {
+    setStrategy({ ...strategy, strategy_rules: nextRules });
+  };
+  const patchRule = (ruleId: string, patch: Partial<StrategyRule>) => {
+    updateRules(rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)));
+  };
+  const addRule = (indicator = selectedIndicator) => {
+    if (!indicator) return;
+    updateRules([...rules, defaultStrategyRule(indicator)]);
+    setSelectedId(indicator.id);
+  };
+  const removeRule = (ruleId: string) => {
+    updateRules(rules.filter((rule) => rule.id !== ruleId));
+  };
+  const categories = library.categories
+    .filter((item) => usableIndicators.some((indicator) => indicator.category_id === item.id));
+
+  return (
+    <section className="strategy-rule-builder wide">
+      <div className="rule-builder-head">
+        <div>
+          <span className="section-kicker">指标规则</span>
+          <h3>按分类加入指标条件</h3>
+          <p>选一个指标，直接决定它是硬筛选、排序加权、风险扣分还是只随结果展示。</p>
+        </div>
+        <div className="rule-builder-stats">
+          {(Object.keys(ruleActionMeta) as RuleAction[]).map((action) => (
+            <span key={action}>
+              <b>{actionCounts[action]}</b>
+              <em>{ruleActionMeta[action].label}</em>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="rule-builder-layout">
+        <aside className="rule-picker">
+          <div className="rule-picker-search">
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索指标 / 数据源 / 公式" />
+          </div>
+          <div className="rule-category-rail">
+            <button className={category === 'all' ? 'active' : ''} type="button" onClick={() => setCategory('all')}>
+              全部
+            </button>
+            {categories.map((item) => (
+              <button key={item.id} className={category === item.id ? 'active' : ''} type="button" onClick={() => setCategory(item.id)}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div className="rule-indicator-list">
+            {visibleIndicators.map((indicator) => (
+              <button
+                key={indicator.id}
+                className={selectedIndicator?.id === indicator.id ? 'active' : ''}
+                type="button"
+                onClick={() => setSelectedId(indicator.id)}
+              >
+                <strong>{indicator.name}</strong>
+                <span>{categoryById[indicator.category_id]?.label || indicator.category_id}</span>
+                <em>{indicatorRuleCapabilityLabel(indicator)}</em>
+              </button>
+            ))}
+            {visibleIndicators.length === 0 && <EmptyState text="没有匹配指标。" />}
+          </div>
+          <button className="primary compact add-rule-button" type="button" disabled={!selectedIndicator} onClick={() => addRule()}>
+            <Plus size={14} />
+            加入规则
+          </button>
+        </aside>
+
+        <div className="rule-board">
+          {rules.length === 0 && (
+            <div className="rule-empty-state">
+              <strong>还没有指标规则</strong>
+              <span>从上方分类指标中加入条件。保存并运行后，后端会按显式规则过滤、加权、扣风险或展示。</span>
+            </div>
+          )}
+          {rules.map((rule) => {
+            const indicator = indicatorById[rule.indicator_id];
+            if (!indicator) {
+              return null;
+            }
+            return (
+              <StrategyRuleCard
+                key={rule.id}
+                rule={rule}
+                indicator={indicator}
+                patch={(patch) => patchRule(rule.id, patch)}
+                remove={() => removeRule(rule.id)}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </section>
   );
 }
 
