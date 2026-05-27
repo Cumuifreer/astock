@@ -124,8 +124,9 @@ def data_stocks(
     search: str = "",
     exchange: str = "",
     board: str = "",
+    status: str = "active",
 ) -> Dict[str, Any]:
-    return data_service.list_stocks(limit=limit, offset=offset, search=search, exchange=exchange, board=board)
+    return data_service.list_stocks(limit=limit, offset=offset, search=search, exchange=exchange, board=board, status=status)
 
 
 @router.get("/data/stocks/{code}")

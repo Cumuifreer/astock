@@ -1069,11 +1069,29 @@ h1 {
 .warehouse-stock-cell strong {
   color: var(--text);
   font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .warehouse-stock-cell span {
   color: var(--muted);
   font-size: 11px;
+}
+
+.warehouse-stock-cell .stock-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 189, 90, 0.36);
+  background: rgba(255, 189, 90, 0.08);
+  color: #d9b26d;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .warehouse-detail-rail {
@@ -4378,6 +4396,24 @@ tr.selected-row td {
   margin: 8px 0 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.ledger-universe-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ledger-universe-note span {
+  color: var(--soft);
+}
+
+.ledger-universe-note b {
+  color: var(--amber);
+  font-size: 12px;
 }
 
 .ledger-summary {

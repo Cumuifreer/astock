@@ -101,6 +101,42 @@ def test_stock_warehouse_filters_by_exchange_and_board(tmp_path):
     assert [row["code"] for row in main["rows"]] == ["000001.SZ", "600519.SH"]
 
 
+def test_stock_warehouse_filters_inactive_status_and_falls_back_for_exact_code_search(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    seed_stock_basics(db)
+    db.upsert(
+        "stock_basic",
+        [
+            {
+                "code": "000003.SZ",
+                "name": "PT金田A",
+                "exchange": "SZ",
+                "list_date": date(1991, 7, 3),
+                "source": "test",
+                "is_st": False,
+                "suspended": True,
+                "updated_at": datetime(2026, 5, 24, 9, 0),
+            }
+        ],
+        ["code"],
+    )
+
+    service = DataService(db)
+    active = service.list_stocks()
+    inactive = service.list_stocks(status="inactive")
+    all_rows = service.list_stocks(status="all")
+    exact_search = service.list_stocks(search="000003.SZ")
+
+    assert active["total"] == 4
+    assert [row["code"] for row in inactive["rows"]] == ["000003.SZ"]
+    assert inactive["rows"][0]["is_active"] is False
+    assert inactive["rows"][0]["status_label"] == "非活跃"
+    assert all_rows["total"] == 5
+    assert exact_search["total"] == 1
+    assert exact_search["rows"][0]["code"] == "000003.SZ"
+
+
 def test_stock_warehouse_turnover_rate_prefers_tushare_daily_basic(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -190,6 +226,35 @@ def test_stock_warehouse_volume_ratio_falls_back_to_local_history(tmp_path):
     assert detail["daily_basic"]["volume_ratio_source"] == "本地K线"
 
 
+def test_overview_reports_active_and_inactive_stock_counts(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    seed_stock_basics(db)
+    db.upsert(
+        "stock_basic",
+        [
+            {
+                "code": "000003.SZ",
+                "name": "PT金田A",
+                "exchange": "SZ",
+                "list_date": date(1991, 7, 3),
+                "source": "test",
+                "is_st": False,
+                "suspended": True,
+                "updated_at": datetime(2026, 5, 24, 9, 0),
+            }
+        ],
+        ["code"],
+    )
+
+    overview = DataService(db).overview()
+
+    assert overview["stock_count"] == 5
+    assert overview["active_stock_count"] == 4
+    assert overview["inactive_stock_count"] == 1
+    assert overview["turnover_coverage"]["total"] == 4
+
+
 def test_capabilities_count_snapshot_float_market_value(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -200,6 +265,84 @@ def test_capabilities_count_snapshot_float_market_value(tmp_path):
 
     assert float_market_value["coverage_count"] == 1
     assert str(float_market_value["latest_update"]).startswith("2026-05-24")
+
+
+def test_capabilities_use_active_stocks_as_denominator(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    seed_stock_basics(db)
+    db.upsert(
+        "stock_basic",
+        [
+            {
+                "code": "000003.SZ",
+                "name": "PT金田A",
+                "exchange": "SZ",
+                "list_date": date(1991, 7, 3),
+                "source": "test",
+                "is_st": False,
+                "suspended": True,
+                "updated_at": datetime(2026, 5, 24, 9, 0),
+            }
+        ],
+        ["code"],
+    )
+
+    capabilities = {row["capability"]: row for row in DataService(db).capabilities()}
+
+    assert capabilities["股票基础信息"]["coverage_count"] == 4
+    assert capabilities["股票基础信息"]["missing_count"] == 0
+    assert capabilities["当天行情快照"]["missing_count"] == 3
+
+
+def test_capabilities_ignore_inactive_old_data_in_stock_coverage(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    seed_stock_basics(db)
+    db.upsert(
+        "stock_basic",
+        [
+            {
+                "code": "000003.SZ",
+                "name": "PT金田A",
+                "exchange": "SZ",
+                "list_date": date(1991, 7, 3),
+                "source": "test",
+                "is_st": False,
+                "suspended": True,
+                "updated_at": datetime(2026, 5, 24, 9, 0),
+            }
+        ],
+        ["code"],
+    )
+    db.upsert(
+        "historical_bars",
+        [
+            {
+                "code": "000003.SZ",
+                "date": date(2026, 5, 24),
+                "open": 1.0,
+                "high": 1.1,
+                "low": 0.9,
+                "close": 1.0,
+                "prev_close": 1.0,
+                "volume": 100,
+                "amount": 1000,
+                "turn": 1.0,
+                "pct_chg": 0.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "test",
+                "updated_at": datetime(2026, 5, 24, 15, 0),
+            }
+        ],
+        ["code", "date"],
+    )
+
+    capabilities = {row["capability"]: row for row in DataService(db).capabilities()}
+
+    assert capabilities["历史 K 线"]["coverage_count"] == 0
+    assert capabilities["历史 K 线"]["missing_count"] == 4
 
 
 def test_capabilities_include_tushare_enrichment_layers(tmp_path):

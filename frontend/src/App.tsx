@@ -448,6 +448,7 @@ function App() {
     if (tab === 'map') {
       return (
         <DataMap
+          overview={bootstrap.overview}
           capabilities={bootstrap.capabilities}
           afterProbe={() => load(true)}
           backfillCapability={startCapabilityBackfill}
@@ -550,10 +551,17 @@ function Overview({
 }) {
   const overview = bootstrap.overview;
   const candidateCount = Number(overview.latest_analysis?.summary?.candidate_count ?? bootstrap.candidates.rows.length ?? 0);
+  const activeStockCount = overview.active_stock_count ?? overview.stock_count;
+  const inactiveStockCount = overview.inactive_stock_count ?? Math.max(0, overview.stock_count - activeStockCount);
   return (
     <div className="page-stack">
       <section className="metric-grid">
-        <MetricCard label="股票池" value={formatInt(overview.stock_count)} sub="真实 A 股" icon={<Database size={18} />} />
+        <MetricCard
+          label="股票池"
+          value={formatInt(activeStockCount)}
+          sub={inactiveStockCount > 0 ? `忽略 ${formatInt(inactiveStockCount)} 只非活跃` : '活跃 A 股'}
+          icon={<Database size={18} />}
+        />
         <MetricCard label="历史 K 线" value={formatInt(overview.history_rows)} sub={overview.latest_history_date || '等待更新'} icon={<LineChart size={18} />} />
         <MetricCard label="快照" value={formatInt(overview.snapshot_rows)} sub={overview.latest_snapshot_date || '等待更新'} icon={<Activity size={18} />} />
         <MetricCard label="候选" value={formatInt(candidateCount)} sub={overview.latest_analysis?.finished_at || '尚未分析'} icon={<Star size={18} />} />
@@ -746,6 +754,7 @@ function Warehouse() {
   const [search, setSearch] = useState('');
   const [exchange, setExchange] = useState('');
   const [board, setBoard] = useState('');
+  const [stockStatus, setStockStatus] = useState<'active' | 'inactive' | 'all'>('active');
   const [view, setView] = useState<'quote' | 'flow' | 'structure'>('quote');
   const [error, setError] = useState<string | null>(null);
   const limit = 40;
@@ -761,6 +770,11 @@ function Warehouse() {
     { label: '创业板', value: 'gem' },
     { label: '科创板', value: 'star' },
   ];
+  const statusOptions = [
+    { label: '活跃', value: 'active' },
+    { label: '非活跃', value: 'inactive' },
+    { label: '全部', value: 'all' },
+  ] as const;
   const viewOptions = [
     { value: 'quote', label: '行情', sub: '价格 / 成交 / 换手' },
     { value: 'flow', label: '资金', sub: '主力 / 龙虎榜 / 量能' },
@@ -769,7 +783,7 @@ function Warehouse() {
 
   async function load() {
     try {
-      const data = (await api.stocks(limit, offset, search, { exchange, board })) as { rows: Array<Record<string, unknown>>; total: number };
+      const data = (await api.stocks(limit, offset, search, { exchange, board, status: stockStatus })) as { rows: Array<Record<string, unknown>>; total: number };
       setRows(data.rows);
       setTotal(data.total);
       setError(null);
@@ -780,7 +794,7 @@ function Warehouse() {
 
   useEffect(() => {
     void load();
-  }, [offset, search, exchange, board]);
+  }, [offset, search, exchange, board, stockStatus]);
 
   async function selectStock(code: string) {
     setSelectedCode(code);
@@ -832,6 +846,17 @@ function Warehouse() {
                 key={option.value || 'all-board'}
                 className={board === option.value ? 'filter-chip active' : 'filter-chip'}
                 onClick={() => { setOffset(0); setBoard(option.value); }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="filter-group">
+            {statusOptions.map((option) => (
+              <button
+                key={option.value}
+                className={stockStatus === option.value ? 'filter-chip active' : 'filter-chip'}
+                onClick={() => { setOffset(0); setStockStatus(option.value); }}
               >
                 {option.label}
               </button>
@@ -897,7 +922,10 @@ function Warehouse() {
                         <Database size={14} />
                       </button>
                       <div>
-                        <strong>{String(row.name || '')}</strong>
+                        <strong>
+                          {String(row.name || '')}
+                          {row.status_label === '非活跃' && <span className="stock-status-badge inactive">非活跃</span>}
+                        </strong>
                         <span className="mono">{String(row.code || '')} · {String(row.exchange || '')} · {boardLabel(row.board)}</span>
                       </div>
                     </div>
@@ -3546,11 +3574,13 @@ function RadarTimeline({ timeline, loading }: { timeline: IntradayTimeline | nul
 }
 
 function DataMap({
+  overview,
   capabilities,
   afterProbe,
   backfillCapability,
   backfillDisabled,
 }: {
+  overview: Bootstrap['overview'];
   capabilities: Capability[];
   afterProbe: () => Promise<void>;
   backfillCapability: (capability: string) => Promise<void>;
@@ -3560,6 +3590,8 @@ function DataMap({
   const [backfilling, setBackfilling] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showNormal, setShowNormal] = useState(false);
+  const activeStockCount = overview.active_stock_count ?? overview.stock_count;
+  const inactiveStockCount = overview.inactive_stock_count ?? Math.max(0, overview.stock_count - activeStockCount);
   const rows = useMemo(() => buildDataLedgerRows(capabilities), [capabilities]);
   const visibleRows = useMemo(
     () => (showNormal ? rows : rows.filter((row) => row.status !== 'normal')),
@@ -3606,6 +3638,10 @@ function DataMap({
           <div>
             <PanelTitle icon={<Layers3 size={18} />} title="数据账本" />
             <p>按数据类检查本地仓库的新鲜度和字段覆盖。</p>
+            <div className="ledger-universe-note">
+              <span>按活跃股票统计</span>
+              {inactiveStockCount > 0 && <b>已忽略 {formatInt(inactiveStockCount)} 只非活跃股票</b>}
+            </div>
           </div>
           <div className="quick-actions">
             {message && <span className="muted-text">{message}</span>}

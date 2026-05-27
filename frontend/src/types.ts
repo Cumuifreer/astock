@@ -322,6 +322,8 @@ export interface StrategyConfig {
 
 export interface Overview {
   stock_count: number;
+  active_stock_count?: number;
+  inactive_stock_count?: number;
   history_rows: number;
   snapshot_rows: number;
   latest_history_date: string | null;

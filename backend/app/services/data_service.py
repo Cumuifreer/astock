@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
@@ -46,6 +47,9 @@ LEFT JOIN (
     ) volume_base
 ) hv ON hv.code = b.code
 """
+
+ACTIVE_STOCK_FILTER = "b.suspended IS DISTINCT FROM TRUE"
+INACTIVE_STOCK_FILTER = "b.suspended IS TRUE"
 
 
 def _is_blocked_brief_source(item: Dict[str, Any]) -> bool:
@@ -198,27 +202,50 @@ class DataService:
     def __init__(self, db: Database):
         self.db = db
 
+    def active_stock_count(self) -> int:
+        return int(
+            self.db.scalar(
+                f"SELECT COUNT(*) FROM stock_basic b WHERE {ACTIVE_STOCK_FILTER}"
+            )
+            or 0
+        )
+
+    def inactive_stock_count(self) -> int:
+        return int(
+            self.db.scalar(
+                f"SELECT COUNT(*) FROM stock_basic b WHERE {INACTIVE_STOCK_FILTER}"
+            )
+            or 0
+        )
+
     def overview(self) -> Dict[str, Any]:
         latest_run = self.latest_analysis_run()
         latest_task = self.latest_task("update")
         latest_brief = self.latest_daily_brief()
+        stock_count = self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0
+        active_stock_count = self.active_stock_count()
+        inactive_stock_count = self.inactive_stock_count()
         return {
-            "stock_count": self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0,
+            "stock_count": stock_count,
+            "active_stock_count": active_stock_count,
+            "inactive_stock_count": inactive_stock_count,
             "history_rows": self.db.scalar("SELECT COUNT(*) FROM historical_bars") or 0,
             "snapshot_rows": self.db.scalar("SELECT COUNT(*) FROM daily_snapshots") or 0,
             "latest_history_date": self.db.scalar("SELECT MAX(date) FROM historical_bars"),
             "latest_snapshot_date": self.db.scalar("SELECT MAX(date) FROM daily_snapshots"),
             "turnover_coverage": self._ratio(
                 self.db.scalar(
-                    """
-                    SELECT COUNT(DISTINCT code)
-                    FROM historical_bars
-                    WHERE turn IS NOT NULL
-                      AND date = (SELECT MAX(date) FROM historical_bars)
+                    f"""
+                    SELECT COUNT(DISTINCT h.code)
+                    FROM historical_bars h
+                    JOIN stock_basic b ON b.code = h.code
+                    WHERE h.turn IS NOT NULL
+                      AND h.date = (SELECT MAX(date) FROM historical_bars)
+                      AND {ACTIVE_STOCK_FILTER}
                     """
                 )
                 or 0,
-                self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0,
+                active_stock_count,
             ),
             "latest_analysis": latest_run,
             "latest_update": latest_task,
@@ -329,11 +356,14 @@ class DataService:
         search: str = "",
         exchange: str = "",
         board: str = "",
+        status: str = "active",
     ) -> Dict[str, Any]:
         params: List[Any] = []
         clauses: List[str] = []
+        exact_code_search = False
         if search:
             text = search.strip()
+            exact_code_search = bool(re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", text.upper()))
             clauses.append("(b.code ILIKE ? OR b.name ILIKE ?)")
             params.extend([f"%{text}%", f"%{text}%"])
         exchange = exchange.upper().strip()
@@ -344,11 +374,20 @@ class DataService:
         if board in {"main", "gem", "star", "bj"}:
             clauses.append(f"{STOCK_BOARD_CASE} = ?")
             params.append(board)
+        status = status.lower().strip()
+        if status not in {"active", "inactive", "all"}:
+            status = "active"
+        if status == "inactive":
+            clauses.append("b.suspended IS TRUE")
+        elif status == "active" and not exact_code_search:
+            clauses.append(ACTIVE_STOCK_FILTER)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         total = self.db.scalar(f"SELECT COUNT(*) FROM stock_basic b {where}", params) or 0
         rows = self.db.query(
             f"""
             SELECT b.code, b.name, b.exchange, b.list_date, b.source, b.is_st, b.suspended,
+                   b.suspended IS DISTINCT FROM TRUE AS is_active,
+                   CASE WHEN b.suspended IS TRUE THEN '非活跃' ELSE '活跃' END AS status_label,
                    {STOCK_BOARD_CASE} AS board,
                    s.latest_price, s.pct_chg, s.amount, s.volume,
                    COALESCE(dbs.turnover_rate, s.turnover_rate) AS turnover_rate,
@@ -765,24 +804,66 @@ class DataService:
 
     def refresh_capabilities(self) -> None:
         total_stocks = self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0
+        active_stocks = self.active_stock_count()
         latest_history = self.db.scalar("SELECT MAX(date) FROM historical_bars")
-        latest_snapshot = self.db.scalar("SELECT MAX(date) FROM daily_snapshots")
+        latest_snapshot = self.db.scalar(
+            f"""
+            SELECT MAX(s.date)
+            FROM daily_snapshots s
+            JOIN stock_basic b ON b.code = s.code
+            WHERE {ACTIVE_STOCK_FILTER}
+            """
+        )
         latest_market_environment = self.db.scalar("SELECT MAX(date) FROM market_environment")
-        latest_tushare_daily_basic = self.db.scalar("SELECT MAX(trade_date) FROM tushare_daily_basic")
-        latest_tushare_stk_factor = self.db.scalar("SELECT MAX(trade_date) FROM tushare_stk_factor")
-        latest_tushare_moneyflow = self.db.scalar("SELECT MAX(trade_date) FROM tushare_moneyflow")
+        latest_tushare_daily_basic = self.db.scalar(
+            f"""
+            SELECT MAX(t.trade_date)
+            FROM tushare_daily_basic t
+            JOIN stock_basic b ON b.code = t.code
+            WHERE {ACTIVE_STOCK_FILTER}
+            """
+        )
+        latest_tushare_stk_factor = self.db.scalar(
+            f"""
+            SELECT MAX(t.trade_date)
+            FROM tushare_stk_factor t
+            JOIN stock_basic b ON b.code = t.code
+            WHERE {ACTIVE_STOCK_FILTER}
+            """
+        )
+        latest_tushare_moneyflow = self.db.scalar(
+            f"""
+            SELECT MAX(t.trade_date)
+            FROM tushare_moneyflow t
+            JOIN stock_basic b ON b.code = t.code
+            WHERE {ACTIVE_STOCK_FILTER}
+            """
+        )
         latest_tushare_limit = self.db.scalar("SELECT MAX(trade_date) FROM tushare_limit_list_d")
         latest_tushare_cyq = self.db.scalar(
-            """
+            f"""
             SELECT MAX(trade_date)
             FROM (
-                SELECT trade_date FROM tushare_cyq_perf
+                SELECT p.trade_date
+                FROM tushare_cyq_perf p
+                JOIN stock_basic b ON b.code = p.code
+                WHERE {ACTIVE_STOCK_FILTER}
                 UNION ALL
-                SELECT trade_date FROM tushare_cyq_chips
+                SELECT c.trade_date
+                FROM tushare_cyq_chips c
+                JOIN stock_basic b ON b.code = c.code
+                WHERE {ACTIVE_STOCK_FILTER}
             )
             """
         )
-        latest_tushare_ths = self.db.scalar("SELECT MAX(updated_at) FROM tushare_ths_member")
+        latest_tushare_ths = self.db.scalar(
+            f"""
+            SELECT MAX(t.updated_at)
+            FROM tushare_ths_member t
+            JOIN stock_basic b ON b.code = t.code
+            WHERE {ACTIVE_STOCK_FILTER}
+            """
+        )
         latest_tushare_top = self.db.scalar(
             """
             SELECT MAX(trade_date)
@@ -796,12 +877,20 @@ class DataService:
             """
         )
         latest_float_market_value = self.db.scalar(
-            """
+            f"""
             SELECT MAX(date)
             FROM (
-                SELECT date FROM float_market_values WHERE float_market_value IS NOT NULL
+                SELECT f.date
+                FROM float_market_values f
+                JOIN stock_basic b ON b.code = f.code
+                WHERE f.float_market_value IS NOT NULL
+                  AND {ACTIVE_STOCK_FILTER}
                 UNION ALL
-                SELECT date FROM daily_snapshots WHERE float_market_value IS NOT NULL
+                SELECT s.date
+                FROM daily_snapshots s
+                JOIN stock_basic b ON b.code = s.code
+                WHERE s.float_market_value IS NOT NULL
+                  AND {ACTIVE_STOCK_FILTER}
             )
             """
         )
@@ -812,13 +901,17 @@ class DataService:
                     """
                     SELECT COUNT(DISTINCT code)
                     FROM (
-                        SELECT code
-                        FROM float_market_values
-                        WHERE date = ? AND float_market_value IS NOT NULL
+                        SELECT f.code
+                        FROM float_market_values f
+                        JOIN stock_basic b ON b.code = f.code
+                        WHERE f.date = ? AND f.float_market_value IS NOT NULL
+                          AND b.suspended IS DISTINCT FROM TRUE
                         UNION
-                        SELECT code
-                        FROM daily_snapshots
-                        WHERE date = ? AND float_market_value IS NOT NULL
+                        SELECT s.code
+                        FROM daily_snapshots s
+                        JOIN stock_basic b ON b.code = s.code
+                        WHERE s.date = ? AND s.float_market_value IS NOT NULL
+                          AND b.suspended IS DISTINCT FROM TRUE
                     )
                     """,
                     [latest_float_market_value, latest_float_market_value],
@@ -840,7 +933,13 @@ class DataService:
                 return 0
             return int(
                 self.db.scalar(
-                    f"SELECT COUNT(DISTINCT code) FROM {table} WHERE trade_date = ?",
+                    f"""
+                    SELECT COUNT(DISTINCT t.code)
+                    FROM {table} t
+                    JOIN stock_basic b ON b.code = t.code
+                    WHERE t.trade_date = ?
+                      AND {ACTIVE_STOCK_FILTER}
+                    """,
                     [latest],
                 )
                 or 0
@@ -853,9 +952,17 @@ class DataService:
                     """
                     SELECT COUNT(DISTINCT code)
                     FROM (
-                        SELECT code FROM tushare_cyq_perf WHERE trade_date = ?
+                        SELECT p.code
+                        FROM tushare_cyq_perf p
+                        JOIN stock_basic b ON b.code = p.code
+                        WHERE p.trade_date = ?
+                          AND b.suspended IS DISTINCT FROM TRUE
                         UNION
-                        SELECT code FROM tushare_cyq_chips WHERE trade_date = ?
+                        SELECT c.code
+                        FROM tushare_cyq_chips c
+                        JOIN stock_basic b ON b.code = c.code
+                        WHERE c.trade_date = ?
+                          AND b.suspended IS DISTINCT FROM TRUE
                     )
                     """,
                     [latest_tushare_cyq, latest_tushare_cyq],
@@ -883,23 +990,73 @@ class DataService:
 
         rows = []
         counts = {
-            "历史 K 线": self.db.scalar("SELECT COUNT(DISTINCT code) FROM historical_bars") or 0,
-            "当天行情快照": self.db.scalar(
-                "SELECT COUNT(DISTINCT code) FROM daily_snapshots WHERE date = (SELECT MAX(date) FROM daily_snapshots)"
+            "历史 K 线": self.db.scalar(
+                f"""
+                SELECT COUNT(DISTINCT h.code)
+                FROM historical_bars h
+                JOIN stock_basic b ON b.code = h.code
+                WHERE {ACTIVE_STOCK_FILTER}
+                """
             )
             or 0,
-            "股票基础信息": total_stocks,
+            "当天行情快照": self.db.scalar(
+                f"""
+                SELECT COUNT(DISTINCT s.code)
+                FROM daily_snapshots s
+                JOIN stock_basic b ON b.code = s.code
+                WHERE s.date = ?
+                  AND {ACTIVE_STOCK_FILTER}
+                """,
+                [latest_snapshot],
+            )
+            or 0,
+            "股票基础信息": active_stocks,
             "流通市值": float_market_value_count,
-            "换手率": self.db.scalar("SELECT COUNT(DISTINCT code) FROM historical_bars WHERE turn IS NOT NULL") or 0,
+            "换手率": self.db.scalar(
+                f"""
+                SELECT COUNT(DISTINCT h.code)
+                FROM historical_bars h
+                JOIN stock_basic b ON b.code = h.code
+                WHERE h.turn IS NOT NULL
+                  AND {ACTIVE_STOCK_FILTER}
+                """
+            )
+            or 0,
             "RPS": self.db.scalar(
-                "SELECT COUNT(*) FROM (SELECT code, COUNT(*) AS n FROM historical_bars GROUP BY code HAVING n >= 21)"
+                f"""
+                SELECT COUNT(*)
+                FROM (
+                    SELECT h.code, COUNT(*) AS n
+                    FROM historical_bars h
+                    JOIN stock_basic b ON b.code = h.code
+                    WHERE {ACTIVE_STOCK_FILTER}
+                    GROUP BY h.code
+                    HAVING n >= 21
+                )
+                """
             )
             or 0,
             "振幅": self.db.scalar(
-                "SELECT COUNT(DISTINCT code) FROM historical_bars WHERE high IS NOT NULL AND low IS NOT NULL AND prev_close IS NOT NULL"
+                f"""
+                SELECT COUNT(DISTINCT h.code)
+                FROM historical_bars h
+                JOIN stock_basic b ON b.code = h.code
+                WHERE h.high IS NOT NULL
+                  AND h.low IS NOT NULL
+                  AND h.prev_close IS NOT NULL
+                  AND {ACTIVE_STOCK_FILTER}
+                """
             )
             or 0,
-            "ST / 停牌状态": self.db.scalar("SELECT COUNT(DISTINCT code) FROM historical_bars WHERE is_st IS NOT NULL OR tradestatus IS NOT NULL")
+            "ST / 停牌状态": self.db.scalar(
+                f"""
+                SELECT COUNT(DISTINCT h.code)
+                FROM historical_bars h
+                JOIN stock_basic b ON b.code = h.code
+                WHERE (h.is_st IS NOT NULL OR h.tradestatus IS NOT NULL)
+                  AND {ACTIVE_STOCK_FILTER}
+                """
+            )
             or 0,
             "市场环境": self.db.scalar("SELECT COUNT(*) FROM market_environment") or 0,
             "每日指标": latest_code_count("tushare_daily_basic", latest_tushare_daily_basic),
@@ -907,7 +1064,15 @@ class DataService:
             "资金流向": latest_code_count("tushare_moneyflow", latest_tushare_moneyflow),
             "涨跌停": latest_code_count("tushare_limit_list_d", latest_tushare_limit),
             "筹码分布": latest_cyq_count,
-            "概念/行业成分": self.db.scalar("SELECT COUNT(DISTINCT code) FROM tushare_ths_member") or 0,
+            "概念/行业成分": self.db.scalar(
+                f"""
+                SELECT COUNT(DISTINCT t.code)
+                FROM tushare_ths_member t
+                JOIN stock_basic b ON b.code = t.code
+                WHERE {ACTIVE_STOCK_FILTER}
+                """
+            )
+            or 0,
             "龙虎榜/游资": latest_top_count,
         }
         source_rows = self.db.query(
@@ -924,7 +1089,7 @@ class DataService:
         for capability, definition in CAPABILITY_DEFINITIONS.items():
             coverage = int(counts.get(capability, 0))
             coverage_kind = definition.get("coverage_kind", "stock")
-            denominator = coverage if coverage_kind in {"event", "dataset"} else total_stocks if total_stocks else coverage
+            denominator = coverage if coverage_kind in {"event", "dataset"} else active_stocks if active_stocks else coverage
             latest_update = latest_snapshot if capability == "当天行情快照" else latest_history
             if capability == "流通市值":
                 latest_update = latest_float_market_value
