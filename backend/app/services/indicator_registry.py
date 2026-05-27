@@ -23,6 +23,7 @@ NUMERIC_OPERATORS = ["gte", "lte", "gt", "lt", "between", "eq", "neq"]
 BOOLEAN_OPERATORS = ["is_true", "eq", "neq"]
 CHOICE_OPERATORS = ["eq", "neq"]
 EVENT_OPERATORS = ["recent", "eq", "neq"]
+EVENT_STATE_OPERATORS = ["eq", "neq"]
 
 RULE_META_BY_ID: Dict[str, Dict[str, Any]] = {
     "latest_price": {
@@ -81,18 +82,42 @@ RULE_META_BY_ID: Dict[str, Dict[str, Any]] = {
         ],
     },
     "theme_limit_count": {"value_type": "number", "unit": "只", "direction": "higher_better"},
-    "limit_event": {"value_type": "event", "unit": "事件", "direction": "event"},
+    "limit_event": {
+        "value_type": "event",
+        "unit": "事件",
+        "direction": "event",
+        "operator_semantics": "event_state",
+        "supported_operators": EVENT_STATE_OPERATORS,
+        "default_operator": "eq",
+        "hard_filter_allowed": False,
+    },
+    "limit_fd_mv_ratio": {"value_type": "ratio", "unit": "比例", "direction": "higher_better", "hard_filter_allowed": False},
     "top_list_net_amount": {"value_type": "money", "unit": "元", "direction": "higher_better"},
+    "top_inst_net_buy": {"value_type": "money", "unit": "元", "direction": "higher_better", "hard_filter_allowed": False},
+    "hot_money_net_amount": {"value_type": "money", "unit": "元", "direction": "higher_better", "hard_filter_allowed": False},
     "main_net_amount": {"value_type": "money", "unit": "元", "direction": "higher_better"},
     "net_mf_amount": {"value_type": "money", "unit": "元", "direction": "higher_better"},
     "cyq_winner_rate": {"value_type": "percent", "unit": "%", "direction": "range_better"},
-    "cost_50pct": {"value_type": "money", "unit": "元", "direction": "range_better"},
+    "cost_50pct": {"value_type": "money", "unit": "元", "direction": "neutral", "hard_filter_allowed": False},
+    "price_to_cost_50pct": {
+        "value_type": "ratio",
+        "unit": "比例",
+        "direction": "range_better",
+        "default_operator": "between",
+        "hard_filter_allowed": False,
+        "recommended_rules": [
+            {"label": "贴近成本中枢", "action": "score", "operator": "between", "value": -0.05, "value2": 0.15, "weight": 6},
+            {"label": "成本偏离过热", "action": "risk", "operator": "gte", "value": 0.3, "weight": 8},
+        ],
+    },
     "is_st": {"value_type": "boolean", "unit": "", "direction": "lower_better", "default_operator": "is_true"},
     "market_breadth": {
         "value_type": "score",
         "unit": "分",
         "range_hint": {"min": 0, "max": 100},
         "direction": "higher_better",
+        "operator_semantics": "market_context",
+        "hard_filter_allowed": False,
     },
 }
 
@@ -133,6 +158,16 @@ def _default_operators(value_type: str) -> List[str]:
     return NUMERIC_OPERATORS
 
 
+def _operator_semantics(value_type: str) -> str:
+    if value_type == "boolean":
+        return "boolean"
+    if value_type == "choice":
+        return "choice"
+    if value_type == "event":
+        return "event_state"
+    return "numeric"
+
+
 def _default_operator(value_type: str, direction: str) -> str:
     if value_type == "boolean":
         return "is_true"
@@ -163,6 +198,11 @@ def _rule_builder_meta(
     supported_operators: Optional[List[str]] = None,
     default_operator: Optional[str] = None,
     recommended_rules: Optional[List[Dict[str, Any]]] = None,
+    hard_filter_allowed: Optional[bool] = None,
+    min_coverage_for_filter: Optional[float] = None,
+    freshness_required: Optional[bool] = None,
+    coverage_group: Optional[str] = None,
+    operator_semantics: Optional[str] = None,
 ) -> Dict[str, Any]:
     configured = RULE_META_BY_ID.get(indicator_id, {})
     if kind == "strategy_param":
@@ -187,10 +227,16 @@ def _rule_builder_meta(
             "recommended_rules": recommended_rules or configured.get("recommended_rules") or [],
             "analysis_field": analysis_field or configured.get("analysis_field") or None,
             "data_status": "parameter",
+            "hard_filter_allowed": False,
+            "min_coverage_for_filter": min_coverage_for_filter if min_coverage_for_filter is not None else configured.get("min_coverage_for_filter"),
+            "freshness_required": freshness_required if freshness_required is not None else bool(configured.get("freshness_required", False)),
+            "coverage_group": coverage_group or configured.get("coverage_group"),
+            "operator_semantics": operator_semantics or str(configured.get("operator_semantics") or _operator_semantics(resolved_type)),
         }
 
     resolved_type = str(value_type or configured.get("value_type") or _default_value_type(indicator_id, category_id))
     resolved_direction = direction or str(configured.get("direction") or "higher_better")
+    resolved_semantics = operator_semantics or str(configured.get("operator_semantics") or _operator_semantics(resolved_type))
     if status == "planned":
         actions: List[str] = []
         data_status = "planned"
@@ -200,11 +246,19 @@ def _rule_builder_meta(
     else:
         usage_actions = [item for item in usage if item in RULE_ACTIONS]
         actions = list(dict.fromkeys(supported_actions or usage_actions or ["display"]))
-        if resolved_type != "event" and "filter" not in actions:
-            actions.insert(0, "filter")
         if "display" not in actions:
             actions.append("display")
         data_status = "executable"
+    configured_hard_filter = configured.get("hard_filter_allowed")
+    can_hard_filter = (
+        bool(hard_filter_allowed)
+        if hard_filter_allowed is not None
+        else bool(configured_hard_filter)
+        if configured_hard_filter is not None
+        else "filter" in actions
+    )
+    if not can_hard_filter and "filter" in actions:
+        actions = [action for action in actions if action != "filter"]
     return {
         "value_type": resolved_type,
         "unit": unit if unit is not None else str(configured.get("unit") or _default_unit(resolved_type)),
@@ -216,6 +270,11 @@ def _rule_builder_meta(
         "recommended_rules": recommended_rules or configured.get("recommended_rules") or [],
         "analysis_field": analysis_field or configured.get("analysis_field") or indicator_id,
         "data_status": data_status,
+        "hard_filter_allowed": can_hard_filter,
+        "min_coverage_for_filter": min_coverage_for_filter if min_coverage_for_filter is not None else configured.get("min_coverage_for_filter"),
+        "freshness_required": freshness_required if freshness_required is not None else bool(configured.get("freshness_required", False)),
+        "coverage_group": coverage_group or configured.get("coverage_group"),
+        "operator_semantics": resolved_semantics,
     }
 
 
@@ -415,7 +474,7 @@ DATA_INDICATORS: List[Dict[str, Any]] = [
     data_indicator("rps20", "RPS20", "technical", "本地历史 K 线", "按最近 20 日收益率在全市场排序并映射到 0-100。", "短期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps20", "rps_window"]),
     data_indicator("rps60", "RPS60", "technical", "本地历史 K 线", "按最近 60 日收益率在全市场排序并映射到 0-100。", "中期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps60", "rps_window"]),
     data_indicator("rps120", "RPS120", "technical", "本地历史 K 线", "按最近 120 日收益率在全市场排序并映射到 0-100。", "中长期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps120"]),
-    data_indicator("macd_state", "MACD 状态", "technical", "本地历史 K 线 / Tushare stk_factor", "DIF、DEA 和 0 轴关系。", "确认动能是否改善。", ["filter", "score"], missing="allow"),
+    data_indicator("macd_state", "MACD 状态", "technical", "本地历史 K 线 / Tushare stk_factor", "DIF、DEA 和 0 轴关系。", "确认动能是否改善。", ["display"], missing="allow", analysis_ready=False),
     data_indicator("platform_range", "平台振幅", "platform", "本地历史 K 线", "平台窗口内最高价 / 最低价 - 1，或按收盘价区间计算。", "衡量横盘收敛程度。", ["filter", "score"], missing="skip", paired_strategy_ids=["platform_max_range", "platform_max_range_mode"]),
     data_indicator("platform_breakout_clearance", "突破上沿距离", "platform", "本地历史 K 线", "最新收盘价 / 平台上沿 - 1。", "判断是否刚刚有效站上平台上沿。", ["filter", "score"], missing="skip", paired_strategy_ids=["platform_breakout_clearance", "platform_breakout_max_clearance"]),
     data_indicator("platform_setup_distance_to_high", "距平台上沿", "platform", "本地历史 K 线", "平台上沿 / 最新收盘价 - 1。", "平台临界模式的核心位置指标。", ["filter", "score"], missing="skip", paired_strategy_ids=["platform_setup_max_distance_to_high"]),
@@ -432,10 +491,10 @@ DATA_INDICATORS: List[Dict[str, Any]] = [
     data_indicator("top_inst_net_buy", "机构净买额", "event", "Tushare top_inst", "机构席位净买入金额合计。", "观察机构席位方向。", ["score", "display"], status="active", analysis_ready=True),
     data_indicator("hot_money_net_amount", "游资净买额", "event", "Tushare hm_detail", "游资席位净买入金额合计。", "观察游资方向。", ["score", "display"], status="active", analysis_ready=True),
     data_indicator("cyq_winner_rate", "筹码胜率", "chips", "Tushare cyq_perf", "获利筹码占比。", "观察筹码位置与潜在抛压。", ["score", "risk"], status="active", analysis_ready=True),
-    data_indicator("cost_50pct", "中位成本", "chips", "Tushare cyq_perf", "筹码分布中 50% 成本位置。", "观察当前价和中位成本的距离。", ["score", "risk"], status="active", analysis_ready=True),
+    data_indicator("cost_50pct", "中位成本", "chips", "Tushare cyq_perf", "筹码分布中 50% 成本位置。", "观察当前价和中位成本的距离。", ["display"], status="active", analysis_ready=True),
     data_indicator("price_to_cost_50pct", "距中位成本", "chips", "Tushare cyq_perf", "当前价 / 中位成本 - 1。", "衡量当前价相对筹码中枢的位置。", ["score", "risk", "display"], status="active", analysis_ready=True),
     data_indicator("is_st", "ST 状态", "risk", "股票基础信息 / 历史 K 线", "股票名或历史数据中的 ST 标记。", "默认风险过滤项。", ["filter", "risk"], missing="allow"),
-    data_indicator("overheat_risk", "过热风险", "risk", "本地计算", "近 5/10 日涨幅、当前涨幅、换手率和距均线偏离度。", "识别脱离买点或分歧过大的候选股。", ["risk"]),
+    data_indicator("overheat_risk", "过热风险", "risk", "本地计算", "近 5/10 日涨幅、当前涨幅、换手率和距均线偏离度。", "识别脱离买点或分歧过大的候选股。", ["display"], analysis_ready=False),
     data_indicator("market_breadth", "市场宽度", "market", "本地历史 K 线 / 市场环境表", "全市场上涨比例、涨跌停温度和指数趋势综合评分。", "判断策略环境是否顺风。", ["context", "risk"], status="available", analysis_ready=False),
 ]
 

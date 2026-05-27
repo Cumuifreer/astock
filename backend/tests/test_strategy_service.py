@@ -91,15 +91,30 @@ def test_normalize_preserves_explicit_strategy_resonances():
     normalized = normalize_strategy_config(
         {
             "signal_mode": "feature_driven",
+            "strategy_rules": [
+                {
+                    "id": "theme-hot",
+                    "indicator_id": "topic_heat",
+                    "action": "score",
+                    "operator": "gte",
+                    "value": "70",
+                    "weight": 0,
+                },
+                {
+                    "id": "volume-confirm",
+                    "indicator_id": "volume_ratio",
+                    "action": "score",
+                    "operator": "gte",
+                    "value": 2,
+                    "weight": 0,
+                },
+            ],
             "strategy_resonances": [
                 {
                     "id": "hot-volume-confirm",
                     "name": "题材放量确认",
-                    "conditions": [
-                        {"indicator_id": "topic_heat", "operator": "gte", "value": "70"},
-                        {"indicator_id": "volume_ratio", "operator": "gte", "value": 2},
-                    ],
-                    "multiplier": 1.35,
+                    "rule_ids": ["theme-hot", "volume-confirm"],
+                    "bonus": "8",
                     "enabled": True,
                 }
             ],
@@ -110,30 +125,93 @@ def test_normalize_preserves_explicit_strategy_resonances():
         {
             "id": "hot-volume-confirm",
             "name": "题材放量确认",
-            "conditions": [
-                {
-                    "id": "topic_heat-1",
-                    "indicator_id": "topic_heat",
-                    "operator": "gte",
-                    "value": 70.0,
-                    "value2": None,
-                    "window_days": 0,
-                    "missing_policy": "neutral",
-                },
-                {
-                    "id": "volume_ratio-2",
-                    "indicator_id": "volume_ratio",
-                    "operator": "gte",
-                    "value": 2.0,
-                    "value2": None,
-                    "window_days": 0,
-                    "missing_policy": "neutral",
-                },
-            ],
-            "multiplier": 1.35,
+            "rule_ids": ["theme-hot", "volume-confirm"],
+            "bonus": 8.0,
             "enabled": True,
         }
     ]
+    assert normalized["resonance_bonus_cap"] == 15
+
+
+def test_normalize_migrates_matching_legacy_resonance_conditions_to_rule_ids():
+    normalized = normalize_strategy_config(
+        {
+            "signal_mode": "feature_driven",
+            "strategy_rules": [
+                {
+                    "id": "theme-hot",
+                    "indicator_id": "topic_heat",
+                    "action": "score",
+                    "operator": "gte",
+                    "value": 70,
+                    "weight": 0,
+                },
+                {
+                    "id": "volume-confirm",
+                    "indicator_id": "volume_ratio",
+                    "action": "score",
+                    "operator": "gte",
+                    "value": 2,
+                    "weight": 0,
+                },
+            ],
+            "strategy_resonances": [
+                {
+                    "id": "legacy-hot-volume",
+                    "name": "旧题材放量",
+                    "conditions": [
+                        {"indicator_id": "topic_heat", "operator": "gte", "value": 70},
+                        {"indicator_id": "volume_ratio", "operator": "gte", "value": 2},
+                    ],
+                    "multiplier": 1.2,
+                    "enabled": True,
+                }
+            ],
+        }
+    )
+
+    assert normalized["strategy_resonances"] == [
+        {
+            "id": "legacy-hot-volume",
+            "name": "旧题材放量",
+            "rule_ids": ["theme-hot", "volume-confirm"],
+            "bonus": 8.0,
+            "enabled": True,
+        }
+    ]
+
+
+def test_normalize_warns_when_legacy_resonance_cannot_match_rules():
+    normalized = normalize_strategy_config(
+        {
+            "signal_mode": "feature_driven",
+            "strategy_rules": [
+                {
+                    "id": "theme-hot",
+                    "indicator_id": "topic_heat",
+                    "action": "score",
+                    "operator": "gte",
+                    "value": 70,
+                }
+            ],
+            "strategy_resonances": [
+                {
+                    "id": "legacy-unmatched",
+                    "name": "旧规则未匹配",
+                    "conditions": [
+                        {"indicator_id": "topic_heat", "operator": "gte", "value": 70},
+                        {"indicator_id": "volume_ratio", "operator": "gte", "value": 2},
+                    ],
+                    "multiplier": 1.2,
+                    "enabled": True,
+                }
+            ],
+        }
+    )
+
+    assert normalized["strategy_resonances"] == []
+    assert "strategy_resonances.unmatched" in normalized["migration"]["dropped_fields"]
+    assert any("旧组合共振" in warning for warning in normalized["migration"]["warnings"])
 
 
 def test_migrate_refreshes_system_template_config_without_resetting_user_default(tmp_path):

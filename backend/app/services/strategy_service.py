@@ -107,6 +107,7 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "strategy_rules": [],
     "strategy_interactions": [],
     "strategy_resonances": [],
+    "resonance_bonus_cap": 15,
 }
 
 RULE_ACTIONS = {"filter", "score", "risk", "display"}
@@ -256,39 +257,72 @@ def _normalize_strategy_interactions(value: Any) -> List[Dict[str, Any]]:
     return normalized
 
 
-def _normalize_strategy_resonances(value: Any) -> List[Dict[str, Any]]:
+def _rule_signature(rule: Dict[str, Any]) -> tuple:
+    return (
+        str(rule.get("indicator_id") or ""),
+        str(rule.get("operator") or ""),
+        rule.get("value"),
+        rule.get("value2"),
+        int(_coerce_number(rule.get("window_days")) or 0),
+    )
+
+
+def _legacy_resonance_bonus(multiplier: Any) -> float:
+    value = _coerce_number(multiplier)
+    if value is None:
+        return 5.0
+    if value <= 1:
+        return 0.0
+    if value <= 1.1:
+        return 5.0
+    if value <= 1.2:
+        return 8.0
+    return 12.0
+
+
+def _normalize_strategy_resonances(value: Any, strategy_rules: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     if not isinstance(value, list):
         return []
     normalized: List[Dict[str, Any]] = []
     seen: set[str] = set()
+    rules = strategy_rules or []
+    rule_ids = {str(rule.get("id") or "") for rule in rules}
+    rule_id_by_signature = {_rule_signature(rule): str(rule.get("id")) for rule in rules if rule.get("id")}
     for index, raw in enumerate(value):
         if not isinstance(raw, dict):
-            continue
-        conditions = [
-            condition
-            for condition in (
-                _normalize_rule_condition(condition_raw, condition_index)
-                for condition_index, condition_raw in enumerate(raw.get("conditions") or [])
-                if isinstance(condition_raw, dict)
-            )
-            if condition is not None
-        ]
-        if len(conditions) < 2:
             continue
         resonance_id = str(raw.get("id") or f"resonance-{index + 1}").strip()
         if not resonance_id or resonance_id in seen:
             resonance_id = f"resonance-{index + 1}"
         seen.add(resonance_id)
-        multiplier = _coerce_number(raw.get("multiplier"))
-        if multiplier is None:
-            multiplier = 1.0
-        multiplier = max(0.6, min(1.8, float(multiplier)))
+        referenced_rule_ids = [str(item) for item in raw.get("rule_ids") or [] if str(item) in rule_ids]
+        if len(referenced_rule_ids) < 2:
+            conditions = [
+                condition
+                for condition in (
+                    _normalize_rule_condition(condition_raw, condition_index)
+                    for condition_index, condition_raw in enumerate(raw.get("conditions") or [])
+                    if isinstance(condition_raw, dict)
+                )
+                if condition is not None
+            ]
+            referenced_rule_ids = [
+                rule_id_by_signature[_rule_signature(condition)]
+                for condition in conditions
+                if _rule_signature(condition) in rule_id_by_signature
+            ]
+        if len(dict.fromkeys(referenced_rule_ids)) < 2:
+            continue
+        bonus = _coerce_number(raw.get("bonus"))
+        if bonus is None:
+            bonus = _legacy_resonance_bonus(raw.get("multiplier"))
+        bonus = max(0.0, min(25.0, float(bonus)))
         normalized.append(
             {
                 "id": resonance_id,
                 "name": str(raw.get("name") or "组合共振"),
-                "conditions": conditions,
-                "multiplier": round(multiplier, 2),
+                "rule_ids": list(dict.fromkeys(referenced_rule_ids)),
+                "bonus": round(bonus, 2),
                 "enabled": bool(raw.get("enabled", True)),
             }
         )
@@ -320,9 +354,11 @@ def _infer_analysis_engines(strategy: Dict[str, Any], legacy_signal_mode: Any = 
         engine = _engine_for_indicator(str(rule.get("indicator_id") or ""))
         if engine:
             engines.add(engine)
+    rules_by_id = {str(rule.get("id") or ""): rule for rule in strategy.get("strategy_rules") or []}
     for resonance in strategy.get("strategy_resonances") or []:
-        for condition in resonance.get("conditions") or []:
-            engine = _engine_for_indicator(str(condition.get("indicator_id") or ""))
+        for rule_id in resonance.get("rule_ids") or []:
+            rule = rules_by_id.get(str(rule_id))
+            engine = _engine_for_indicator(str((rule or {}).get("indicator_id") or ""))
             if engine:
                 engines.add(engine)
     return [engine for engine in ANALYSIS_ENGINES if engine in engines]
@@ -457,8 +493,10 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     raw_config = config or {}
     merged = {**DEFAULT_STRATEGY_CONFIG, **raw_config}
     merged["strategy_rules"] = _normalize_strategy_rules(merged.get("strategy_rules"))
-    merged["strategy_resonances"] = _normalize_strategy_resonances(merged.get("strategy_resonances"))
-    migration = _migration_info(raw_config)
+    merged["strategy_resonances"] = _normalize_strategy_resonances(merged.get("strategy_resonances"), merged["strategy_rules"])
+    raw_resonance_count = len(raw_config.get("strategy_resonances")) if isinstance(raw_config.get("strategy_resonances"), list) else 0
+    unmatched_resonance_count = max(raw_resonance_count - len(merged["strategy_resonances"]), 0)
+    migration = _migration_info(raw_config, unmatched_strategy_resonance_count=unmatched_resonance_count)
     raw_signal_mode = raw_config.get("signal_mode")
     if raw_signal_mode in {"breakout", "pullback"}:
         if not raw_config.get("breakout_pullback_direction"):
@@ -521,6 +559,7 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     if merged.get("platform_macd_filter_mode") not in {"must", "score", "off"}:
         merged["platform_macd_filter_mode"] = "score"
     merged["candidate_limit"] = max(1, min(500, int(merged["candidate_limit"])))
+    merged["resonance_bonus_cap"] = max(0, min(50, int(_coerce_number(merged.get("resonance_bonus_cap")) or 15)))
     merged["sort_by"] = merged.get("sort_by") or "signal_score"
     merged["macd_position"] = merged.get("macd_position") or "dif_dea_above_zero"
     if merged.get("platform_setup_macd_mode") not in {"none", "dif_above_dea", "dif_above_zero"}:
@@ -532,7 +571,7 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     return merged
 
 
-def _migration_info(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _migration_info(config: Dict[str, Any], unmatched_strategy_resonance_count: int = 0) -> Optional[Dict[str, Any]]:
     if not config:
         return None
     preserved_fields = [
@@ -554,6 +593,9 @@ def _migration_info(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if isinstance(profile, dict) and profile.get("rule_groups"):
         dropped_fields.append("signal_profile.rule_groups")
         warnings.append("旧信号模板中的组合规则仅保留为迁移记录，不再参与执行。")
+    if unmatched_strategy_resonance_count > 0:
+        dropped_fields.append("strategy_resonances.unmatched")
+        warnings.append(f"{unmatched_strategy_resonance_count} 个旧组合共振无法匹配已有规则，已停止参与执行。")
     if not dropped_fields and not warnings:
         return None
     return {

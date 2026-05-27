@@ -497,7 +497,7 @@ def test_strategy_rules_filter_score_and_risk_candidates():
                 "float_market_value": 8_000_000_000,
                 "ma_short": 9.8,
                 "ma_long": 9.2,
-                "rps20": 70.0,
+                "rps20": 50.0,
                 "turnover_rate": 8.0,
                 "pct_chg": 1.2,
                 "amplitude": 0.05,
@@ -545,8 +545,8 @@ def test_strategy_rules_filter_score_and_risk_candidates():
         "candidate_limit": 10,
         "strategy_rules": [
             {
-                "id": "theme-hot",
-                "indicator_id": "topic_heat",
+                "id": "rps-strong",
+                "indicator_id": "rps20",
                 "action": "filter",
                 "operator": "gte",
                 "value": 60,
@@ -592,7 +592,167 @@ def test_strategy_rules_filter_score_and_risk_candidates():
     assert candidates[0]["signal_score"] == candidates[1]["signal_score"] + 5
     assert candidates[0]["score_breakdown"]["custom_rules"] == 7
     assert candidates[1]["score_breakdown"]["custom_rules"] == 2
-    assert any(step["step_name"] == "题材热度规则" for step in funnel)
+    assert any(step["step_name"] == "RPS20规则" for step in funnel)
+
+
+def test_strategy_display_rules_add_display_metrics_without_changing_score():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "展示一",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "top_list_net_amount": 12_000_000,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "000002.SZ",
+                "name": "展示二",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "top_list_net_amount": -3_000_000,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "trend_filter": "none",
+        "min_price": 0,
+        "min_amount": 0,
+        "min_rps20": None,
+        "max_turnover": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "max_amplitude": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+        "strategy_rules": [
+            {
+                "id": "show-top-list",
+                "indicator_id": "top_list_net_amount",
+                "action": "display",
+                "operator": "gte",
+                "value": 0,
+                "missing_policy": "neutral",
+                "enabled": True,
+            }
+        ],
+    }
+
+    candidates, _, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert candidates[0]["signal_score"] == candidates[1]["signal_score"]
+    assert candidates[0]["display_metrics"] == {"top_list_net_amount": 12_000_000}
+    assert candidates[1]["display_metrics"] == {"top_list_net_amount": -3_000_000}
+    assert candidates[0]["strategy_rule_results"] == [
+        {
+            "rule_id": "show-top-list",
+            "indicator_id": "top_list_net_amount",
+            "indicator_name": "龙虎榜净额",
+            "action": "display",
+            "matched": True,
+            "value": 12_000_000,
+            "adjustment": 0,
+        }
+    ]
+
+
+def test_unsupported_strategy_filter_adds_funnel_warning_and_keeps_rows():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "资金正",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "main_net_amount": 5_000_000,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "000002.SZ",
+                "name": "资金负",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "main_net_amount": -5_000_000,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "trend_filter": "none",
+        "min_price": 0,
+        "min_amount": 0,
+        "min_rps20": None,
+        "max_turnover": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "max_amplitude": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+        "strategy_rules": [
+            {
+                "id": "bad-main-filter",
+                "indicator_id": "main_net_amount",
+                "action": "filter",
+                "operator": "gte",
+                "value": 0,
+                "missing_policy": "skip",
+                "enabled": True,
+            }
+        ],
+    }
+
+    candidates, funnel, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert [candidate["code"] for candidate in candidates] == ["000001.SZ", "000002.SZ"]
+    assert any(step["step_name"] == "主力净额规则" and "不支持筛选" in step["note"] for step in funnel)
 
 
 def test_strategy_interactions_are_ignored_by_feature_engine():
@@ -671,7 +831,7 @@ def test_strategy_interactions_are_ignored_by_feature_engine():
     assert candidates[0]["signal_score"] == candidates[1]["signal_score"]
 
 
-def test_strategy_resonances_apply_visible_score_multiplier():
+def test_strategy_resonances_apply_visible_score_bonus():
     rows = pd.DataFrame(
         [
             {
@@ -725,15 +885,34 @@ def test_strategy_resonances_apply_visible_score_multiplier():
         "volume_ratio_min": None,
         "max_ma_distance": None,
         "candidate_limit": 10,
+        "strategy_rules": [
+            {
+                "id": "theme-hot",
+                "indicator_id": "topic_heat",
+                "action": "score",
+                "operator": "gte",
+                "value": 70,
+                "weight": 0,
+                "missing_policy": "neutral",
+                "enabled": True,
+            },
+            {
+                "id": "volume-confirm",
+                "indicator_id": "volume_ratio",
+                "action": "score",
+                "operator": "gte",
+                "value": 2,
+                "weight": 0,
+                "missing_policy": "neutral",
+                "enabled": True,
+            },
+        ],
         "strategy_resonances": [
             {
                 "id": "hot-volume-confirm",
                 "name": "题材放量确认",
-                "conditions": [
-                    {"indicator_id": "topic_heat", "operator": "gte", "value": 70},
-                    {"indicator_id": "volume_ratio", "operator": "gte", "value": 2},
-                ],
-                "multiplier": 1.2,
+                "rule_ids": ["theme-hot", "volume-confirm"],
+                "bonus": 8,
                 "enabled": True,
             }
         ],
@@ -743,10 +922,10 @@ def test_strategy_resonances_apply_visible_score_multiplier():
 
     assert zero_reason is None
     assert [candidate["code"] for candidate in candidates] == ["000001.SZ", "000002.SZ"]
-    assert candidates[0]["score_breakdown"]["resonance_multiplier"] == 1.2
-    assert candidates[1]["score_breakdown"]["resonance_multiplier"] == 1.0
-    assert candidates[0]["signal_score"] > candidates[1]["signal_score"]
-    assert any("题材放量确认 x1.20" in reason for reason in candidates[0]["reasons"])
+    assert candidates[0]["score_breakdown"]["resonance_bonus"] == 8
+    assert candidates[1]["score_breakdown"]["resonance_bonus"] == 0
+    assert candidates[0]["signal_score"] == candidates[1]["signal_score"] + 8
+    assert any("题材放量确认 +8分" in reason for reason in candidates[0]["reasons"])
 
 
 def test_explicit_feature_engines_ignore_legacy_signal_mode_value():

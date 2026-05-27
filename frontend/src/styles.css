@@ -2666,13 +2666,21 @@ h1 {
   justify-content: flex-end;
 }
 
-.resonance-draft-actions select {
+.resonance-draft-actions select,
+.resonance-draft-selects select,
+.resonance-condition select {
   min-height: 32px;
   border: 1px solid rgba(157, 196, 187, 0.18);
   background: #071012;
   color: var(--text);
   border-radius: 5px;
   padding: 0 9px;
+  min-width: 0;
+}
+
+.resonance-draft-selects select,
+.resonance-condition select {
+  width: 100%;
 }
 
 .resonance-board {
@@ -2712,13 +2720,13 @@ h1 {
   outline: none;
 }
 
-.resonance-multiplier-row {
+.resonance-bonus-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.resonance-multiplier-row button {
+.resonance-bonus-row button {
   min-height: 30px;
   border: 1px solid rgba(182, 255, 95, 0.18);
   background: rgba(182, 255, 95, 0.04);
@@ -2728,7 +2736,7 @@ h1 {
   cursor: pointer;
 }
 
-.resonance-multiplier-row button.active {
+.resonance-bonus-row button.active {
   border-color: rgba(182, 255, 95, 0.55);
   background: rgba(182, 255, 95, 0.1);
   color: var(--lime);
@@ -2741,13 +2749,23 @@ h1 {
 
 .resonance-condition {
   display: grid;
-  grid-template-columns: minmax(220px, 0.28fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(220px, 0.35fr) minmax(0, 1fr) auto;
   gap: 8px;
   align-items: start;
   border: 1px solid rgba(157, 196, 187, 0.1);
   background: rgba(255, 255, 255, 0.014);
   border-radius: 5px;
   padding: 8px;
+}
+
+.resonance-rule-readout {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .resonance-condition-controls {
@@ -3428,7 +3446,7 @@ h1 {
   color: var(--red);
 }
 
-.score-card.multiplier strong {
+.score-card.resonance strong {
   color: var(--lime);
 }
 
@@ -3448,7 +3466,7 @@ h1 {
   background: linear-gradient(90deg, rgba(255, 92, 122, 0.45), var(--red));
 }
 
-.score-card.multiplier .score-meter i {
+.score-card.resonance .score-meter i {
   background: linear-gradient(90deg, rgba(182, 255, 95, 0.42), var(--lime));
 }
 
@@ -3470,6 +3488,42 @@ h1 {
 .metric-mini strong {
   color: var(--soft);
   font-size: 14px;
+}
+
+.rule-result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.rule-result-panel {
+  border: 1px solid rgba(157, 196, 187, 0.12);
+  background: rgba(255, 255, 255, 0.015);
+  padding: 9px 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.rule-result-panel span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rule-result-panel small {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.rule-result-panel b {
+  min-width: 34px;
+  color: var(--lime);
+  font-weight: 700;
 }
 
 .candidate-reason-strip {
@@ -5146,7 +5200,8 @@ a {
   .candidate-readout,
   .candidate-readout-grid,
   .score-card-grid,
-  .freshness-grid {
+  .freshness-grid,
+  .rule-result-grid {
     grid-template-columns: 1fr;
   }
 }

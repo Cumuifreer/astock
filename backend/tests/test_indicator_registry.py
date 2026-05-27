@@ -94,10 +94,11 @@ def test_all_strategy_form_fields_are_defined_in_indicator_library():
         "analysis_mode",
         "analysis_engines",
         "signal_mode",
-        "strategy_rules",
-        "strategy_interactions",
-        "strategy_resonances",
-    }
+          "strategy_rules",
+          "strategy_interactions",
+          "strategy_resonances",
+          "resonance_bonus_cap",
+      }
     assert all(key in DEFAULT_STRATEGY_CONFIG for key in strategy_keys if key)
     assert all(indicator.get("control", {}).get("type") for indicator in indicators.values() if indicator.get("kind") == "strategy_param")
 
@@ -121,6 +122,8 @@ def test_indicator_library_exposes_rule_builder_metadata():
     assert amount["analysis_field"] == "amount"
     assert "filter" in amount["supported_actions"]
     assert "score" in amount["supported_actions"]
+    assert amount["hard_filter_allowed"] is True
+    assert amount["operator_semantics"] == "numeric"
     assert {"gte", "lte", "between"}.issubset(set(amount["supported_operators"]))
     assert amount["default_operator"] == "gte"
     assert amount["data_status"] == "executable"
@@ -134,8 +137,50 @@ def test_indicator_library_exposes_rule_builder_metadata():
 
     top_list = indicators["top_list_net_amount"]
     assert top_list["data_status"] == "executable"
+    assert "filter" not in top_list["supported_actions"]
     assert {"score", "risk", "display"}.issubset(set(top_list["supported_actions"]))
+    assert top_list["hard_filter_allowed"] is False
 
     min_price = indicators["min_price"]
     assert min_price["value_type"] == "number"
     assert min_price["supported_actions"] == []
+
+
+def test_indicator_contract_does_not_overstate_executable_actions():
+    library = indicator_library()
+    indicators = {indicator["id"]: indicator for indicator in library["indicators"]}
+
+    moneyflow = indicators["main_net_amount"]
+    assert moneyflow["data_status"] == "executable"
+    assert moneyflow["supported_actions"] == ["score", "display"]
+    assert moneyflow["hard_filter_allowed"] is False
+
+    cost = indicators["cost_50pct"]
+    assert cost["data_status"] == "executable"
+    assert cost["supported_actions"] == ["display"]
+    assert cost["hard_filter_allowed"] is False
+
+    price_to_cost = indicators["price_to_cost_50pct"]
+    assert price_to_cost["value_type"] == "ratio"
+    assert price_to_cost["unit"] == "比例"
+    assert price_to_cost["default_operator"] == "between"
+    assert price_to_cost["supported_actions"] == ["score", "risk", "display"]
+
+    limit_event = indicators["limit_event"]
+    assert limit_event["analysis_field"] == "limit_type"
+    assert limit_event["operator_semantics"] == "event_state"
+    assert limit_event["supported_operators"] == ["eq", "neq"]
+    assert limit_event["default_operator"] == "eq"
+
+    overheat = indicators["overheat_risk"]
+    assert overheat["data_status"] == "display_only"
+    assert overheat["supported_actions"] == ["display"]
+
+    macd_state = indicators["macd_state"]
+    assert macd_state["data_status"] == "display_only"
+    assert macd_state["supported_actions"] == ["display"]
+
+    market = indicators["market_breadth"]
+    assert market["data_status"] == "display_only"
+    assert market["supported_actions"] == ["display"]
+    assert market["operator_semantics"] == "market_context"

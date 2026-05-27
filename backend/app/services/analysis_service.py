@@ -655,6 +655,8 @@ def _rank_candidates(
         candidate["signal_type"] = _signal_type(candidate, strategy)
         candidate["signal_score"] = _signal_score(candidate, strategy)
         candidate["score_breakdown"] = _score_breakdown(candidate, strategy)
+        candidate["strategy_rule_results"] = _strategy_rule_results(candidate, strategy)
+        candidate["display_metrics"] = _display_metrics(candidate, strategy)
         candidate["freshness"] = _freshness_metrics(candidate, strategy)
         candidate["interpretation"] = _candidate_interpretation(candidate, strategy)
         reasons = _candidate_reasons(candidate, strategy)
@@ -715,7 +717,11 @@ def _numeric_filter(
 
 def _strategy_rule_indicator(rule: Dict[str, Any], action: str) -> Optional[Dict[str, Any]]:
     indicator = INDICATOR_BY_ID.get(str(rule.get("indicator_id") or ""))
-    if not indicator or indicator.get("data_status") != "executable":
+    if not indicator:
+        return None
+    if action == "display" and indicator.get("data_status") in {"executable", "display_only"}:
+        return indicator if "display" in (indicator.get("supported_actions") or []) else None
+    if indicator.get("data_status") != "executable":
         return None
     if action == "interaction" and "interaction" in (indicator.get("usage") or []):
         return indicator
@@ -735,6 +741,17 @@ def _apply_strategy_rule_filters(
             continue
         indicator = _strategy_rule_indicator(rule, "filter")
         if not indicator:
+            raw_indicator = INDICATOR_BY_ID.get(str(rule.get("indicator_id") or ""))
+            if raw_indicator:
+                funnel.append(
+                    {
+                        "step_name": f"{raw_indicator.get('name') or raw_indicator.get('id')}规则",
+                        "before_count": int(len(working)),
+                        "after_count": int(len(working)),
+                        "removed_count": 0,
+                        "note": "指标不支持筛选，规则已忽略",
+                    }
+                )
             continue
         column = str(indicator.get("analysis_field") or indicator.get("id") or "")
         if column not in working.columns:
@@ -850,6 +867,61 @@ def _strategy_rule_matches_row(row: Dict[str, Any], rule: Dict[str, Any], action
     return bool(_strategy_rule_mask(series, rule).iloc[0])
 
 
+def _strategy_rule_value(row: Dict[str, Any], indicator: Dict[str, Any]) -> Any:
+    column = str(indicator.get("analysis_field") or indicator.get("id") or "")
+    return row.get(column)
+
+
+def _strategy_rule_results(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    for rule in strategy.get("strategy_rules") or []:
+        if not rule.get("enabled", True):
+            continue
+        action = str(rule.get("action") or "display")
+        indicator = _strategy_rule_indicator(rule, action)
+        if not indicator:
+            continue
+        column = str(indicator.get("analysis_field") or indicator.get("id") or "")
+        if column not in row:
+            continue
+        value = _strategy_rule_value(row, indicator)
+        matched = True if action == "display" else _strategy_rule_matches_row(row, rule, action)
+        weight = safe_float(rule.get("weight"))
+        if weight is None:
+            weight = 5.0
+        adjustment = 0.0
+        if matched and action == "score":
+            adjustment = float(weight)
+        elif matched and action == "risk":
+            adjustment = -float(weight)
+        results.append(
+            {
+                "rule_id": str(rule.get("id") or ""),
+                "indicator_id": str(rule.get("indicator_id") or ""),
+                "indicator_name": str(indicator.get("name") or indicator.get("id") or ""),
+                "action": action,
+                "matched": bool(matched),
+                "value": value,
+                "adjustment": round(adjustment, 2),
+            }
+        )
+    return results
+
+
+def _display_metrics(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, Any]:
+    display: Dict[str, Any] = {}
+    for rule in strategy.get("strategy_rules") or []:
+        if not rule.get("enabled", True) or rule.get("action") != "display":
+            continue
+        indicator = _strategy_rule_indicator(rule, "display")
+        if not indicator:
+            continue
+        column = str(indicator.get("analysis_field") or indicator.get("id") or "")
+        if column in row:
+            display[column] = row.get(column)
+    return display
+
+
 def _strategy_condition_matches_row(row: Dict[str, Any], condition: Dict[str, Any]) -> bool:
     indicator = INDICATOR_BY_ID.get(str(condition.get("indicator_id") or ""))
     if not indicator or indicator.get("data_status") != "executable":
@@ -883,26 +955,39 @@ def _strategy_rule_score_adjustment(row: Dict[str, Any], strategy: Dict[str, Any
     return round(adjustment, 2)
 
 
+def _strategy_rules_by_id(strategy: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    return {
+        str(rule.get("id") or ""): rule
+        for rule in strategy.get("strategy_rules") or []
+        if isinstance(rule, dict) and rule.get("id")
+    }
+
+
 def _matching_strategy_resonances(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[Dict[str, Any]]:
     matches: List[Dict[str, Any]] = []
+    rules_by_id = _strategy_rules_by_id(strategy)
     for resonance in strategy.get("strategy_resonances") or []:
         if not resonance.get("enabled", True):
             continue
-        conditions = [condition for condition in resonance.get("conditions") or [] if isinstance(condition, dict)]
-        if len(conditions) < 2:
+        rule_ids = [str(rule_id) for rule_id in resonance.get("rule_ids") or []]
+        rules = [rules_by_id.get(rule_id) for rule_id in rule_ids]
+        if len([rule for rule in rules if rule is not None]) < 2:
             continue
-        if all(_strategy_condition_matches_row(row, condition) for condition in conditions):
+        if all(_strategy_rule_matches_row(row, rule, str(rule.get("action") or "display")) for rule in rules if rule is not None):
             matches.append(resonance)
     return matches
 
 
-def _strategy_resonance_multiplier(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
-    multiplier = 1.0
+def _strategy_resonance_bonus(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
+    bonus = 0.0
     for resonance in _matching_strategy_resonances(row, strategy):
-        value = safe_float(resonance.get("multiplier"))
+        value = safe_float(resonance.get("bonus"))
         if value is not None:
-            multiplier *= float(value)
-    return round(multiplier, 4)
+            bonus += float(value)
+    cap = safe_float(strategy.get("resonance_bonus_cap"))
+    if cap is None:
+        cap = 15.0
+    return round(min(max(bonus, 0.0), max(float(cap), 0.0)), 2)
 
 
 def _apply_theme_filters(
@@ -1273,8 +1358,7 @@ def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
 
 
 def _with_strategy_rule_adjustment(score: float, row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
-    adjusted = max(score + _strategy_rule_score_adjustment(row, strategy), 0)
-    adjusted *= _strategy_resonance_multiplier(row, strategy)
+    adjusted = max(score + _strategy_rule_score_adjustment(row, strategy) + _strategy_resonance_bonus(row, strategy), 0)
     return round(adjusted, 2)
 
 
@@ -1652,7 +1736,7 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
         "freshness": round(max(freshness, 0.0), 2),
         "risk": round(-max(risk, 0.0), 2),
         "custom_rules": _strategy_rule_score_adjustment(row, strategy),
-        "resonance_multiplier": _strategy_resonance_multiplier(row, strategy),
+        "resonance_bonus": _strategy_resonance_bonus(row, strategy),
     }
 
 
@@ -1927,9 +2011,9 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
         if label:
             reasons.append(str(label))
     for resonance in _matching_strategy_resonances(row, strategy):
-        multiplier = safe_float(resonance.get("multiplier"))
-        if multiplier is not None and multiplier != 1:
-            reasons.append(f"{resonance.get('name') or '组合共振'} x{multiplier:.2f}")
+        bonus = safe_float(resonance.get("bonus"))
+        if bonus is not None and bonus > 0:
+            reasons.append(f"{resonance.get('name') or '组合共振'} +{bonus:g}分")
     return reasons
 
 

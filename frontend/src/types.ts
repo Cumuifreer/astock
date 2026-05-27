@@ -66,6 +66,11 @@ export interface IndicatorDefinition {
   recommended_rules?: IndicatorRecommendation[];
   analysis_field?: string | null;
   data_status?: 'executable' | 'display_only' | 'planned' | 'parameter' | string;
+  hard_filter_allowed?: boolean;
+  min_coverage_for_filter?: number | null;
+  freshness_required?: boolean;
+  coverage_group?: string | null;
+  operator_semantics?: 'numeric' | 'boolean' | 'choice' | 'event_state' | 'days_since' | 'market_context' | string;
 }
 
 export type IndicatorValueType =
@@ -169,8 +174,8 @@ export interface StrategyInteraction {
 export interface StrategyResonance {
   id: string;
   name: string;
-  conditions: StrategyRuleCondition[];
-  multiplier: number;
+  rule_ids: string[];
+  bonus: number;
   enabled: boolean;
 }
 
@@ -316,6 +321,7 @@ export interface StrategyConfig {
   strategy_rules: StrategyRule[];
   strategy_interactions?: StrategyInteraction[];
   strategy_resonances?: StrategyResonance[];
+  resonance_bonus_cap?: number;
   signal_profile?: SignalModeTemplate | null;
   migration?: StrategyMigrationInfo | null;
 }
