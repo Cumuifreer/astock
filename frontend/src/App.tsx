@@ -1886,13 +1886,8 @@ function StrategyPanel(props: {
                 ))}
               </select>
             </label>
-            <span className="strategy-mode-note">策略由指标条件、组合倍率和运行参数共同决定；需要的形态/趋势计算会自动启用。</span>
+            <span className="strategy-mode-note">策略由运行参数和可选组合倍率共同决定；需要的形态/趋势计算会自动启用。</span>
           </div>
-          <StrategyRuleBuilder
-            library={props.indicatorLibrary}
-            strategy={props.strategy}
-            setStrategy={props.setStrategy}
-          />
           <details className="legacy-strategy-controls wide" open>
             <summary>
               <span>运行参数</span>
@@ -1907,155 +1902,14 @@ function StrategyPanel(props: {
               />
             </div>
           </details>
+          <StrategyInteractionBuilder
+            library={props.indicatorLibrary}
+            strategy={props.strategy}
+            setStrategy={props.setStrategy}
+          />
         </div>
       </section>
     </div>
-  );
-}
-
-function StrategyRuleBuilder({
-  library,
-  strategy,
-  setStrategy,
-}: {
-  library: IndicatorLibrary;
-  strategy: StrategyConfig;
-  setStrategy: (config: StrategyConfig) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [category, setCategory] = useState('all');
-  const [selectedId, setSelectedId] = useState('');
-  const indicatorById = useMemo(
-    () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
-    [library.indicators],
-  );
-  const categoryById = useMemo(
-    () => Object.fromEntries(library.categories.map((item) => [item.id, item])),
-    [library.categories],
-  );
-  const usableIndicators = useMemo(
-    () => library.indicators
-      .filter((indicator) => indicator.kind === 'data' && indicator.status !== 'planned')
-      .filter((indicator) => (indicator.supported_actions || []).length > 0)
-      .sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN')),
-    [library.indicators],
-  );
-  const visibleIndicators = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return usableIndicators.filter((indicator) => {
-      if (category !== 'all' && indicator.category_id !== category) return false;
-      if (!needle) return true;
-      return `${indicator.name} ${indicator.id} ${indicator.source}`.toLowerCase().includes(needle);
-    });
-  }, [category, query, usableIndicators]);
-  const selectedIndicator = indicatorById[selectedId] || visibleIndicators[0] || usableIndicators[0];
-  const rules = Array.isArray(strategy.strategy_rules) ? strategy.strategy_rules : [];
-  const actionCounts = rules.reduce<Record<RuleAction, number>>((acc, rule) => {
-    if (rule.enabled !== false && rule.action in acc) acc[rule.action as RuleAction] += 1;
-    return acc;
-  }, { filter: 0, score: 0, risk: 0, display: 0 });
-
-  const updateRules = (nextRules: StrategyRule[]) => {
-    setStrategy({ ...strategy, strategy_rules: nextRules });
-  };
-  const patchRule = (ruleId: string, patch: Partial<StrategyRule>) => {
-    updateRules(rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)));
-  };
-  const addRule = (indicator = selectedIndicator) => {
-    if (!indicator) return;
-    updateRules([...rules, defaultStrategyRule(indicator)]);
-    setSelectedId(indicator.id);
-  };
-  const removeRule = (ruleId: string) => {
-    updateRules(rules.filter((rule) => rule.id !== ruleId));
-  };
-  const categories = library.categories
-    .filter((item) => usableIndicators.some((indicator) => indicator.category_id === item.id));
-
-  return (
-    <section className="strategy-rule-builder wide">
-      <div className="rule-builder-head">
-        <div>
-          <span className="section-kicker">规则入口</span>
-          <h3>指标条件</h3>
-          <p>选一个指标，决定它是硬筛选、排序加权、风险降权还是只展示。</p>
-        </div>
-        <div className="rule-builder-stats">
-          {(Object.keys(ruleActionMeta) as RuleAction[]).map((action) => (
-            <span key={action}>
-              <b>{actionCounts[action]}</b>
-              <em>{ruleActionMeta[action].label}</em>
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div className="rule-builder-layout">
-        <aside className="rule-picker">
-          <div className="rule-picker-search">
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索指标" />
-          </div>
-          <div className="rule-category-rail">
-            <button className={category === 'all' ? 'active' : ''} type="button" onClick={() => setCategory('all')}>
-              全部
-            </button>
-            {categories.map((item) => (
-              <button key={item.id} className={category === item.id ? 'active' : ''} type="button" onClick={() => setCategory(item.id)}>
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <div className="rule-indicator-list">
-            {visibleIndicators.map((indicator) => (
-              <button
-                key={indicator.id}
-                className={selectedIndicator?.id === indicator.id ? 'active' : ''}
-                type="button"
-                onClick={() => setSelectedId(indicator.id)}
-              >
-                <strong>{indicator.name}</strong>
-                <span>{categoryById[indicator.category_id]?.label || indicator.category_id}</span>
-                <em>{indicatorRuleCapabilityLabel(indicator)}</em>
-              </button>
-            ))}
-            {visibleIndicators.length === 0 && <EmptyState text="没有匹配指标。" />}
-          </div>
-          <button className="primary compact add-rule-button" type="button" disabled={!selectedIndicator} onClick={() => addRule()}>
-            <Plus size={14} />
-            加入规则
-          </button>
-        </aside>
-
-        <div className="rule-board">
-          {rules.length === 0 && (
-            <div className="rule-empty-state">
-              <strong>还没有自定义指标规则</strong>
-              <span>选择指标后加入条件，保存并运行时进入后端过滤和评分。</span>
-            </div>
-          )}
-          {rules.map((rule) => {
-            const indicator = indicatorById[rule.indicator_id];
-            if (!indicator) {
-              return null;
-            }
-            return (
-              <StrategyRuleCard
-                key={rule.id}
-                rule={rule}
-                indicator={indicator}
-                patch={(patch) => patchRule(rule.id, patch)}
-                remove={() => removeRule(rule.id)}
-              />
-            );
-          })}
-        </div>
-      </div>
-      <StrategyInteractionBuilder
-        library={library}
-        strategy={strategy}
-        setStrategy={setStrategy}
-      />
-    </section>
   );
 }
 
@@ -2110,21 +1964,27 @@ function StrategyInteractionBuilder({
     <section className="interaction-builder">
       <div className="interaction-head">
         <div>
-          <span className="section-kicker">组合共振</span>
+          <span className="section-kicker">可选高级项</span>
           <h3>组合倍率</h3>
-          <p>多个指标同时满足时，把最终信号强度按倍率增强或折减，比如 x1.10、x1.20。</p>
+          <p>当两个确认条件同时命中时，调整最终信号强度。平时可以不填。</p>
         </div>
         <div className="interaction-create">
-          <select value={firstId} onChange={(event) => setFirstId(event.target.value)}>
-            {usableIndicators.map((indicator) => (
-              <option key={indicator.id} value={indicator.id}>{indicator.name}</option>
-            ))}
-          </select>
-          <select value={secondId} onChange={(event) => setSecondId(event.target.value)}>
-            {usableIndicators.map((indicator) => (
-              <option key={indicator.id} value={indicator.id}>{indicator.name}</option>
-            ))}
-          </select>
+          <label>
+            <span>条件一</span>
+            <select value={firstId} onChange={(event) => setFirstId(event.target.value)}>
+              {usableIndicators.map((indicator) => (
+                <option key={indicator.id} value={indicator.id}>{indicator.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>条件二</span>
+            <select value={secondId} onChange={(event) => setSecondId(event.target.value)}>
+              {usableIndicators.map((indicator) => (
+                <option key={indicator.id} value={indicator.id}>{indicator.name}</option>
+              ))}
+            </select>
+          </label>
           <button className="primary compact" type="button" disabled={!firstId || !secondId || firstId === secondId} onClick={addInteraction}>
             <Plus size={14} />
             新增组合

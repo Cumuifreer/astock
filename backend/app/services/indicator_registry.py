@@ -498,7 +498,7 @@ STRATEGY_PARAM_INDICATORS: List[Dict[str, Any]] = [
     strategy_param("trend_stoch_window", "随机周期", "trend", "trend_stoch", "随机指标", number_control(min_value=5), "慢速随机指标窗口。"),
     strategy_param("trend_stoch_k_smooth", "随机 K 平滑", "trend", "trend_stoch", "随机指标", number_control(min_value=1), "K 线平滑参数。"),
     strategy_param("trend_stoch_d_smooth", "随机 D 平滑", "trend", "trend_stoch", "随机指标", number_control(min_value=1), "D 线平滑参数。"),
-    strategy_param("trend_stoch_mode", "随机条件", "trend", "trend_stoch", "随机指标", select_control([("k_above_d", "K 在 D 上方"), ("cross_up", "要求 K 上穿 D"), ("off", "不启用")]), "趋势共振中的随机指标条件。"),
+    strategy_param("trend_stoch_mode", "随机条件", "trend", "trend_stoch", "随机指标", select_control([("k_above_d", "K 在 D 上方"), ("cross_up", "要求 K 上穿 D"), ("off", "不启用")]), "趋势共振中的随机确认方式。"),
     strategy_param("trend_max_ema_mid_distance", "距 EMA21 上限", "trend", "trend_risk", "趋势风险", number_control(unit="比例", min_value=0), "防止趋势买点距离节奏线太远。"),
     strategy_param("trend_max_recent_gain_10d", "近10日涨幅上限", "trend", "trend_risk", "趋势风险", number_control(unit="比例", min_value=0), "防止趋势信号过热。"),
     strategy_param("trend_stoch_overheat", "随机过热线", "trend", "trend_risk", "趋势风险", number_control(min_value=0, max_value=100), "随机指标过热扣分线。"),

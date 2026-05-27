@@ -2490,8 +2490,11 @@ h1 {
 }
 
 .interaction-builder {
-  border-top: 1px solid rgba(157, 196, 187, 0.12);
-  padding-top: 10px;
+  grid-column: 1 / -1;
+  border: 1px solid rgba(157, 196, 187, 0.13);
+  background: rgba(255, 255, 255, 0.012);
+  border-radius: 7px;
+  padding: 10px;
   display: grid;
   gap: 10px;
   min-width: 0;
@@ -2515,8 +2518,19 @@ h1 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 7px;
-  align-items: center;
+  align-items: end;
   min-width: 0;
+}
+
+.interaction-create label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.interaction-create label span {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .interaction-create select,
