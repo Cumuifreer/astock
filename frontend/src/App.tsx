@@ -1443,6 +1443,7 @@ function StrategyRuleBuilder({
       .filter((indicator) => indicator.kind === 'data' && indicator.status !== 'planned')
       .filter((indicator) => !indicator.paired_strategy_ids?.length)
       .filter((indicator) => indicator.operator_semantics !== 'market_context')
+      .filter((indicator) => indicator.data_status !== 'display_only' || indicator.display_scope === 'candidate')
       .filter((indicator) => (indicator.supported_actions || []).length > 0)
       .sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN')),
     [library.indicators],
@@ -1550,6 +1551,8 @@ function StrategyRuleCard({
   const numeric = isNumericIndicator(indicator);
   const unit = indicator.unit || '';
   const displayOnly = action === 'display';
+  const choiceOptions = indicator.choice_options || [];
+  const useChoiceValue = indicator.operator_semantics === 'event_state' && choiceOptions.length > 0 && operator !== 'is_true';
   const applyAction = (nextAction: RuleAction) => {
     patch({
       action: nextAction,
@@ -1614,13 +1617,21 @@ function StrategyRuleCard({
               <label>
                 <span>{operator === 'between' ? '下限' : '数值'}</span>
                 <div className="rule-value-input">
-                  <input
-                    type={numeric ? 'number' : 'text'}
-                    step={numeric ? ruleInputStep(indicator) : undefined}
-                    value={String(rule.value ?? '')}
-                    onChange={(event) => setValue('value', event.target.value)}
-                    placeholder={ruleValuePlaceholder(indicator)}
-                  />
+                  {useChoiceValue ? (
+                    <select value={String(rule.value ?? choiceOptions[0]?.value ?? '')} onChange={(event) => patch({ value: event.target.value })}>
+                      {choiceOptions.map((option) => (
+                        <option key={String(option.value)} value={String(option.value)}>{option.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type={numeric ? 'number' : 'text'}
+                      step={numeric ? ruleInputStep(indicator) : undefined}
+                      value={String(rule.value ?? '')}
+                      onChange={(event) => setValue('value', event.target.value)}
+                      placeholder={ruleValuePlaceholder(indicator)}
+                    />
+                  )}
                   {unit && <em>{unit}</em>}
                 </div>
               </label>
@@ -1804,14 +1815,17 @@ function StrategyResonanceBuilder({
     () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
     [library.indicators],
   );
-  const activeRules = useMemo(
+  const resonanceEligibleRules = useMemo(
     () => (Array.isArray(strategy.strategy_rules) ? strategy.strategy_rules : [])
-      .filter((rule) => rule.enabled !== false && rule.action !== 'display')
+      .filter((rule) => rule.enabled !== false)
+      .filter((rule) => rule.action === 'filter' || rule.action === 'score')
       .filter((rule) => Boolean(indicatorById[rule.indicator_id])),
     [indicatorById, strategy.strategy_rules],
   );
   const resonances = Array.isArray(strategy.strategy_resonances) ? strategy.strategy_resonances : [];
-  const uniqueDraftRuleIds = Array.from(new Set(draftRuleIds.filter((id) => activeRules.some((rule) => rule.id === id))));
+  const legacyResonanceCount = resonances.filter((item) => item.source === 'legacy_unmatched').length;
+  const canDraftResonance = resonanceEligibleRules.length >= 2;
+  const uniqueDraftRuleIds = Array.from(new Set(draftRuleIds.filter((id) => resonanceEligibleRules.some((rule) => rule.id === id))));
 
   const updateResonances = (nextResonances: StrategyResonance[]) => {
     setStrategy({ ...strategy, strategy_resonances: nextResonances });
@@ -1829,7 +1843,7 @@ function StrategyResonanceBuilder({
   };
   const addResonance = () => {
     if (uniqueDraftRuleIds.length < 2) return;
-    const rules = uniqueDraftRuleIds.map((id) => activeRules.find((rule) => rule.id === id)).filter(Boolean) as StrategyRule[];
+    const rules = uniqueDraftRuleIds.map((id) => resonanceEligibleRules.find((rule) => rule.id === id)).filter(Boolean) as StrategyRule[];
     updateResonances([
       ...resonances,
       {
@@ -1844,6 +1858,39 @@ function StrategyResonanceBuilder({
   };
   const removeResonance = (resonanceId: string) => {
     updateResonances(resonances.filter((resonance) => resonance.id !== resonanceId));
+  };
+  const restoreLegacyResonance = (resonance: StrategyResonance) => {
+    const conditions = (resonance.legacy_conditions || []).filter((condition) => Boolean(indicatorById[condition.indicator_id]));
+    if (conditions.length < 2) return;
+    const createdRules: StrategyRule[] = conditions.map((condition) => ({
+      id: createRuleId(condition.indicator_id),
+      indicator_id: condition.indicator_id,
+      action: 'score',
+      operator: condition.operator,
+      value: condition.value ?? defaultValueForIndicator(indicatorById[condition.indicator_id]),
+      value2: condition.value2,
+      window_days: condition.window_days,
+      weight: 0,
+      missing_policy: condition.missing_policy || 'neutral',
+      enabled: true,
+    }));
+    const restoredResonances = resonances.map((item) => (
+      item.id === resonance.id
+        ? {
+            id: item.id,
+            name: item.name || '组合共振',
+            rule_ids: createdRules.map((rule) => rule.id),
+            bonus: item.bonus || 8,
+            enabled: true,
+            source: 'rule_ids',
+          }
+        : item
+    ));
+    setStrategy({
+      ...strategy,
+      strategy_rules: [...(Array.isArray(strategy.strategy_rules) ? strategy.strategy_rules : []), ...createdRules],
+      strategy_resonances: restoredResonances,
+    });
   };
 
   return (
@@ -1866,36 +1913,44 @@ function StrategyResonanceBuilder({
         </div>
       </div>
 
-      <div className="resonance-draft">
-        <div className="resonance-draft-selects">
-          {draftRuleIds.map((ruleId, index) => (
-            <select key={`${index}-${ruleId || 'blank'}`} value={ruleId} onChange={(event) => setDraftRuleId(index, event.target.value)}>
-              <option value="">选择规则 {index + 1}</option>
-              {activeRules.map((rule) => (
-                <option key={rule.id} value={rule.id}>{strategyRuleSelectLabel(rule, indicatorById)}</option>
+      {canDraftResonance ? (
+        <div className="resonance-draft">
+          <div className="resonance-draft-selects">
+            {draftRuleIds.map((ruleId, index) => (
+              <select key={`${index}-${ruleId || 'blank'}`} value={ruleId} onChange={(event) => setDraftRuleId(index, event.target.value)}>
+                <option value="">选择规则 {index + 1}</option>
+                {resonanceEligibleRules.map((rule) => (
+                  <option key={rule.id} value={rule.id}>{strategyRuleSelectLabel(rule, indicatorById)}</option>
+                ))}
+              </select>
+            ))}
+          </div>
+          <div className="resonance-draft-actions">
+            <select value={draftBonus} onChange={(event) => setDraftBonus(Number(event.target.value))}>
+              {resonanceBonusOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
-          ))}
+            <button className="ghost compact" type="button" onClick={addDraftSlot}>
+              <Plus size={14} />
+              再加一项
+            </button>
+            <button className="primary compact" type="button" disabled={uniqueDraftRuleIds.length < 2} onClick={addResonance}>
+              <Plus size={14} />
+              新增共振
+            </button>
+          </div>
         </div>
-        <div className="resonance-draft-actions">
-          <select value={draftBonus} onChange={(event) => setDraftBonus(Number(event.target.value))}>
-            {resonanceBonusOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <button className="ghost compact" type="button" onClick={addDraftSlot}>
-            <Plus size={14} />
-            再加一项
-          </button>
-          <button className="primary compact" type="button" disabled={uniqueDraftRuleIds.length < 2} onClick={addResonance}>
-            <Plus size={14} />
-            新增共振
-          </button>
+      ) : (
+        <div className="rule-empty-state resonance-empty-state">
+          <strong>还没有可用于共振的规则</strong>
+          <span>先在补充指标条件里创建至少两个筛选或加分规则；共振只引用这些规则，不单独填写阈值。</span>
+          {legacyResonanceCount > 0 && <span>检测到旧共振，可在下方卡片中恢复为补充规则。</span>}
         </div>
-      </div>
+      )}
 
       <div className="resonance-board">
-        {resonances.length === 0 && (
+        {resonances.length === 0 && canDraftResonance && (
           <div className="rule-empty-state">
             <strong>还没有组合共振</strong>
             <span>先在补充指标条件里创建规则，再组合成“题材 + 量能 + 强弱：+8 分”。</span>
@@ -1905,10 +1960,11 @@ function StrategyResonanceBuilder({
           <StrategyResonanceCard
             key={resonance.id}
             resonance={resonance}
-            rules={activeRules}
+            rules={resonanceEligibleRules}
             indicatorById={indicatorById}
             patch={(patch) => patchResonance(resonance.id, patch)}
             remove={() => removeResonance(resonance.id)}
+            restore={() => restoreLegacyResonance(resonance)}
           />
         ))}
       </div>
@@ -1922,14 +1978,17 @@ function StrategyResonanceCard({
   indicatorById,
   patch,
   remove,
+  restore,
 }: {
   resonance: StrategyResonance;
   rules: StrategyRule[];
   indicatorById: Record<string, IndicatorDefinition>;
   patch: (patch: Partial<StrategyResonance>) => void;
   remove: () => void;
+  restore: () => void;
 }) {
   const ruleIds = Array.isArray(resonance.rule_ids) ? resonance.rule_ids : [];
+  const isLegacy = resonance.source === 'legacy_unmatched';
   const patchRuleId = (index: number, ruleId: string) => {
     const next = [...ruleIds];
     next[index] = ruleId;
@@ -1945,6 +2004,39 @@ function StrategyResonanceCard({
     if (ruleIds.length <= 2) return;
     patch({ rule_ids: ruleIds.filter((_, itemIndex) => itemIndex !== index) });
   };
+
+  if (isLegacy) {
+    return (
+      <article className="strategy-resonance-card disabled legacy">
+        <header>
+          <label>
+            <span>旧共振名称</span>
+            <input value={resonance.name || ''} onChange={(event) => patch({ name: event.target.value })} placeholder="旧组合共振" />
+          </label>
+          <div className="rule-card-actions">
+            <button className="table-action" type="button" onClick={remove} title="移除共振">
+              <X size={14} />
+            </button>
+          </div>
+        </header>
+        <div className="resonance-legacy-note">
+          <strong>已停用 · 需重新绑定规则</strong>
+          <span>{resonance.migration_warning || '旧组合共振无法匹配已有规则，需恢复为补充规则后才能启用。'}</span>
+        </div>
+        <div className="resonance-condition-list">
+          {(resonance.legacy_conditions || []).map((condition, index) => (
+            <div className="resonance-condition legacy" key={condition.id || `${condition.indicator_id}-${index}`}>
+              <span className="resonance-rule-readout">{legacyConditionLabel(condition, indicatorById)}</span>
+            </div>
+          ))}
+        </div>
+        <button className="primary compact add-condition-button" type="button" disabled={(resonance.legacy_conditions || []).length < 2} onClick={restore}>
+          <Plus size={14} />
+          恢复为补充规则
+        </button>
+      </article>
+    );
+  }
 
   return (
     <article className={`strategy-resonance-card ${resonance.enabled === false ? 'disabled' : ''}`}>
@@ -2554,10 +2646,11 @@ function CandidateScoreDetails({ row }: { row: Candidate }) {
                 <div className="rule-result-panel">
                   <span>规则影响</span>
                   {ruleResults.slice(0, 8).map((item) => (
-                    <small key={`${item.rule_id}-${item.indicator_id}`}>
+                    <small className={item.missing ? 'missing' : ''} key={`${item.rule_id}-${item.indicator_id}`}>
                       <b>{ruleActionLabel(item.action)}</b>
                       {item.indicator_name || item.indicator_id} {item.matched ? '命中' : '未命中'}
                       {item.adjustment ? ` ${formatSignedScore(item.adjustment, item.adjustment < 0)}` : ''}
+                      {item.reason ? ` · ${item.reason}` : ''}
                     </small>
                   ))}
                 </div>
@@ -4480,6 +4573,7 @@ function defaultOperatorForIndicator(indicator: IndicatorDefinition): RuleOperat
 function defaultValueForIndicator(indicator: IndicatorDefinition) {
   const recommendation = defaultConditionRecommendation(indicator);
   if (recommendation?.value !== undefined) return recommendation.value;
+  if (indicator.operator_semantics === 'event_state' && indicator.choice_options?.length) return indicator.choice_options[0].value;
   if (indicator.default_operator === 'between' && indicator.range_hint?.min !== undefined) return indicator.range_hint.min;
   return '';
 }
@@ -4500,6 +4594,18 @@ function strategyRuleSelectLabel(rule: StrategyRule, indicatorById: Record<strin
       ? ` ${rule.value ?? '-'} - ${rule.value2 ?? '-'}${indicator.unit || ''}`
       : ` ${rule.value ?? '-'}${indicator.unit || ''}`;
   return `${indicator.name} ${operator}${value} · ${ruleActionMeta[rule.action]?.label || rule.action}`;
+}
+
+function legacyConditionLabel(condition: StrategyRuleCondition, indicatorById: Record<string, IndicatorDefinition>) {
+  const indicator = indicatorById[condition.indicator_id];
+  const operator = ruleOperatorMeta[condition.operator]?.summary || condition.operator;
+  const unit = indicator?.unit || '';
+  const value = condition.operator === 'is_true'
+    ? ''
+    : condition.operator === 'between'
+      ? ` ${condition.value ?? '-'} - ${condition.value2 ?? '-'}${unit}`
+      : ` ${condition.value ?? '-'}${unit}`;
+  return `${indicator?.name || condition.indicator_id} ${operator}${value}`;
 }
 
 function defaultStrategyRule(indicator: IndicatorDefinition): StrategyRule {
@@ -4772,8 +4878,10 @@ type CandidateRuleResult = {
   indicator_name?: string;
   action: RuleAction | string;
   matched: boolean;
+  missing?: boolean;
   value: unknown;
   adjustment: number;
+  reason?: string | null;
 };
 
 function candidateScoreBreakdown(row: Candidate) {
@@ -4805,8 +4913,10 @@ function candidateStrategyRuleResults(row: Candidate): CandidateRuleResult[] {
     indicator_name: item.indicator_name ? String(item.indicator_name) : undefined,
     action: String(item.action || 'display'),
     matched: Boolean(item.matched),
+    missing: Boolean(item.missing),
     value: item.value,
     adjustment: Number(item.adjustment || 0),
+    reason: item.reason ? String(item.reason) : null,
   }));
 }
 

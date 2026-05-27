@@ -181,7 +181,7 @@ def test_normalize_migrates_matching_legacy_resonance_conditions_to_rule_ids():
     ]
 
 
-def test_normalize_warns_when_legacy_resonance_cannot_match_rules():
+def test_normalize_keeps_unmatched_legacy_resonance_disabled_for_recovery():
     normalized = normalize_strategy_config(
         {
             "signal_mode": "feature_driven",
@@ -209,9 +209,85 @@ def test_normalize_warns_when_legacy_resonance_cannot_match_rules():
         }
     )
 
-    assert normalized["strategy_resonances"] == []
+    assert normalized["strategy_resonances"] == [
+        {
+            "id": "legacy-unmatched",
+            "name": "旧规则未匹配",
+            "rule_ids": [],
+            "bonus": 8.0,
+            "enabled": False,
+            "source": "legacy_unmatched",
+            "migration_warning": "组合共振「旧规则未匹配」无法匹配至少两个筛选/加分规则，已停用；可恢复为补充规则后重新启用。",
+            "legacy_conditions": [
+                {
+                    "id": "topic_heat-1",
+                    "indicator_id": "topic_heat",
+                    "operator": "gte",
+                    "value": 70,
+                    "value2": None,
+                    "window_days": 0,
+                    "missing_policy": "neutral",
+                },
+                {
+                    "id": "volume_ratio-2",
+                    "indicator_id": "volume_ratio",
+                    "operator": "gte",
+                    "value": 2,
+                    "value2": None,
+                    "window_days": 0,
+                    "missing_policy": "neutral",
+                },
+            ],
+        }
+    ]
     assert "strategy_resonances.unmatched" in normalized["migration"]["dropped_fields"]
-    assert any("旧组合共振" in warning for warning in normalized["migration"]["warnings"])
+    assert any("旧规则未匹配" in warning for warning in normalized["migration"]["warnings"])
+
+
+def test_normalize_disables_positive_resonance_with_risk_rule_reference():
+    normalized = normalize_strategy_config(
+        {
+            "signal_mode": "feature_driven",
+            "strategy_rules": [
+                {
+                    "id": "theme-hot",
+                    "indicator_id": "topic_heat",
+                    "action": "score",
+                    "operator": "gte",
+                    "value": 70,
+                },
+                {
+                    "id": "turnover-risk",
+                    "indicator_id": "turnover_rate",
+                    "action": "risk",
+                    "operator": "gte",
+                    "value": 12,
+                },
+            ],
+            "strategy_resonances": [
+                {
+                    "id": "bad-risk-resonance",
+                    "name": "风险误加分",
+                    "rule_ids": ["theme-hot", "turnover-risk"],
+                    "bonus": 8,
+                    "enabled": True,
+                }
+            ],
+        }
+    )
+
+    assert normalized["strategy_resonances"] == [
+        {
+            "id": "bad-risk-resonance",
+            "name": "风险误加分",
+            "rule_ids": [],
+            "bonus": 8.0,
+            "enabled": False,
+            "source": "legacy_unmatched",
+            "migration_warning": "组合共振「风险误加分」无法匹配至少两个筛选/加分规则，已停用；可恢复为补充规则后重新启用。",
+            "legacy_conditions": [],
+        }
+    ]
 
 
 def test_migrate_refreshes_system_template_config_without_resetting_user_default(tmp_path):

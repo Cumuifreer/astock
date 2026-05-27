@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 from backend.app.db import Database
 from backend.app.schema import migrate
-from backend.app.services.data_service import DataService
+from backend.app.services.data_service import CAPABILITY_DEFINITIONS, DataService
 
 
 def seed_stock_basics(db: Database) -> None:
@@ -127,6 +127,7 @@ def test_stock_warehouse_filters_inactive_status_and_falls_back_for_exact_code_s
     inactive = service.list_stocks(status="inactive")
     all_rows = service.list_stocks(status="all")
     exact_search = service.list_stocks(search="000003.SZ")
+    six_digit_search = service.list_stocks(search="000003")
 
     assert active["total"] == 4
     assert [row["code"] for row in inactive["rows"]] == ["000003.SZ"]
@@ -135,6 +136,13 @@ def test_stock_warehouse_filters_inactive_status_and_falls_back_for_exact_code_s
     assert all_rows["total"] == 5
     assert exact_search["total"] == 1
     assert exact_search["rows"][0]["code"] == "000003.SZ"
+    assert six_digit_search["total"] == 1
+    assert six_digit_search["rows"][0]["code"] == "000003.SZ"
+
+
+def test_capability_definitions_declare_coverage_kind_explicitly():
+    assert CAPABILITY_DEFINITIONS
+    assert all(definition.get("coverage_kind") in {"stock", "event", "dataset"} for definition in CAPABILITY_DEFINITIONS.values())
 
 
 def test_stock_warehouse_turnover_rate_prefers_tushare_daily_basic(tmp_path):

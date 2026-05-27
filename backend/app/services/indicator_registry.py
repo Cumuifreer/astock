@@ -90,6 +90,16 @@ RULE_META_BY_ID: Dict[str, Dict[str, Any]] = {
         "supported_operators": EVENT_STATE_OPERATORS,
         "default_operator": "eq",
         "hard_filter_allowed": False,
+        "choice_options": [
+            {"value": "U", "label": "涨停"},
+            {"value": "Z", "label": "炸板"},
+            {"value": "D", "label": "跌停"},
+        ],
+        "recommended_rules": [
+            {"label": "今日涨停", "action": "score", "operator": "eq", "value": "U", "weight": 8},
+            {"label": "今日炸板风险", "action": "risk", "operator": "eq", "value": "Z", "weight": 8},
+            {"label": "今日跌停风险", "action": "risk", "operator": "eq", "value": "D", "weight": 15},
+        ],
     },
     "limit_fd_mv_ratio": {"value_type": "ratio", "unit": "比例", "direction": "higher_better", "hard_filter_allowed": False},
     "top_list_net_amount": {"value_type": "money", "unit": "元", "direction": "higher_better"},
@@ -232,6 +242,8 @@ def _rule_builder_meta(
             "freshness_required": freshness_required if freshness_required is not None else bool(configured.get("freshness_required", False)),
             "coverage_group": coverage_group or configured.get("coverage_group"),
             "operator_semantics": operator_semantics or str(configured.get("operator_semantics") or _operator_semantics(resolved_type)),
+            "choice_options": configured.get("choice_options") or [],
+            "display_scope": configured.get("display_scope"),
         }
 
     resolved_type = str(value_type or configured.get("value_type") or _default_value_type(indicator_id, category_id))
@@ -259,6 +271,9 @@ def _rule_builder_meta(
     )
     if not can_hard_filter and "filter" in actions:
         actions = [action for action in actions if action != "filter"]
+    display_scope = configured.get("display_scope")
+    if display_scope is None:
+        display_scope = "candidate" if data_status == "executable" and "display" in actions else "planned" if data_status == "display_only" else None
     return {
         "value_type": resolved_type,
         "unit": unit if unit is not None else str(configured.get("unit") or _default_unit(resolved_type)),
@@ -275,6 +290,8 @@ def _rule_builder_meta(
         "freshness_required": freshness_required if freshness_required is not None else bool(configured.get("freshness_required", False)),
         "coverage_group": coverage_group or configured.get("coverage_group"),
         "operator_semantics": resolved_semantics,
+        "choice_options": configured.get("choice_options") or [],
+        "display_scope": display_scope,
     }
 
 

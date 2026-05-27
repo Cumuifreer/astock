@@ -780,7 +780,7 @@ def _apply_strategy_rule_filters(
     return working
 
 
-def _strategy_rule_mask(series: pd.Series, rule: Dict[str, Any]) -> pd.Series:
+def _strategy_rule_mask(series: pd.Series, rule: Dict[str, Any], missing_matches: bool = True) -> pd.Series:
     operator = str(rule.get("operator") or "gte")
     value = rule.get("value")
     value2 = rule.get("value2")
@@ -828,9 +828,20 @@ def _strategy_rule_mask(series: pd.Series, rule: Dict[str, Any]) -> pd.Series:
             mask = numeric <= window if window > 0 else pd.Series(True, index=series.index)
         else:
             mask = pd.Series(True, index=series.index)
-    if missing_policy in {"keep", "allow", "neutral"}:
+    if missing_matches and missing_policy in {"keep", "allow", "neutral"}:
         mask = mask | missing_mask
     return mask.fillna(False)
+
+
+def _value_missing(value: Any) -> bool:
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return value is None
+
+
+def _missing_keeps_rule(rule: Dict[str, Any]) -> bool:
+    return str(rule.get("missing_policy") or "neutral") in {"keep", "allow", "neutral"}
 
 
 def _strategy_rule_note(indicator: Dict[str, Any], rule: Dict[str, Any]) -> str:
@@ -862,9 +873,12 @@ def _strategy_rule_matches_row(row: Dict[str, Any], rule: Dict[str, Any], action
         return False
     column = str(indicator.get("analysis_field") or indicator.get("id") or "")
     if column not in row:
-        return False
-    series = pd.Series([row.get(column)])
-    return bool(_strategy_rule_mask(series, rule).iloc[0])
+        return action == "filter" and _missing_keeps_rule(rule)
+    value = row.get(column)
+    if _value_missing(value):
+        return action == "filter" and _missing_keeps_rule(rule)
+    series = pd.Series([value])
+    return bool(_strategy_rule_mask(series, rule, missing_matches=False).iloc[0])
 
 
 def _strategy_rule_value(row: Dict[str, Any], indicator: Dict[str, Any]) -> Any:
@@ -882,18 +896,24 @@ def _strategy_rule_results(row: Dict[str, Any], strategy: Dict[str, Any]) -> Lis
         if not indicator:
             continue
         column = str(indicator.get("analysis_field") or indicator.get("id") or "")
-        if column not in row:
-            continue
-        value = _strategy_rule_value(row, indicator)
+        value = _strategy_rule_value(row, indicator) if column in row else None
+        missing = column not in row or _value_missing(value)
         matched = True if action == "display" else _strategy_rule_matches_row(row, rule, action)
         weight = safe_float(rule.get("weight"))
         if weight is None:
             weight = 5.0
         adjustment = 0.0
+        reason = None
         if matched and action == "score":
             adjustment = float(weight)
         elif matched and action == "risk":
             adjustment = -float(weight)
+        elif missing and action == "score":
+            reason = "字段缺失，未加分"
+        elif missing and action == "risk":
+            reason = "字段缺失，未扣风险"
+        elif missing and action == "filter":
+            reason = "字段缺失，按缺失策略保留" if matched else "字段缺失，未命中"
         results.append(
             {
                 "rule_id": str(rule.get("id") or ""),
@@ -901,8 +921,10 @@ def _strategy_rule_results(row: Dict[str, Any], strategy: Dict[str, Any]) -> Lis
                 "indicator_name": str(indicator.get("name") or indicator.get("id") or ""),
                 "action": action,
                 "matched": bool(matched),
+                "missing": bool(missing),
                 "value": value,
                 "adjustment": round(adjustment, 2),
+                "reason": reason,
             }
         )
     return results
@@ -971,7 +993,9 @@ def _matching_strategy_resonances(row: Dict[str, Any], strategy: Dict[str, Any])
             continue
         rule_ids = [str(rule_id) for rule_id in resonance.get("rule_ids") or []]
         rules = [rules_by_id.get(rule_id) for rule_id in rule_ids]
-        if len([rule for rule in rules if rule is not None]) < 2:
+        if len([rule for rule in rules if rule is not None]) != len(rule_ids) or len(rules) < 2:
+            continue
+        if any(str(rule.get("action") or "") not in {"filter", "score"} for rule in rules if rule is not None):
             continue
         if all(_strategy_rule_matches_row(row, rule, str(rule.get("action") or "display")) for rule in rules if rule is not None):
             matches.append(resonance)

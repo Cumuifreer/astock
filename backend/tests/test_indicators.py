@@ -675,8 +675,10 @@ def test_strategy_display_rules_add_display_metrics_without_changing_score():
             "indicator_name": "龙虎榜净额",
             "action": "display",
             "matched": True,
+            "missing": False,
             "value": 12_000_000,
             "adjustment": 0,
+            "reason": None,
         }
     ]
 
@@ -926,6 +928,275 @@ def test_strategy_resonances_apply_visible_score_bonus():
     assert candidates[1]["score_breakdown"]["resonance_bonus"] == 0
     assert candidates[0]["signal_score"] == candidates[1]["signal_score"] + 8
     assert any("题材放量确认 +8分" in reason for reason in candidates[0]["reasons"])
+
+
+def test_score_rule_missing_neutral_does_not_add_score_or_trigger_resonance():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "缺失资金",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "topic_heat": 82.0,
+                "main_net_amount": None,
+                "is_st": False,
+                "suspended": False,
+            }
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "trend_filter": "none",
+        "min_price": 0,
+        "min_amount": 0,
+        "min_rps20": None,
+        "max_turnover": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "max_amplitude": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+        "strategy_rules": [
+            {
+                "id": "theme-hot",
+                "indicator_id": "topic_heat",
+                "action": "score",
+                "operator": "gte",
+                "value": 70,
+                "weight": 0,
+                "missing_policy": "neutral",
+                "enabled": True,
+            },
+            {
+                "id": "main-flow",
+                "indicator_id": "main_net_amount",
+                "action": "score",
+                "operator": "gte",
+                "value": 1,
+                "weight": 7,
+                "missing_policy": "neutral",
+                "enabled": True,
+            },
+        ],
+        "strategy_resonances": [
+            {
+                "id": "theme-flow-confirm",
+                "name": "题材资金确认",
+                "rule_ids": ["theme-hot", "main-flow"],
+                "bonus": 8,
+                "enabled": True,
+            }
+        ],
+    }
+
+    candidates, _, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert candidates[0]["score_breakdown"]["custom_rules"] == 0
+    assert candidates[0]["score_breakdown"]["resonance_bonus"] == 0
+    flow_result = next(item for item in candidates[0]["strategy_rule_results"] if item["rule_id"] == "main-flow")
+    assert flow_result["matched"] is False
+    assert flow_result["missing"] is True
+    assert flow_result["reason"] == "字段缺失，未加分"
+
+
+def test_risk_rule_missing_neutral_does_not_deduct_score():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "缺失换手",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": None,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "is_st": False,
+                "suspended": False,
+            }
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "trend_filter": "none",
+        "min_price": 0,
+        "min_amount": 0,
+        "min_rps20": None,
+        "max_turnover": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "max_amplitude": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+        "strategy_rules": [
+            {
+                "id": "turnover-risk",
+                "indicator_id": "turnover_rate",
+                "action": "risk",
+                "operator": "gte",
+                "value": 12,
+                "weight": 5,
+                "missing_policy": "neutral",
+                "enabled": True,
+            }
+        ],
+    }
+
+    candidates, _, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert candidates[0]["score_breakdown"]["custom_rules"] == 0
+    risk_result = candidates[0]["strategy_rule_results"][0]
+    assert risk_result["matched"] is False
+    assert risk_result["missing"] is True
+    assert risk_result["reason"] == "字段缺失，未扣风险"
+
+
+def test_filter_rule_missing_neutral_keeps_candidate_without_matching_score():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "缺失强度",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": None,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "is_st": False,
+                "suspended": False,
+            }
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "trend_filter": "none",
+        "min_price": 0,
+        "min_amount": 0,
+        "min_rps20": None,
+        "max_turnover": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "max_amplitude": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+        "strategy_rules": [
+            {
+                "id": "rps-filter",
+                "indicator_id": "rps20",
+                "action": "filter",
+                "operator": "gte",
+                "value": 60,
+                "missing_policy": "neutral",
+                "enabled": True,
+            }
+        ],
+    }
+
+    candidates, _, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert [candidate["code"] for candidate in candidates] == ["000001.SZ"]
+
+
+def test_risk_rule_cannot_trigger_positive_resonance_bonus():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "风险不共振",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 13.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "topic_heat": 82.0,
+                "is_st": False,
+                "suspended": False,
+            }
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "trend_filter": "none",
+        "min_price": 0,
+        "min_amount": 0,
+        "min_rps20": None,
+        "max_turnover": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "max_amplitude": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+        "strategy_rules": [
+            {
+                "id": "theme-hot",
+                "indicator_id": "topic_heat",
+                "action": "score",
+                "operator": "gte",
+                "value": 70,
+                "weight": 0,
+                "missing_policy": "neutral",
+                "enabled": True,
+            },
+            {
+                "id": "turnover-risk",
+                "indicator_id": "turnover_rate",
+                "action": "risk",
+                "operator": "gte",
+                "value": 12,
+                "weight": 0,
+                "missing_policy": "neutral",
+                "enabled": True,
+            },
+        ],
+        "strategy_resonances": [
+            {
+                "id": "bad-risk-resonance",
+                "name": "风险误加分",
+                "rule_ids": ["theme-hot", "turnover-risk"],
+                "bonus": 8,
+                "enabled": True,
+            }
+        ],
+    }
+
+    candidates, _, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert candidates[0]["score_breakdown"]["resonance_bonus"] == 0
 
 
 def test_explicit_feature_engines_ignore_legacy_signal_mode_value():

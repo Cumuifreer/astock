@@ -280,14 +280,36 @@ def _legacy_resonance_bonus(multiplier: Any) -> float:
     return 12.0
 
 
+def _disabled_resonance(
+    resonance_id: str,
+    name: str,
+    bonus: float,
+    conditions: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    return {
+        "id": resonance_id,
+        "name": name,
+        "rule_ids": [],
+        "bonus": round(bonus, 2),
+        "enabled": False,
+        "source": "legacy_unmatched",
+        "migration_warning": f"组合共振「{name}」无法匹配至少两个筛选/加分规则，已停用；可恢复为补充规则后重新启用。",
+        "legacy_conditions": conditions or [],
+    }
+
+
 def _normalize_strategy_resonances(value: Any, strategy_rules: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     if not isinstance(value, list):
         return []
     normalized: List[Dict[str, Any]] = []
     seen: set[str] = set()
     rules = strategy_rules or []
-    rule_ids = {str(rule.get("id") or "") for rule in rules}
-    rule_id_by_signature = {_rule_signature(rule): str(rule.get("id")) for rule in rules if rule.get("id")}
+    eligible_rule_ids = {str(rule.get("id") or "") for rule in rules if rule.get("action") in {"filter", "score"}}
+    rule_id_by_signature = {
+        _rule_signature(rule): str(rule.get("id"))
+        for rule in rules
+        if rule.get("id") and rule.get("action") in {"filter", "score"}
+    }
     for index, raw in enumerate(value):
         if not isinstance(raw, dict):
             continue
@@ -295,7 +317,13 @@ def _normalize_strategy_resonances(value: Any, strategy_rules: Optional[List[Dic
         if not resonance_id or resonance_id in seen:
             resonance_id = f"resonance-{index + 1}"
         seen.add(resonance_id)
-        referenced_rule_ids = [str(item) for item in raw.get("rule_ids") or [] if str(item) in rule_ids]
+        resonance_name = str(raw.get("name") or "组合共振")
+        bonus = _coerce_number(raw.get("bonus"))
+        if bonus is None:
+            bonus = _legacy_resonance_bonus(raw.get("multiplier"))
+        bonus = max(0.0, min(25.0, float(bonus)))
+        referenced_rule_ids = [str(item) for item in raw.get("rule_ids") or [] if str(item) in eligible_rule_ids]
+        conditions: List[Dict[str, Any]] = []
         if len(referenced_rule_ids) < 2:
             conditions = [
                 condition
@@ -312,15 +340,12 @@ def _normalize_strategy_resonances(value: Any, strategy_rules: Optional[List[Dic
                 if _rule_signature(condition) in rule_id_by_signature
             ]
         if len(dict.fromkeys(referenced_rule_ids)) < 2:
+            normalized.append(_disabled_resonance(resonance_id, resonance_name, bonus, conditions))
             continue
-        bonus = _coerce_number(raw.get("bonus"))
-        if bonus is None:
-            bonus = _legacy_resonance_bonus(raw.get("multiplier"))
-        bonus = max(0.0, min(25.0, float(bonus)))
         normalized.append(
             {
                 "id": resonance_id,
-                "name": str(raw.get("name") or "组合共振"),
+                "name": resonance_name,
                 "rule_ids": list(dict.fromkeys(referenced_rule_ids)),
                 "bonus": round(bonus, 2),
                 "enabled": bool(raw.get("enabled", True)),
@@ -494,9 +519,17 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     merged = {**DEFAULT_STRATEGY_CONFIG, **raw_config}
     merged["strategy_rules"] = _normalize_strategy_rules(merged.get("strategy_rules"))
     merged["strategy_resonances"] = _normalize_strategy_resonances(merged.get("strategy_resonances"), merged["strategy_rules"])
-    raw_resonance_count = len(raw_config.get("strategy_resonances")) if isinstance(raw_config.get("strategy_resonances"), list) else 0
-    unmatched_resonance_count = max(raw_resonance_count - len(merged["strategy_resonances"]), 0)
+    unmatched_resonance_count = sum(
+        1
+        for resonance in merged["strategy_resonances"]
+        if resonance.get("source") == "legacy_unmatched"
+    )
     migration = _migration_info(raw_config, unmatched_strategy_resonance_count=unmatched_resonance_count)
+    if migration and unmatched_resonance_count:
+        for resonance in merged["strategy_resonances"]:
+            warning = resonance.get("migration_warning")
+            if resonance.get("source") == "legacy_unmatched" and warning:
+                migration["warnings"].append(str(warning))
     raw_signal_mode = raw_config.get("signal_mode")
     if raw_signal_mode in {"breakout", "pullback"}:
         if not raw_config.get("breakout_pullback_direction"):

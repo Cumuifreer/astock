@@ -2599,7 +2599,8 @@ h1 {
   overflow: hidden;
 }
 
-.rule-value-input input {
+.rule-value-input input,
+.rule-value-input select {
   width: 100%;
   min-width: 0;
   height: 31px;
@@ -2701,6 +2702,11 @@ h1 {
   opacity: 0.56;
 }
 
+.strategy-resonance-card.legacy {
+  border-color: rgba(255, 198, 102, 0.24);
+  background: rgba(255, 198, 102, 0.035);
+}
+
 .strategy-resonance-card header label {
   display: grid;
   gap: 5px;
@@ -2758,6 +2764,10 @@ h1 {
   padding: 8px;
 }
 
+.resonance-condition.legacy {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .resonance-rule-readout {
   min-height: 32px;
   display: flex;
@@ -2766,6 +2776,27 @@ h1 {
   font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.resonance-legacy-note {
+  border: 1px solid rgba(255, 198, 102, 0.18);
+  background: rgba(255, 198, 102, 0.04);
+  border-radius: 5px;
+  padding: 8px 9px;
+  display: grid;
+  gap: 4px;
+}
+
+.resonance-legacy-note strong {
+  color: var(--amber);
+  font-size: 12px;
+}
+
+.resonance-legacy-note span,
+.resonance-empty-state span + span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .resonance-condition-controls {
@@ -3518,6 +3549,10 @@ h1 {
   font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.rule-result-panel small.missing {
+  color: var(--muted);
 }
 
 .rule-result-panel b {

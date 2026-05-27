@@ -85,41 +85,49 @@ CAPABILITY_DEFINITIONS = {
         "fallback_sources": ["Tushare daily 前复权", "Baostock", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
+        "coverage_kind": "stock",
     },
     "当天行情快照": {
         "fallback_sources": ["Tushare 实时日线", "AkShare 新浪", "AkShare 腾讯", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
+        "coverage_kind": "stock",
     },
     "股票基础信息": {
         "fallback_sources": ["Baostock", "AkShare 快照", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
+        "coverage_kind": "stock",
     },
     "流通市值": {
         "fallback_sources": ["Tushare daily_basic", "AkShare 新浪", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
+        "coverage_kind": "stock",
     },
     "换手率": {
         "fallback_sources": ["Tushare daily_basic", "Baostock", "AkShare 新浪", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
+        "coverage_kind": "stock",
     },
     "RPS": {
         "fallback_sources": ["本地历史 K 线"],
         "can_backfill": True,
         "participates_in_analysis": True,
+        "coverage_kind": "stock",
     },
     "振幅": {
         "fallback_sources": ["本地历史 K 线"],
         "can_backfill": True,
         "participates_in_analysis": True,
+        "coverage_kind": "stock",
     },
     "ST / 停牌状态": {
         "fallback_sources": ["股票基础信息", "Tushare 日线缺行", "Baostock", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
+        "coverage_kind": "stock",
     },
     "市场环境": {
         "fallback_sources": ["Tushare index_daily", "本地历史宽度", "Tushare limit_list_d"],
@@ -131,16 +139,19 @@ CAPABILITY_DEFINITIONS = {
         "fallback_sources": ["Tushare daily_basic"],
         "can_backfill": True,
         "participates_in_analysis": True,
+        "coverage_kind": "stock",
     },
     "技术因子": {
         "fallback_sources": ["Tushare stk_factor"],
         "can_backfill": True,
         "participates_in_analysis": True,
+        "coverage_kind": "stock",
     },
     "资金流向": {
         "fallback_sources": ["Tushare moneyflow"],
         "can_backfill": True,
         "participates_in_analysis": False,
+        "coverage_kind": "stock",
     },
     "涨跌停": {
         "fallback_sources": ["Tushare limit_list_d"],
@@ -152,11 +163,13 @@ CAPABILITY_DEFINITIONS = {
         "fallback_sources": ["Tushare cyq_perf", "Tushare cyq_chips"],
         "can_backfill": True,
         "participates_in_analysis": False,
+        "coverage_kind": "stock",
     },
     "概念/行业成分": {
         "fallback_sources": ["Tushare ths_member"],
         "can_backfill": True,
         "participates_in_analysis": False,
+        "coverage_kind": "stock",
     },
     "龙虎榜/游资": {
         "fallback_sources": ["Tushare top_list", "Tushare top_inst", "Tushare hm_detail"],
@@ -363,7 +376,7 @@ class DataService:
         exact_code_search = False
         if search:
             text = search.strip()
-            exact_code_search = bool(re.fullmatch(r"\d{6}\.(SH|SZ|BJ)", text.upper()))
+            exact_code_search = bool(re.fullmatch(r"\d{6}(\.(SH|SZ|BJ))?", text.upper()))
             clauses.append("(b.code ILIKE ? OR b.name ILIKE ?)")
             params.extend([f"%{text}%", f"%{text}%"])
         exchange = exchange.upper().strip()

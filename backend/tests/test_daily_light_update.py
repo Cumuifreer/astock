@@ -8,7 +8,7 @@ from backend.app.services import update_service as update_module
 from backend.app.services.update_service import UpdateService
 
 
-def _stock(code: str) -> dict:
+def _stock(code: str, suspended: bool = False) -> dict:
     return {
         "code": code,
         "name": code,
@@ -16,7 +16,7 @@ def _stock(code: str) -> dict:
         "list_date": "2020-01-01",
         "source": "test",
         "is_st": False,
-        "suspended": False,
+        "suspended": suspended,
         "updated_at": "2026-05-20T10:00:00",
     }
 
@@ -89,6 +89,33 @@ def test_light_daily_update_selects_stocks_behind_target_history_date(tmp_path):
     )
 
     assert [row["code"] for row in rows] == ["000001.SZ", "300750.SZ", "600000.SH"]
+
+
+def test_history_update_stock_picker_excludes_inactive_stocks_in_full_and_light_modes(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "stock_basic",
+        [_stock("000001.SZ"), _stock("000003.SZ", suspended=True)],
+        ["code"],
+    )
+    db.upsert(
+        "daily_snapshots",
+        [_snapshot("000001.SZ"), _snapshot("000003.SZ")],
+        ["code", "date"],
+    )
+    db.upsert(
+        "historical_bars",
+        [_bar("000003.SZ", "2026-05-10")],
+        ["code", "date"],
+    )
+
+    service = UpdateService(db)
+    full_rows = service._history_stocks_for_update(limit=0, light=False, target_history_date=date(2026, 5, 20))
+    light_rows = service._history_stocks_for_update(limit=0, light=True, target_history_date=date(2026, 5, 20))
+
+    assert [row["code"] for row in full_rows] == ["000001.SZ"]
+    assert [row["code"] for row in light_rows] == ["000001.SZ"]
 
 
 def test_target_history_date_uses_previous_trading_day_before_china_close(tmp_path):

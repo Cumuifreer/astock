@@ -140,6 +140,7 @@ def test_indicator_library_exposes_rule_builder_metadata():
     assert "filter" not in top_list["supported_actions"]
     assert {"score", "risk", "display"}.issubset(set(top_list["supported_actions"]))
     assert top_list["hard_filter_allowed"] is False
+    assert top_list["display_scope"] == "candidate"
 
     min_price = indicators["min_price"]
     assert min_price["value_type"] == "number"
@@ -159,6 +160,7 @@ def test_indicator_contract_does_not_overstate_executable_actions():
     assert cost["data_status"] == "executable"
     assert cost["supported_actions"] == ["display"]
     assert cost["hard_filter_allowed"] is False
+    assert cost["display_scope"] == "candidate"
 
     price_to_cost = indicators["price_to_cost_50pct"]
     assert price_to_cost["value_type"] == "ratio"
@@ -171,14 +173,22 @@ def test_indicator_contract_does_not_overstate_executable_actions():
     assert limit_event["operator_semantics"] == "event_state"
     assert limit_event["supported_operators"] == ["eq", "neq"]
     assert limit_event["default_operator"] == "eq"
+    assert limit_event["choice_options"] == [
+        {"value": "U", "label": "涨停"},
+        {"value": "Z", "label": "炸板"},
+        {"value": "D", "label": "跌停"},
+    ]
+    assert {rule["label"] for rule in limit_event["recommended_rules"]} >= {"今日涨停", "今日炸板风险", "今日跌停风险"}
 
     overheat = indicators["overheat_risk"]
     assert overheat["data_status"] == "display_only"
     assert overheat["supported_actions"] == ["display"]
+    assert overheat["display_scope"] == "planned"
 
     macd_state = indicators["macd_state"]
     assert macd_state["data_status"] == "display_only"
     assert macd_state["supported_actions"] == ["display"]
+    assert macd_state["display_scope"] == "planned"
 
     market = indicators["market_breadth"]
     assert market["data_status"] == "display_only"

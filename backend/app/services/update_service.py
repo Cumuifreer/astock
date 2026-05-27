@@ -1559,9 +1559,11 @@ class UpdateService:
     ) -> Optional[Dict[str, Any]]:
         bars = self.db.query(
             """
-            SELECT pct_chg, amount
-            FROM historical_bars
-            WHERE date = ?
+            SELECT h.pct_chg, h.amount
+            FROM historical_bars h
+            JOIN stock_basic b ON b.code = h.code
+            WHERE h.date = ?
+              AND b.suspended IS DISTINCT FROM TRUE
             """,
             [trade_date],
         )
@@ -1621,12 +1623,14 @@ class UpdateService:
     def _market_turnover_score(self, trade_date: date, total_amount: float) -> tuple[float, Optional[float]]:
         rows = self.db.query(
             """
-            SELECT date, SUM(amount) AS amount
-            FROM historical_bars
-            WHERE date < ?
-              AND amount IS NOT NULL
-            GROUP BY date
-            ORDER BY date DESC
+            SELECT h.date, SUM(h.amount) AS amount
+            FROM historical_bars h
+            JOIN stock_basic b ON b.code = h.code
+            WHERE h.date < ?
+              AND h.amount IS NOT NULL
+              AND b.suspended IS DISTINCT FROM TRUE
+            GROUP BY h.date
+            ORDER BY h.date DESC
             LIMIT 20
             """,
             [trade_date],
@@ -2099,7 +2103,12 @@ class UpdateService:
     ) -> List[Dict[str, Any]]:
         if not light:
             return self.db.query(
-                "SELECT code FROM stock_basic ORDER BY code" + (" LIMIT ?" if limit else ""),
+                """
+                SELECT b.code
+                FROM stock_basic b
+                WHERE b.suspended IS DISTINCT FROM TRUE
+                ORDER BY b.code
+                """ + (" LIMIT ?" if limit else ""),
                 [limit] if limit else [],
             )
 
@@ -2113,6 +2122,7 @@ class UpdateService:
                    ON s.code = b.code
                   AND s.date = (SELECT MAX(date) FROM daily_snapshots)
                 LEFT JOIN historical_bars h ON h.code = b.code
+                WHERE b.suspended IS DISTINCT FROM TRUE
                 GROUP BY b.code
             )
             WHERE latest_history_date IS NULL OR latest_history_date < ?

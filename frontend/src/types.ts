@@ -64,8 +64,10 @@ export interface IndicatorDefinition {
   supported_operators?: RuleOperator[];
   default_operator?: RuleOperator;
   recommended_rules?: IndicatorRecommendation[];
+  choice_options?: Array<{ value: number | string | boolean; label: string }>;
   analysis_field?: string | null;
   data_status?: 'executable' | 'display_only' | 'planned' | 'parameter' | string;
+  display_scope?: 'candidate' | 'warehouse' | 'planned' | string | null;
   hard_filter_allowed?: boolean;
   min_coverage_for_filter?: number | null;
   freshness_required?: boolean;
@@ -177,6 +179,9 @@ export interface StrategyResonance {
   rule_ids: string[];
   bonus: number;
   enabled: boolean;
+  source?: 'rule_ids' | 'legacy_unmatched' | string;
+  migration_warning?: string;
+  legacy_conditions?: StrategyRuleCondition[];
 }
 
 export interface IndicatorLibrary {
