@@ -377,10 +377,6 @@ function App() {
       return (
         <IndicatorLibraryPage
           library={bootstrap.indicator_library}
-          createMode={createSignalMode}
-          saveMode={saveSignalMode}
-          duplicateMode={duplicateSignalMode}
-          deleteMode={deleteSignalMode}
         />
       );
     }
@@ -399,6 +395,10 @@ function App() {
           }}
           saveStrategy={saveStrategy}
           saveAndRun={saveAndRun}
+          createMode={createSignalMode}
+          saveMode={saveSignalMode}
+          duplicateMode={duplicateSignalMode}
+          deleteMode={deleteSignalMode}
           duplicate={async () => {
             if (!selectedPresetId) return;
             const result = await api.duplicateStrategy(selectedPresetId);
@@ -1078,16 +1078,8 @@ function conceptProfileRows(concepts: Array<Record<string, unknown>>): Array<[Re
 
 function IndicatorLibraryPage({
   library,
-  createMode,
-  saveMode,
-  duplicateMode,
-  deleteMode,
 }: {
   library: IndicatorLibrary;
-  createMode: (name: string) => Promise<SignalModeTemplate>;
-  saveMode: (mode: SignalModeTemplate) => Promise<SignalModeTemplate>;
-  duplicateMode: (id: string) => Promise<SignalModeTemplate>;
-  deleteMode: (id: string) => Promise<void>;
 }) {
   const [category, setCategory] = useState(library.categories[0]?.id || '');
   const [search, setSearch] = useState('');
@@ -1226,13 +1218,10 @@ function IndicatorLibraryPage({
         </aside>
       </section>
 
-      <SignalModeManager
-        library={library}
-        createMode={createMode}
-        saveMode={saveMode}
-        duplicateMode={duplicateMode}
-        deleteMode={deleteMode}
-      />
+      <section className="panel indicator-mode-note">
+        <PanelTitle icon={<SlidersHorizontal size={18} />} title="信号模式在策略页管理" />
+        <p>这里保持为指标字典：查字段含义、数据源、计算方法和分析状态。真正的模板编辑和运行参数统一放到策略页，避免同一件事在两个地方配置。</p>
+      </section>
     </div>
   );
 }
@@ -1243,12 +1232,14 @@ function SignalModeManager({
   saveMode,
   duplicateMode,
   deleteMode,
+  embedded = false,
 }: {
   library: IndicatorLibrary;
   createMode: (name: string) => Promise<SignalModeTemplate>;
   saveMode: (mode: SignalModeTemplate) => Promise<SignalModeTemplate>;
   duplicateMode: (id: string) => Promise<SignalModeTemplate>;
   deleteMode: (id: string) => Promise<void>;
+  embedded?: boolean;
 }) {
   const indicatorById = useMemo(
     () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
@@ -1436,11 +1427,11 @@ function SignalModeManager({
   const ruleCount = draft.rule_groups.reduce((sum, group) => sum + group.rules.length, 0);
 
   return (
-    <section className="panel signal-mode-manager">
+    <section className={embedded ? 'signal-mode-manager embedded' : 'panel signal-mode-manager'}>
       <div className="signal-manager-head">
         <div>
           <PanelTitle icon={<SlidersHorizontal size={18} />} title="信号模式" />
-          <p>这里维护策略页可选择的信号模式。模式里选了哪些指标，策略页就只展示哪些参数。</p>
+          <p>模式只定义“有哪些指标和组合条件”，具体阈值和运行方式在当前策略里填写。</p>
         </div>
         <div className="signal-manager-actions">
           <button className="ghost compact" disabled={busy} type="button" onClick={() => void runModeAction(async () => {
@@ -1732,6 +1723,10 @@ function StrategyPanel(props: {
   selectPreset: (preset: StrategyPreset) => void;
   saveStrategy: (setDefault?: boolean) => Promise<void>;
   saveAndRun: () => Promise<void>;
+  createMode: (name: string) => Promise<SignalModeTemplate>;
+  saveMode: (mode: SignalModeTemplate) => Promise<SignalModeTemplate>;
+  duplicateMode: (id: string) => Promise<SignalModeTemplate>;
+  deleteMode: (id: string) => Promise<void>;
   duplicate: () => Promise<void>;
   createBlank: () => Promise<void>;
   remove: () => Promise<void>;
@@ -1922,6 +1917,20 @@ function StrategyPanel(props: {
           ) : (
             <div className="field-note wide">指标库里还没有可用的信号模式。</div>
           )}
+          <details className="signal-mode-admin wide">
+            <summary>
+              <span>信号模式管理</span>
+              <small>维护可选模板，平时不用打开。</small>
+            </summary>
+            <SignalModeManager
+              library={props.indicatorLibrary}
+              createMode={props.createMode}
+              saveMode={props.saveMode}
+              duplicateMode={props.duplicateMode}
+              deleteMode={props.deleteMode}
+              embedded
+            />
+          </details>
         </div>
       </section>
     </div>
@@ -1991,8 +2000,8 @@ function StrategyRuleBuilder({
     <section className="strategy-rule-builder wide">
       <div className="rule-builder-head">
         <div>
-          <span className="section-kicker">Rule Builder</span>
-          <h3>指标规则</h3>
+          <span className="section-kicker">FILTERS</span>
+          <h3>筛选条件</h3>
         </div>
         <div className="rule-builder-stats">
           {(Object.keys(ruleActionMeta) as RuleAction[]).map((action) => (
@@ -2044,7 +2053,7 @@ function StrategyRuleBuilder({
           {rules.length === 0 && (
             <div className="rule-empty-state">
               <strong>还没有自定义指标规则</strong>
-              <span>左侧选择指标后加入，保存并运行时会进入后端过滤和评分。</span>
+              <span>选择指标后加入条件，保存并运行时进入后端过滤和评分。</span>
             </div>
           )}
           {rules.map((rule) => {

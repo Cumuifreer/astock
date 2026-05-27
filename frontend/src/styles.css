@@ -31,7 +31,9 @@ body {
     var(--bg);
   background-size: 32px 32px;
   color: var(--text);
-  font-family: "Aptos", "Avenir Next", "DIN Alternate", "Helvetica Neue", sans-serif;
+  font-family: "Aptos", "Avenir Next", "Helvetica Neue", sans-serif;
+  font-size: 13px;
+  line-height: 1.42;
   min-width: 320px;
 }
 
@@ -49,26 +51,26 @@ button {
 .shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
 }
 
 .rail {
   position: sticky;
   top: 0;
   height: 100vh;
-  padding: 22px 16px;
+  padding: 16px 12px;
   background: rgba(4, 7, 8, 0.92);
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 18px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 10px;
+  gap: 10px;
+  padding: 10px;
   border: 1px solid var(--line);
   background: #071012;
 }
@@ -79,7 +81,7 @@ button {
 
 .brand strong {
   display: block;
-  font-size: 16px;
+  font-size: 13px;
 }
 
 .brand span {
@@ -91,7 +93,7 @@ button {
 
 nav {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 nav button,
@@ -101,8 +103,8 @@ nav button,
 .preset {
   border: 1px solid var(--line);
   background: rgba(12, 17, 19, 0.72);
-  min-height: 40px;
-  padding: 0 13px;
+  min-height: 34px;
+  padding: 0 10px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -162,7 +164,7 @@ button:disabled {
 }
 
 .icon-button {
-  width: 40px;
+  width: 34px;
   padding: 0;
 }
 
@@ -209,15 +211,15 @@ button:disabled {
 
 .workspace {
   min-width: 0;
-  padding: 24px;
+  padding: 18px;
 }
 
 .topbar {
   display: flex;
   justify-content: space-between;
-  gap: 20px;
+  gap: 14px;
   align-items: center;
-  padding-bottom: 22px;
+  padding-bottom: 16px;
 }
 
 .eyebrow {
@@ -236,7 +238,7 @@ p {
 
 h1 {
   margin-top: 4px;
-  font-size: clamp(28px, 4vw, 44px);
+  font-size: clamp(24px, 3vw, 34px);
   line-height: 1.05;
   font-family: "DIN Condensed", "Aptos Display", "Avenir Next", sans-serif;
 }
@@ -260,7 +262,7 @@ h1 {
 
 .page-stack {
   display: grid;
-  gap: 18px;
+  gap: 14px;
 }
 
 .metric-grid {
@@ -334,7 +336,7 @@ h1 {
 .status-grid,
 .strategy-layout {
   display: grid;
-  gap: 18px;
+  gap: 14px;
 }
 
 .split {
@@ -342,7 +344,7 @@ h1 {
 }
 
 .strategy-layout {
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 250px minmax(0, 1fr);
 }
 
 .status-grid {
@@ -590,15 +592,15 @@ h1 {
 }
 
 .panel {
-  padding: 16px;
+  padding: 12px;
   min-width: 0;
 }
 
 .panel-title {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin-bottom: 14px;
+  gap: 7px;
+  margin-bottom: 10px;
 }
 
 .panel-title svg {
@@ -606,7 +608,7 @@ h1 {
 }
 
 .panel-title h2 {
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .task-strip {
@@ -944,7 +946,7 @@ h1 {
 
 .table-toolbar {
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .search,
@@ -953,20 +955,20 @@ h1 {
 .field textarea {
   width: 100%;
   min-width: 0;
-  min-height: 40px;
+  min-height: 34px;
   border: 1px solid var(--line);
   background: #071012;
   color: var(--text);
-  padding: 0 10px;
+  padding: 0 9px;
   border-radius: 6px;
   outline: none;
 }
 
 .field textarea {
-  min-height: 68px;
+  min-height: 60px;
   resize: vertical;
   line-height: 1.45;
-  padding: 9px 10px;
+  padding: 8px 9px;
 }
 
 .field input::placeholder {
@@ -1161,44 +1163,44 @@ h1 {
 
 .indicator-page {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .indicator-hero {
   display: flex;
   justify-content: space-between;
-  gap: 18px;
+  gap: 14px;
   align-items: stretch;
-  padding: 16px;
+  padding: 13px 14px;
 }
 
 .indicator-hero p,
 .signal-template-head p {
-  margin: 4px 0 0;
+  margin: 3px 0 0;
   color: var(--muted);
-  line-height: 1.55;
+  line-height: 1.45;
   max-width: 760px;
 }
 
 .indicator-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(90px, 1fr));
-  gap: 8px;
-  min-width: min(420px, 100%);
+  gap: 6px;
+  min-width: min(360px, 100%);
 }
 
 .indicator-summary span,
 .indicator-detail-grid span {
   border: 1px solid rgba(157, 196, 187, 0.16);
   background: rgba(255, 255, 255, 0.02);
-  padding: 12px;
+  padding: 9px 10px;
   min-width: 0;
 }
 
 .indicator-summary b {
   display: block;
   color: var(--text);
-  font-size: 26px;
+  font-size: 18px;
   line-height: 1;
 }
 
@@ -1213,8 +1215,8 @@ h1 {
 
 .indicator-layout {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr) minmax(330px, 0.45fr);
-  gap: 16px;
+  grid-template-columns: 210px minmax(0, 1fr) minmax(300px, 0.38fr);
+  gap: 12px;
   align-items: start;
 }
 
@@ -1234,16 +1236,16 @@ h1 {
 
 .indicator-categories {
   display: grid;
-  gap: 7px;
+  gap: 5px;
 }
 
 .indicator-categories button {
-  min-height: 54px;
+  min-height: 42px;
   border: 1px solid rgba(157, 196, 187, 0.15);
   background: rgba(255, 255, 255, 0.018);
   color: var(--soft);
   border-radius: 6px;
-  padding: 9px 10px;
+  padding: 7px 9px;
   text-align: left;
   cursor: pointer;
   display: grid;
@@ -1270,7 +1272,7 @@ h1 {
 
 .indicator-list-panel {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .indicator-list-head {
@@ -1288,7 +1290,7 @@ h1 {
 
 .indicator-list-head strong {
   color: var(--text);
-  font-size: 16px;
+  font-size: 14px;
 }
 
 .indicator-list-head span {
@@ -1298,28 +1300,28 @@ h1 {
 
 .indicator-list-head b {
   color: var(--cyan);
-  font-size: 22px;
+  font-size: 17px;
   line-height: 1;
 }
 
 .indicator-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 7px;
 }
 
 .indicator-card {
-  min-height: 168px;
+  min-height: 112px;
   border: 1px solid rgba(157, 196, 187, 0.14);
   background: rgba(255, 255, 255, 0.018);
   color: var(--soft);
   border-radius: 7px;
-  padding: 12px;
+  padding: 10px;
   text-align: left;
   cursor: pointer;
   display: grid;
-  grid-template-rows: auto minmax(48px, 1fr) auto;
-  gap: 10px;
+  grid-template-rows: auto minmax(34px, 1fr) auto;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -1343,7 +1345,8 @@ h1 {
 .signal-template-card p {
   margin: 0;
   color: var(--soft);
-  line-height: 1.45;
+  line-height: 1.4;
+  font-size: 12px;
 }
 
 .indicator-card footer,
@@ -1367,8 +1370,8 @@ h1 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 24px;
-  padding: 0 8px;
+  min-height: 21px;
+  padding: 0 7px;
   border-radius: 999px;
   border: 1px solid rgba(157, 196, 187, 0.16);
   color: var(--soft);
@@ -1398,7 +1401,7 @@ h1 {
 
 .indicator-detail {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   position: sticky;
   top: 18px;
 }
@@ -1411,20 +1414,20 @@ h1 {
 .indicator-detail h2 {
   margin: 0;
   color: var(--text);
-  font-size: clamp(20px, 2vw, 30px);
+  font-size: clamp(17px, 1.8vw, 24px);
   line-height: 1.05;
 }
 
 .indicator-detail p {
   margin: 0;
   color: var(--soft);
-  line-height: 1.55;
+  line-height: 1.48;
 }
 
 .indicator-detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .indicator-detail-grid b {
@@ -1436,9 +1439,9 @@ h1 {
 
 .indicator-explain {
   border-top: 1px solid rgba(157, 196, 187, 0.14);
-  padding-top: 12px;
+  padding-top: 10px;
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .indicator-explain strong {
@@ -1461,6 +1464,26 @@ h1 {
   color: var(--accent);
   font-size: 12px;
   font-weight: 800;
+}
+
+.indicator-mode-note {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--muted);
+}
+
+.indicator-mode-note .panel-title {
+  margin: 0;
+  min-width: max-content;
+}
+
+.indicator-mode-note p {
+  margin: 0;
+  line-height: 1.45;
+  max-width: 920px;
 }
 
 .signal-template-strip {
@@ -1554,11 +1577,11 @@ h1 {
 .strategy-readout {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 12px 0 16px;
-  padding: 12px 14px;
+  gap: 10px;
+  margin: 8px 0 10px;
+  padding: 9px 11px;
   border: 1px solid rgba(59, 240, 193, 0.2);
-  background: rgba(59, 240, 193, 0.055);
+  background: rgba(59, 240, 193, 0.035);
   color: var(--soft);
 }
 
@@ -1657,7 +1680,7 @@ h1 {
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .form-grid > .wide-panel {
@@ -1669,10 +1692,10 @@ h1 {
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(220px, 0.8fr);
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 10px;
   border: 1px solid rgba(59, 240, 193, 0.2);
-  background: rgba(59, 240, 193, 0.035);
+  background: rgba(255, 255, 255, 0.014);
 }
 
 .strategy-mode-selectors label,
@@ -1694,7 +1717,7 @@ h1 {
 .rule-indicator-chips select {
   width: 100%;
   min-width: 0;
-  min-height: 40px;
+  min-height: 34px;
   border: 1px solid var(--line);
   background: #071012;
   color: var(--text);
@@ -1771,7 +1794,14 @@ h1 {
 
 .signal-mode-manager {
   display: grid;
-  gap: 14px;
+  gap: 12px;
+}
+
+.signal-mode-manager.embedded {
+  padding: 10px 0 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .signal-manager-head {
@@ -1782,9 +1812,9 @@ h1 {
 }
 
 .signal-manager-head p {
-  margin: 8px 0 0;
+  margin: 5px 0 0;
   color: var(--muted);
-  line-height: 1.5;
+  line-height: 1.42;
 }
 
 .signal-manager-actions {
@@ -1796,8 +1826,8 @@ h1 {
 
 .signal-manager-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 0.28fr) minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: minmax(190px, 0.24fr) minmax(0, 1fr);
+  gap: 10px;
   min-width: 0;
 }
 
@@ -1810,16 +1840,16 @@ h1 {
 .signal-mode-list {
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 6px;
 }
 
 .signal-mode-list button {
-  min-height: 72px;
+  min-height: 56px;
   border: 1px solid rgba(157, 196, 187, 0.14);
   background: rgba(5, 12, 13, 0.64);
   color: var(--soft);
   border-radius: 7px;
-  padding: 11px;
+  padding: 9px;
   text-align: left;
   cursor: pointer;
   display: grid;
@@ -1845,15 +1875,15 @@ h1 {
 
 .signal-mode-editor {
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .signal-editor-section {
   border: 1px solid rgba(157, 196, 187, 0.14);
   background: rgba(255, 255, 255, 0.016);
-  padding: 12px;
+  padding: 10px;
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .signal-section-head {
@@ -2075,14 +2105,12 @@ h1 {
 
 .strategy-rule-builder {
   grid-column: 1 / -1;
-  border: 1px solid rgba(59, 240, 193, 0.22);
-  background:
-    linear-gradient(135deg, rgba(59, 240, 193, 0.055), rgba(182, 255, 95, 0.018)),
-    rgba(255, 255, 255, 0.014);
-  border-radius: 8px;
-  padding: 14px;
+  border: 1px solid rgba(157, 196, 187, 0.14);
+  background: rgba(9, 13, 15, 0.92);
+  border-radius: 6px;
+  padding: 10px;
   display: grid;
-  gap: 14px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -2098,22 +2126,22 @@ h1 {
 .rule-builder-head h3 {
   margin: 0;
   color: var(--text);
-  font-size: 22px;
+  font-size: 16px;
   line-height: 1.05;
 }
 
 .rule-builder-stats {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
 .rule-builder-stats span {
-  min-width: 72px;
+  min-width: 58px;
   border: 1px solid rgba(157, 196, 187, 0.14);
-  background: rgba(5, 12, 13, 0.7);
-  padding: 8px 10px;
+  background: rgba(5, 12, 13, 0.48);
+  padding: 6px 8px;
 }
 
 .rule-builder-stats b,
@@ -2123,7 +2151,7 @@ h1 {
 
 .rule-builder-stats b {
   color: var(--text);
-  font-size: 20px;
+  font-size: 14px;
   line-height: 1;
 }
 
@@ -2131,13 +2159,13 @@ h1 {
   color: var(--muted);
   font-style: normal;
   font-size: 11px;
-  margin-top: 5px;
+  margin-top: 3px;
 }
 
 .rule-builder-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 0.32fr) minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 1fr;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -2149,25 +2177,31 @@ h1 {
 
 .rule-picker {
   display: grid;
+  grid-template-columns: minmax(180px, 0.22fr) minmax(0, 1fr) auto;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
+  align-items: start;
+  border-bottom: 1px solid rgba(157, 196, 187, 0.12);
+  padding-bottom: 10px;
 }
 
 .rule-picker-search input {
   width: 100%;
-  min-height: 40px;
+  min-height: 32px;
   border: 1px solid rgba(157, 196, 187, 0.18);
   background: #071012;
   color: var(--text);
-  border-radius: 6px;
-  padding: 0 11px;
+  border-radius: 5px;
+  padding: 0 9px;
   outline: none;
 }
 
 .rule-category-rail {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
+  grid-column: 1 / -1;
+  order: 3;
 }
 
 .rule-category-rail button,
@@ -2178,9 +2212,10 @@ h1 {
   border: 1px solid rgba(157, 196, 187, 0.14);
   background: rgba(255, 255, 255, 0.02);
   color: var(--soft);
-  border-radius: 5px;
-  padding: 0 9px;
+  border-radius: 4px;
+  padding: 0 8px;
   cursor: pointer;
+  font-size: 12px;
 }
 
 .rule-category-rail button.active,
@@ -2192,23 +2227,24 @@ h1 {
 }
 
 .rule-indicator-list {
-  display: grid;
-  gap: 7px;
-  max-height: 430px;
+  display: flex;
+  gap: 6px;
+  max-height: 94px;
   overflow: auto;
-  padding-right: 2px;
+  padding: 0 2px 2px 0;
 }
 
 .rule-indicator-list button {
-  min-height: 68px;
+  flex: 0 0 168px;
+  min-height: 58px;
   border: 1px solid rgba(157, 196, 187, 0.12);
   background: rgba(5, 12, 13, 0.58);
   color: var(--soft);
   text-align: left;
-  border-radius: 7px;
-  padding: 9px 10px;
+  border-radius: 5px;
+  padding: 8px;
   display: grid;
-  gap: 4px;
+  gap: 2px;
   cursor: pointer;
 }
 
@@ -2231,26 +2267,28 @@ h1 {
 .rule-indicator-list span,
 .rule-indicator-list em {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-style: normal;
 }
 
 .add-rule-button {
   justify-self: stretch;
+  min-width: 104px;
+  min-height: 32px;
 }
 
 .rule-board {
   display: grid;
-  gap: 10px;
+  gap: 7px;
   align-content: start;
 }
 
 .rule-empty-state {
-  min-height: 124px;
+  min-height: 72px;
   border: 1px dashed rgba(157, 196, 187, 0.16);
   background: rgba(255, 255, 255, 0.016);
-  border-radius: 7px;
-  padding: 18px;
+  border-radius: 5px;
+  padding: 12px;
   display: grid;
   align-content: center;
   gap: 6px;
@@ -2268,10 +2306,10 @@ h1 {
 .strategy-rule-card {
   border: 1px solid rgba(157, 196, 187, 0.14);
   background: rgba(5, 12, 13, 0.64);
-  border-radius: 7px;
-  padding: 12px;
+  border-radius: 5px;
+  padding: 9px;
   display: grid;
-  gap: 11px;
+  gap: 8px;
 }
 
 .strategy-rule-card.filter {
@@ -2303,8 +2341,8 @@ h1 {
 
 .strategy-rule-card header span {
   color: var(--muted);
-  font-size: 12px;
-  margin-top: 4px;
+  font-size: 11px;
+  margin-top: 3px;
 }
 
 .rule-card-actions {
@@ -2325,21 +2363,22 @@ h1 {
 }
 
 .rule-action-row {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
 }
 
 .rule-action-row button {
-  min-height: 52px;
+  min-height: 30px;
   border: 1px solid rgba(157, 196, 187, 0.14);
   background: rgba(255, 255, 255, 0.018);
   color: var(--soft);
-  border-radius: 6px;
-  padding: 8px 9px;
-  text-align: left;
-  display: grid;
-  gap: 4px;
+  border-radius: 4px;
+  padding: 0 8px;
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   cursor: pointer;
 }
 
@@ -2356,12 +2395,13 @@ h1 {
 }
 
 .rule-action-row strong {
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .rule-action-row span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
+  display: none;
 }
 
 .rule-operator-row,
@@ -2369,20 +2409,20 @@ h1 {
 .rule-recommendations {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 5px;
 }
 
 .rule-value-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(130px, 1fr));
-  gap: 9px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 0.22fr));
+  gap: 7px;
 }
 
 .rule-value-grid label {
   display: grid;
   gap: 6px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   min-width: 0;
 }
 
@@ -2390,21 +2430,21 @@ h1 {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  min-height: 40px;
+  min-height: 32px;
   border: 1px solid rgba(157, 196, 187, 0.16);
   background: #071012;
-  border-radius: 6px;
+  border-radius: 5px;
   overflow: hidden;
 }
 
 .rule-value-input input {
   width: 100%;
   min-width: 0;
-  height: 38px;
+  height: 31px;
   border: 0;
   background: transparent;
   color: var(--text);
-  padding: 0 10px;
+  padding: 0 8px;
   outline: none;
 }
 
@@ -2418,7 +2458,7 @@ h1 {
 
 .rule-recommendations {
   border-top: 1px solid rgba(157, 196, 187, 0.12);
-  padding-top: 10px;
+  padding-top: 8px;
 }
 
 .rule-recommendations button {
@@ -2444,38 +2484,56 @@ h1 {
   min-width: 0;
 }
 
-.legacy-strategy-controls summary {
+.signal-mode-admin {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(157, 196, 187, 0.12);
+  background: rgba(255, 255, 255, 0.01);
+  border-radius: 6px;
+  min-width: 0;
+}
+
+.legacy-strategy-controls summary,
+.signal-mode-admin > summary {
   cursor: pointer;
-  padding: 12px;
+  padding: 10px 11px;
   list-style: none;
 }
 
-.legacy-strategy-controls summary::-webkit-details-marker {
+.legacy-strategy-controls summary::-webkit-details-marker,
+.signal-mode-admin > summary::-webkit-details-marker {
   display: none;
 }
 
 .legacy-strategy-controls summary span,
-.legacy-strategy-controls summary small {
+.legacy-strategy-controls summary small,
+.signal-mode-admin > summary span,
+.signal-mode-admin > summary small {
   display: block;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.legacy-strategy-controls summary span {
+.legacy-strategy-controls summary span,
+.signal-mode-admin > summary span {
   color: var(--text);
   font-weight: 800;
 }
 
-.legacy-strategy-controls summary small {
+.legacy-strategy-controls summary small,
+.signal-mode-admin > summary small {
   color: var(--muted);
-  margin-top: 4px;
+  margin-top: 3px;
 }
 
 .legacy-strategy-body {
-  padding: 0 12px 12px;
+  padding: 0 10px 10px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  gap: 10px;
+}
+
+.signal-mode-admin > .signal-mode-manager {
+  padding: 0 10px 10px;
 }
 
 .signal-studio {
@@ -3393,8 +3451,8 @@ h1 {
 
 .preset-list {
   display: grid;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 10px;
 }
 
 .preset-head {
@@ -3402,7 +3460,7 @@ h1 {
   justify-content: space-between;
   gap: 10px;
   align-items: flex-start;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .preset-head .panel-title {
@@ -3422,7 +3480,7 @@ h1 {
   align-items: center;
   color: var(--soft);
   font-size: 12px;
-  margin: 14px 0 8px;
+  margin: 10px 0 7px;
 }
 
 .preset-section-title span {
@@ -3444,10 +3502,11 @@ h1 {
 
 .preset {
   justify-content: space-between;
-  min-height: 78px;
+  min-height: 62px;
   width: 100%;
   text-align: left;
   align-items: stretch;
+  padding: 8px 10px;
 }
 
 .preset-main {
@@ -3468,7 +3527,7 @@ h1 {
 
 .preset-main strong {
   color: var(--text);
-  font-size: 15px;
+  font-size: 13px;
 }
 
 .preset-main em {
@@ -3490,11 +3549,11 @@ h1 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 8px;
-  margin: -4px 0 14px;
+  margin: -2px 0 10px;
 }
 
 .version-strip span {
-  min-height: 58px;
+  min-height: 48px;
   border: 1px solid rgba(59, 240, 193, 0.16);
   background: rgba(59, 240, 193, 0.035);
   padding: 8px 10px;
@@ -3528,7 +3587,7 @@ h1 {
 
 .text-action {
   width: 100%;
-  min-height: 36px;
+  min-height: 30px;
   border: 0;
   border-top: 1px solid rgba(59, 240, 193, 0.14);
   background: transparent;
@@ -3537,7 +3596,7 @@ h1 {
   align-items: center;
   justify-content: flex-start;
   gap: 8px;
-  padding: 12px 0 0;
+  padding: 9px 0 0;
   cursor: pointer;
   transition: color 160ms ease;
 }
@@ -3551,15 +3610,15 @@ h1 {
 }
 
 .ghost.compact {
-  min-height: 32px;
-  padding: 0 10px;
-  font-size: 13px;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
 }
 
 .primary.compact {
-  min-height: 32px;
-  padding: 0 11px;
-  font-size: 13px;
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
 }
 
 .editor-action-strip {
@@ -3568,7 +3627,7 @@ h1 {
   align-items: center;
   gap: 12px;
   padding: 8px 10px;
-  margin: -4px 0 12px;
+  margin: -2px 0 10px;
   border: 1px solid rgba(255, 255, 255, 0.07);
   background: rgba(255, 255, 255, 0.018);
   color: var(--muted);
@@ -3582,12 +3641,12 @@ h1 {
 }
 
 .template-banner {
-  margin: -4px 0 16px;
-  padding: 10px 12px;
+  margin: -2px 0 10px;
+  padding: 8px 10px;
   border: 1px solid rgba(182, 255, 95, 0.26);
   color: var(--soft);
   background: rgba(182, 255, 95, 0.045);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .table-wrap {
