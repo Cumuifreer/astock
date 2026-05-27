@@ -27,6 +27,7 @@ def test_list_presets_normalizes_missing_new_fields(tmp_path):
     presets = StrategyService(db).list_presets()
     old = next(preset for preset in presets if preset["id"] == "custom-old")
 
+    assert old["config"]["signal_mode"] == "feature_driven"
     assert old["config"]["platform_range_basis"] == "high_low"
     assert old["config"]["platform_breakout_require_close_above"] is True
     assert old["config"]["platform_breakout_clearance_mode"] == "must"
@@ -41,17 +42,49 @@ def test_list_presets_normalizes_missing_new_fields(tmp_path):
     assert old["config"]["platform_macd_filter_mode"] == "score"
 
 
-def test_normalize_legacy_breakout_modes_to_unified_mode():
+def test_normalize_legacy_signal_modes_to_feature_driven_engine():
     breakout = normalize_strategy_config({"signal_mode": "breakout"})
     pullback = normalize_strategy_config({"signal_mode": "pullback"})
-    combined = normalize_strategy_config({"signal_mode": "breakout_or_pullback"})
+    trend = normalize_strategy_config({"signal_mode": "trend_resonance"})
 
-    assert breakout["signal_mode"] == "breakout_or_pullback"
+    assert breakout["signal_mode"] == "feature_driven"
     assert breakout["breakout_pullback_direction"] == "breakout"
-    assert pullback["signal_mode"] == "breakout_or_pullback"
+    assert pullback["signal_mode"] == "feature_driven"
     assert pullback["breakout_pullback_direction"] == "pullback"
-    assert combined["breakout_pullback_direction"] == "both"
-    assert normalize_strategy_config({"signal_mode": "trend_resonance"})["trend_ema_long_window"] == 60
+    assert trend["signal_mode"] == "feature_driven"
+    assert trend["trend_ema_long_window"] == 60
+    assert "signal_mode" in trend["migration"]["dropped_fields"]
+
+
+def test_normalize_drops_strategy_interactions_with_migration_warning():
+    normalized = normalize_strategy_config(
+        {
+            "signal_mode": "platform_breakout",
+            "min_price": 7.5,
+            "min_amount": 180_000_000,
+            "platform_breakout_clearance": 0.045,
+            "strategy_interactions": [
+                {
+                    "id": "hot-volume-confirm",
+                    "name": "题材放量确认",
+                    "conditions": [
+                        {"indicator_id": "topic_heat", "operator": "gte", "value": 70},
+                        {"indicator_id": "volume_ratio", "operator": "gte", "value": 2},
+                    ],
+                    "multiplier": 1.35,
+                }
+            ],
+        }
+    )
+
+    assert normalized["signal_mode"] == "feature_driven"
+    assert normalized["min_price"] == 7.5
+    assert normalized["min_amount"] == 180_000_000
+    assert normalized["platform_breakout_clearance"] == 0.045
+    assert normalized["strategy_interactions"] == []
+    assert "strategy_interactions" in normalized["migration"]["dropped_fields"]
+    assert any("组合倍率" in warning for warning in normalized["migration"]["warnings"])
+    assert "trend_resonance" not in normalized["analysis_engines"]
 
 
 def test_migrate_refreshes_system_template_config_without_resetting_user_default(tmp_path):
@@ -113,7 +146,7 @@ def test_delete_preset_soft_deletes_and_hides_from_lists(tmp_path):
     assert deleted[0]["is_default"] is False
     assert preset["id"] not in [row["id"] for row in service.list_presets()]
     assert service.get_preset(preset["id"]) is None
-    assert service.default_config()["signal_mode"] == "breakout_or_pullback"
+    assert service.default_config()["signal_mode"] == "feature_driven"
 
 
 def test_list_presets_ignores_rows_deleted_before_migration(tmp_path):
@@ -250,7 +283,7 @@ def test_save_preset_preserves_signal_profile_rules(tmp_path):
     assert saved_profile["rule_groups"][0]["rules"][0]["editable"] is True
 
 
-def test_normalize_strategy_config_infers_analysis_engines_from_rules_and_interactions():
+def test_normalize_strategy_config_ignores_interactions_when_inferring_analysis_engines():
     normalized = normalize_strategy_config(
         {
             "signal_mode": "breakout_or_pullback",
@@ -277,8 +310,9 @@ def test_normalize_strategy_config_infers_analysis_engines_from_rules_and_intera
     )
 
     assert "platform_setup" in normalized["analysis_engines"]
-    assert "trend_resonance" in normalized["analysis_engines"]
-    assert normalized["strategy_interactions"][0]["multiplier"] == 1.6
+    assert "trend_resonance" not in normalized["analysis_engines"]
+    assert normalized["strategy_interactions"] == []
+    assert "strategy_interactions" in normalized["migration"]["dropped_fields"]
 
 
 def test_migrate_backfills_initial_version_for_existing_custom_presets(tmp_path, monkeypatch):

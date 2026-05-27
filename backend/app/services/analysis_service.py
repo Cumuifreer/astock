@@ -534,13 +534,20 @@ def apply_strategy_filters(
     working = _apply_theme_filters(working, strategy, funnel)
     working = _apply_strategy_rule_filters(working, strategy, funnel)
 
+    feature_engines = _feature_engines(strategy)
+
     if strategy.get("analysis_mode") == "score":
-        if strategy.get("signal_mode") == "platform_breakout":
+        if "platform_breakout" in feature_engines:
             working = _apply_platform_breakout_filters(working, strategy, funnel)
             if working.empty:
                 zero_reason = _zero_reason(funnel)
                 return [], funnel, zero_reason
-        if strategy.get("signal_mode") == "trend_resonance":
+        if "platform_setup" in feature_engines:
+            working = _apply_platform_setup_filters(working, strategy, funnel)
+            if working.empty:
+                zero_reason = _zero_reason(funnel)
+                return [], funnel, zero_reason
+        if "trend_resonance" in feature_engines:
             working = _apply_trend_resonance_filters(working, strategy, funnel)
             if working.empty:
                 zero_reason = _zero_reason(funnel)
@@ -552,7 +559,7 @@ def apply_strategy_filters(
             score_mode=True,
         )
 
-    if strategy.get("trend_filter") == "ma_short_above_long" and strategy.get("signal_mode") != "trend_resonance":
+    if strategy.get("trend_filter") == "ma_short_above_long" and "trend_resonance" not in feature_engines:
         before = len(working)
         working = working[
             pd.to_numeric(working.get("ma_short"), errors="coerce")
@@ -590,7 +597,7 @@ def apply_strategy_filters(
         funnel,
     )
     working = _numeric_filter(working, "amplitude", None, strategy.get("max_amplitude"), "振幅", funnel)
-    if strategy.get("signal_mode") != "platform_setup":
+    if "platform_setup" not in feature_engines:
         working = _numeric_filter(
             working,
             "volume_ratio",
@@ -607,11 +614,11 @@ def apply_strategy_filters(
         "均线偏离",
         funnel,
     )
-    if strategy.get("signal_mode") == "platform_breakout":
+    if "platform_breakout" in feature_engines:
         working = _apply_platform_breakout_filters(working, strategy, funnel)
-    if strategy.get("signal_mode") == "platform_setup":
+    if "platform_setup" in feature_engines:
         working = _apply_platform_setup_filters(working, strategy, funnel)
-    if strategy.get("signal_mode") == "trend_resonance":
+    if "trend_resonance" in feature_engines:
         working = _apply_trend_resonance_filters(working, strategy, funnel)
 
     if working.empty:
@@ -841,27 +848,6 @@ def _strategy_rule_matches_row(row: Dict[str, Any], rule: Dict[str, Any], action
         return False
     series = pd.Series([row.get(column)])
     return bool(_strategy_rule_mask(series, rule).iloc[0])
-
-
-def _strategy_interaction_matches_row(row: Dict[str, Any], interaction: Dict[str, Any]) -> bool:
-    if not interaction.get("enabled", True):
-        return False
-    conditions = interaction.get("conditions") or []
-    if len(conditions) < 2:
-        return False
-    return all(_strategy_rule_matches_row(row, condition, "interaction") for condition in conditions)
-
-
-def _strategy_interaction_multiplier(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
-    multiplier = 1.0
-    for interaction in strategy.get("strategy_interactions") or []:
-        if not _strategy_interaction_matches_row(row, interaction):
-            continue
-        value = safe_float(interaction.get("multiplier"))
-        if value is None:
-            value = 1.0
-        multiplier *= float(value)
-    return round(max(0.5, min(1.6, multiplier)), 2)
 
 
 def _strategy_rule_score_adjustment(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
@@ -1197,6 +1183,14 @@ def _condition_mode(strategy: Dict[str, Any], key: str, default: str) -> str:
     return default
 
 
+def _feature_engines(strategy: Dict[str, Any]) -> set[str]:
+    return {
+        str(engine)
+        for engine in (strategy.get("analysis_engines") or [])
+        if str(engine) in {"platform_breakout", "platform_setup", "trend_resonance"}
+    }
+
+
 def _theme_score_bonus(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
     bonus = 0.0
     topic_count = safe_float(row.get("topic_count"))
@@ -1215,13 +1209,14 @@ def _theme_score_bonus(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
 
 
 def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
-    if strategy.get("signal_mode") == "platform_setup":
+    feature_engines = _feature_engines(strategy)
+    if "platform_setup" in feature_engines:
         return "平台临界"
-    if strategy.get("signal_mode") == "platform_breakout":
+    if "platform_breakout" in feature_engines:
         if strategy.get("analysis_mode") == "score":
             return "平台突破观察"
         return "平台突破"
-    if strategy.get("signal_mode") == "trend_resonance":
+    if "trend_resonance" in feature_engines:
         return str(row.get("trend_signal_label") or "趋势共振")
     distance = safe_float(row.get("ma_distance"))
     volume_ratio = safe_float(row.get("volume_ratio")) or 0
@@ -1239,13 +1234,14 @@ def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
 
 def _with_strategy_rule_adjustment(score: float, row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
     adjusted = max(score + _strategy_rule_score_adjustment(row, strategy), 0)
-    return round(max(adjusted * _strategy_interaction_multiplier(row, strategy), 0), 2)
+    return round(adjusted, 2)
 
 
 def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
+    feature_engines = _feature_engines(strategy)
     rps = safe_float(row.get(f"rps{int(strategy.get('rps_window') or 20)}")) or safe_float(row.get("rps20")) or 0
     theme_bonus = _theme_score_bonus(row, strategy)
-    if strategy.get("signal_mode") == "platform_setup":
+    if "platform_setup" in feature_engines:
         setup_range = safe_float(row.get("platform_setup_range"))
         distance_to_high = safe_float(row.get("platform_setup_distance_to_high"))
         recent_gain = safe_float(row.get("platform_setup_recent_gain_5d"))
@@ -1305,7 +1301,7 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
         if ma_convergence is not None and ma_convergence <= max_ma_convergence and row.get("platform_setup_ma_turning_up"):
             score += 5
         return _with_strategy_rule_adjustment(score + theme_bonus, row, strategy)
-    if strategy.get("signal_mode") == "platform_breakout":
+    if "platform_breakout" in feature_engines:
         platform_range = safe_float(row.get("platform_range"))
         bullish_ratio = safe_float(row.get("platform_bullish_ratio"))
         bull_volume_ratio = safe_float(row.get("platform_bull_volume_ratio"))
@@ -1411,7 +1407,7 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
         if ma_rising_mode != "off" and row.get("platform_ma_rising") and macd_bonus > 0:
             score += 4
         return _with_strategy_rule_adjustment(score + theme_bonus, row, strategy)
-    if strategy.get("signal_mode") == "trend_resonance":
+    if "trend_resonance" in feature_engines:
         score = float(rps) * 0.38
         if row.get("trend_price_above_ema_long"):
             score += 10
@@ -1465,7 +1461,7 @@ def _signal_score(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
 
 
 def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, float]:
-    mode = strategy.get("signal_mode")
+    feature_engines = _feature_engines(strategy)
     rps = safe_float(row.get(f"rps{int(strategy.get('rps_window') or 20)}")) or safe_float(row.get("rps20")) or 0.0
     amount = safe_float(row.get("amount")) or 0.0
     min_amount = safe_float(strategy.get("min_amount")) or 0.0
@@ -1495,7 +1491,7 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
     risk = 0.0
     theme = max(_theme_score_bonus(row, strategy), 0.0)
 
-    if mode == "platform_breakout":
+    if "platform_breakout" in feature_engines:
         platform_range = safe_float(row.get("platform_range"))
         breakout_clearance = safe_float(row.get("platform_breakout_clearance"))
         breakout_volume = safe_float(row.get("platform_breakout_volume_ratio"))
@@ -1539,7 +1535,7 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
         if row.get("platform_ma_rising"):
             trend += 6
 
-    elif mode == "platform_setup":
+    elif "platform_setup" in feature_engines:
         setup_range = safe_float(row.get("platform_setup_range"))
         distance_to_high = safe_float(row.get("platform_setup_distance_to_high"))
         volume_contraction = safe_float(row.get("platform_setup_volume_contraction"))
@@ -1569,7 +1565,7 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
         if row.get("platform_setup_ma_turning_up"):
             trend += 6
 
-    elif mode == "trend_resonance":
+    elif "trend_resonance" in feature_engines:
         if row.get("trend_price_above_ema_long"):
             trend += 8
         if row.get("trend_ema_long_rising"):
@@ -1615,12 +1611,12 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
         "freshness": round(max(freshness, 0.0), 2),
         "risk": round(-max(risk, 0.0), 2),
         "custom_rules": _strategy_rule_score_adjustment(row, strategy),
-        "custom_multiplier": _strategy_interaction_multiplier(row, strategy),
     }
 
 
 def _freshness_metrics(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str, Optional[float]]:
-    if strategy.get("signal_mode") == "platform_setup":
+    feature_engines = _feature_engines(strategy)
+    if "platform_setup" in feature_engines:
         distance = safe_float(row.get("platform_setup_distance_to_high"))
         return {
             "first_breakout_days": None,
@@ -1630,7 +1626,7 @@ def _freshness_metrics(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[st
             "recent_gain_5d": _round_optional(safe_float(row.get("platform_setup_recent_gain_5d")), 6),
             "ma_distance": _round_optional(safe_float(row.get("ma_distance")), 6),
         }
-    if strategy.get("signal_mode") == "platform_breakout":
+    if "platform_breakout" in feature_engines:
         clearance = safe_float(row.get("platform_breakout_clearance"))
         first_breakout_days = safe_float(row.get("platform_first_breakout_days"))
         if first_breakout_days is None and row.get("platform_first_breakout"):
@@ -1643,7 +1639,7 @@ def _freshness_metrics(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[st
             "recent_gain_5d": _round_optional(safe_float(row.get("platform_recent_gain_5d")), 6),
             "ma_distance": _round_optional(safe_float(row.get("ma_distance")), 6),
         }
-    if strategy.get("signal_mode") == "trend_resonance":
+    if "trend_resonance" in feature_engines:
         return {
             "first_breakout_days": None,
             "days_above_platform": None,
@@ -1680,13 +1676,13 @@ def _candidate_interpretation(row: Dict[str, Any], strategy: Dict[str, Any]) -> 
 
 
 def _freshness_label(row: Dict[str, Any], strategy: Dict[str, Any], freshness: Dict[str, Any]) -> str:
-    mode = strategy.get("signal_mode")
-    if mode == "platform_setup":
+    feature_engines = _feature_engines(strategy)
+    if "platform_setup" in feature_engines:
         distance = safe_float(freshness.get("distance_to_platform_upper"))
         if distance is not None and distance <= 0.02:
             return "临界贴近"
         return "临界观察"
-    if mode == "platform_breakout":
+    if "platform_breakout" in feature_engines:
         first_days = safe_float(freshness.get("first_breakout_days"))
         days_above = safe_float(freshness.get("days_above_platform"))
         clearance = safe_float(freshness.get("breakout_clearance"))
@@ -1703,7 +1699,7 @@ def _freshness_label(row: Dict[str, Any], strategy: Dict[str, Any], freshness: D
         ):
             return "已走远"
         return "突破延续"
-    if mode == "trend_resonance":
+    if "trend_resonance" in feature_engines:
         recent_gain = safe_float(freshness.get("recent_gain_5d"))
         if recent_gain is not None and recent_gain > 0.2:
             return "强势后段"
@@ -1799,6 +1795,7 @@ def _band_score(value: float, lower: float, upper: float, score: float) -> float
 
 def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[str]:
     reasons = []
+    feature_engines = _feature_engines(strategy)
     amount = safe_float(row.get("amount"))
     if amount is not None:
         reasons.append(f"成交额 {amount / 100_000_000:.2f} 亿")
@@ -1817,7 +1814,7 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
         reasons.append(f"换手率 {turnover:.2f}%")
     if safe_float(row.get("float_market_value")) is None:
         reasons.append("流通市值缺失，按策略降级")
-    if strategy.get("signal_mode") == "platform_setup":
+    if "platform_setup" in feature_engines:
         setup_range = safe_float(row.get("platform_setup_range"))
         if setup_range is not None:
             reasons.append(f"平台振幅 {setup_range * 100:.2f}%")
@@ -1838,7 +1835,7 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
             reasons.append(f"均线粘合 {ma_convergence * 100:.2f}%")
         if row.get("platform_setup_ma_turning_up"):
             reasons.append("MA5 拐头")
-    if strategy.get("signal_mode") == "platform_breakout":
+    if "platform_breakout" in feature_engines:
         platform_range = safe_float(row.get("platform_range"))
         if platform_range is not None:
             reasons.append(f"平台振幅 {platform_range * 100:.2f}%")
@@ -1860,7 +1857,7 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
         macd_dif = safe_float(row.get("macd_dif"))
         if macd_dif is not None and macd_dif > 0:
             reasons.append("MACD 位于 0 轴上方")
-    if strategy.get("signal_mode") == "trend_resonance":
+    if "trend_resonance" in feature_engines:
         ema_fast = safe_float(row.get("trend_ema_fast"))
         ema_mid = safe_float(row.get("trend_ema_mid"))
         ema_long = safe_float(row.get("trend_ema_long"))
@@ -2134,7 +2131,210 @@ class AnalysisService:
                     **platform_metrics,
                 }
             )
-        return self._enrich_theme_metrics(pd.DataFrame(output), target_date)
+        frame = self._enrich_tushare_features(pd.DataFrame(output), target_date)
+        return self._enrich_theme_metrics(frame, target_date)
+
+    def _enrich_tushare_features(self, frame: pd.DataFrame, as_of_date: Optional[date] = None) -> pd.DataFrame:
+        if frame.empty or "code" not in frame:
+            return frame
+        enriched = frame.copy()
+        if "feature_dates" not in enriched.columns:
+            enriched["feature_dates"] = [{} for _ in range(len(enriched))]
+        daily_basic = _records_by_code(self._latest_tushare_rows("tushare_daily_basic", as_of_date))
+        moneyflow = _records_by_code(self._latest_tushare_rows("tushare_moneyflow", as_of_date))
+        limits = _records_by_code(self._latest_tushare_rows("tushare_limit_list_d", as_of_date))
+        cyq_perf = _records_by_code(self._latest_tushare_rows("tushare_cyq_perf", as_of_date))
+        top_list = _records_by_code(self._latest_top_list_rows(as_of_date))
+        top_inst = _records_by_code(self._latest_sum_rows("tushare_top_inst", "net_buy", "top_inst_net_buy", as_of_date))
+        hot_money = _records_by_code(self._latest_sum_rows("tushare_hm_detail", "net_amount", "hot_money_net_amount", as_of_date))
+        chips = _records_by_code(self._latest_chip_rows(as_of_date))
+
+        for index, row in enriched.iterrows():
+            code = str(row.get("code"))
+            sources = dict(row.get("data_sources") or {})
+            feature_dates = dict(row.get("feature_dates") or {})
+
+            daily = daily_basic.get(code)
+            if daily:
+                _assign_first_number(enriched, index, "turnover_rate", daily.get("turnover_rate"))
+                _assign_first_number(enriched, index, "volume_ratio", daily.get("volume_ratio"))
+                _assign_first_number(enriched, index, "float_market_value", daily.get("circ_mv"))
+                _assign_first_number(enriched, index, "total_market_value", daily.get("total_mv"))
+                _assign_first_number(enriched, index, "pe", daily.get("pe"))
+                _assign_first_number(enriched, index, "pb", daily.get("pb"))
+                sources["daily_basic"] = daily.get("source") or "Tushare daily_basic"
+                feature_dates["daily_basic"] = _date_text(daily.get("trade_date"))
+
+            flow = moneyflow.get(code)
+            if flow:
+                _assign_first_number(enriched, index, "main_net_amount", flow.get("main_net_amount"))
+                _assign_first_number(enriched, index, "net_mf_amount", flow.get("net_mf_amount"))
+                large = _subtract_optional(flow.get("buy_lg_amount"), flow.get("sell_lg_amount"))
+                super_large = _subtract_optional(flow.get("buy_elg_amount"), flow.get("sell_elg_amount"))
+                medium = _subtract_optional(flow.get("buy_md_amount"), flow.get("sell_md_amount"))
+                small = _subtract_optional(flow.get("buy_sm_amount"), flow.get("sell_sm_amount"))
+                _assign_first_number(enriched, index, "large_net_amount", large)
+                _assign_first_number(enriched, index, "super_large_net_amount", super_large)
+                _assign_first_number(enriched, index, "medium_net_amount", medium)
+                _assign_first_number(enriched, index, "small_net_amount", small)
+                amount = safe_float(row.get("amount"))
+                main = safe_float(flow.get("main_net_amount"))
+                if main is not None and amount is not None and amount > 0:
+                    enriched.at[index, "main_net_amount_ratio"] = _round_optional(main / amount, 6)
+                sources["moneyflow"] = flow.get("source") or "Tushare moneyflow"
+                feature_dates["moneyflow"] = _date_text(flow.get("trade_date"))
+
+            limit_row = limits.get(code)
+            if limit_row:
+                enriched.at[index, "limit_type"] = limit_row.get("limit_type")
+                _assign_first_number(enriched, index, "limit_open_times", limit_row.get("open_times"))
+                _assign_first_number(enriched, index, "limit_fd_amount", limit_row.get("fd_amount"))
+                fd_amount = safe_float(limit_row.get("fd_amount"))
+                float_mv = safe_float(enriched.at[index, "float_market_value"]) if "float_market_value" in enriched else None
+                if fd_amount is not None and float_mv is not None and float_mv > 0:
+                    enriched.at[index, "limit_fd_mv_ratio"] = _round_optional(fd_amount / float_mv, 6)
+                sources["limit_event"] = limit_row.get("source") or "Tushare limit_list_d"
+                feature_dates["limit_event"] = _date_text(limit_row.get("trade_date"))
+
+            cyq = cyq_perf.get(code)
+            if cyq:
+                _assign_first_number(enriched, index, "cyq_winner_rate", cyq.get("winner_rate"))
+                _assign_first_number(enriched, index, "cost_15pct", cyq.get("cost_15pct"))
+                _assign_first_number(enriched, index, "cost_50pct", cyq.get("cost_50pct"))
+                _assign_first_number(enriched, index, "cost_85pct", cyq.get("cost_85pct"))
+                latest_price = safe_float(row.get("latest_price"))
+                cost_50 = safe_float(cyq.get("cost_50pct"))
+                cost_15 = safe_float(cyq.get("cost_15pct"))
+                cost_85 = safe_float(cyq.get("cost_85pct"))
+                if latest_price is not None and cost_50 is not None and cost_50 > 0:
+                    enriched.at[index, "price_to_cost_50pct"] = _round_optional((latest_price - cost_50) / cost_50, 6)
+                if cost_15 is not None and cost_85 is not None and cost_50 is not None and cost_50 > 0:
+                    enriched.at[index, "cost_width_15_85"] = _round_optional((cost_85 - cost_15) / cost_50, 6)
+                sources["cyq_perf"] = cyq.get("source") or "Tushare cyq_perf"
+                feature_dates["cyq_perf"] = _date_text(cyq.get("trade_date"))
+
+            chip = chips.get(code)
+            if chip:
+                _assign_first_number(enriched, index, "cyq_chip_peak_percent", chip.get("cyq_chip_peak_percent"))
+                _assign_first_number(enriched, index, "cyq_chip_price_span", chip.get("cyq_chip_price_span"))
+                sources["cyq_chips"] = chip.get("source") or "Tushare cyq_chips"
+                feature_dates["cyq_chips"] = _date_text(chip.get("trade_date"))
+
+            top = top_list.get(code)
+            if top:
+                _assign_first_number(enriched, index, "top_list_net_amount", top.get("top_list_net_amount"))
+                _assign_first_number(enriched, index, "top_list_amount_rate", top.get("top_list_amount_rate"))
+                enriched.at[index, "top_list_reason"] = top.get("top_list_reason")
+                sources["top_list"] = top.get("source") or "Tushare top_list"
+                feature_dates["top_list"] = _date_text(top.get("trade_date"))
+
+            inst = top_inst.get(code)
+            if inst:
+                _assign_first_number(enriched, index, "top_inst_net_buy", inst.get("top_inst_net_buy"))
+                sources["top_inst"] = inst.get("source") or "Tushare top_inst"
+                feature_dates["top_inst"] = _date_text(inst.get("trade_date"))
+
+            hot = hot_money.get(code)
+            if hot:
+                _assign_first_number(enriched, index, "hot_money_net_amount", hot.get("hot_money_net_amount"))
+                sources["hot_money"] = hot.get("source") or "Tushare hm_detail"
+                feature_dates["hot_money"] = _date_text(hot.get("trade_date"))
+
+            enriched.at[index, "data_sources"] = sources
+            enriched.at[index, "feature_dates"] = feature_dates
+        return enriched
+
+    def _latest_tushare_rows(self, table: str, as_of_date: Optional[date] = None) -> List[Dict[str, Any]]:
+        where = "WHERE trade_date <= ?" if as_of_date else ""
+        params: List[Any] = [as_of_date] if as_of_date else []
+        return self.db.query(
+            f"""
+            SELECT *
+            FROM (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY code ORDER BY trade_date DESC) AS row_num
+                FROM {table}
+                {where}
+            )
+            WHERE row_num = 1
+            """,
+            params,
+        )
+
+    def _latest_sum_rows(
+        self,
+        table: str,
+        value_column: str,
+        output_column: str,
+        as_of_date: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        where = "WHERE trade_date <= ?" if as_of_date else ""
+        params: List[Any] = [as_of_date] if as_of_date else []
+        return self.db.query(
+            f"""
+            WITH latest AS (
+                SELECT code, MAX(trade_date) AS trade_date
+                FROM {table}
+                {where}
+                GROUP BY code
+            )
+            SELECT t.code,
+                   t.trade_date,
+                   SUM(t.{value_column}) AS {output_column},
+                   MAX(t.source) AS source
+            FROM {table} t
+            JOIN latest l ON l.code = t.code AND l.trade_date = t.trade_date
+            GROUP BY t.code, t.trade_date
+            """,
+            params,
+        )
+
+    def _latest_top_list_rows(self, as_of_date: Optional[date] = None) -> List[Dict[str, Any]]:
+        where = "WHERE trade_date <= ?" if as_of_date else ""
+        params: List[Any] = [as_of_date] if as_of_date else []
+        return self.db.query(
+            f"""
+            WITH latest AS (
+                SELECT code, MAX(trade_date) AS trade_date
+                FROM tushare_top_list
+                {where}
+                GROUP BY code
+            )
+            SELECT t.code,
+                   t.trade_date,
+                   SUM(t.net_amount) AS top_list_net_amount,
+                   MAX(t.amount_rate) AS top_list_amount_rate,
+                   string_agg(COALESCE(t.reason, ''), ' / ') AS top_list_reason,
+                   MAX(t.source) AS source
+            FROM tushare_top_list t
+            JOIN latest l ON l.code = t.code AND l.trade_date = t.trade_date
+            GROUP BY t.code, t.trade_date
+            """,
+            params,
+        )
+
+    def _latest_chip_rows(self, as_of_date: Optional[date] = None) -> List[Dict[str, Any]]:
+        where = "WHERE trade_date <= ?" if as_of_date else ""
+        params: List[Any] = [as_of_date] if as_of_date else []
+        return self.db.query(
+            f"""
+            WITH latest AS (
+                SELECT code, MAX(trade_date) AS trade_date
+                FROM tushare_cyq_chips
+                {where}
+                GROUP BY code
+            )
+            SELECT c.code,
+                   c.trade_date,
+                   MAX(c.percent) AS cyq_chip_peak_percent,
+                   MAX(c.price) - MIN(c.price) AS cyq_chip_price_span,
+                   MAX(c.source) AS source
+            FROM tushare_cyq_chips c
+            JOIN latest l ON l.code = c.code AND l.trade_date = c.trade_date
+            GROUP BY c.code, c.trade_date
+            """,
+            params,
+        )
 
     def _enrich_theme_metrics(self, frame: pd.DataFrame, as_of_date: Optional[date] = None) -> pd.DataFrame:
         if frame.empty or "code" not in frame:
@@ -2290,6 +2490,29 @@ def _first_number(*values: Any) -> Optional[float]:
         if parsed is not None:
             return parsed
     return None
+
+
+def _assign_first_number(frame: pd.DataFrame, index: Any, column: str, value: Any) -> None:
+    parsed = safe_float(value)
+    if parsed is not None:
+        frame.at[index, column] = parsed
+
+
+def _subtract_optional(left: Any, right: Any) -> Optional[float]:
+    left_value = safe_float(left)
+    right_value = safe_float(right)
+    if left_value is None or right_value is None:
+        return None
+    return left_value - right_value
+
+
+def _records_by_code(rows: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    return {str(row.get("code")): row for row in rows if row.get("code")}
+
+
+def _date_text(value: Any) -> Optional[str]:
+    parsed = _date_value(value)
+    return parsed.isoformat() if parsed else None
 
 
 def _jsonable(row: Dict[str, Any]) -> Dict[str, Any]:

@@ -200,3 +200,190 @@ def test_analysis_frame_enriches_theme_metrics(tmp_path):
     assert row["concept_count"] == 1
     assert row["theme_limit_count"] == 1
     assert row["topic_heat"] > 0
+
+
+def test_analysis_frame_enriches_tushare_feature_parameters(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "historical_bars",
+        [
+            {
+                "code": "000001.SZ",
+                "date": "2026-05-18",
+                "open": 9.8,
+                "high": 10.1,
+                "low": 9.7,
+                "close": 10.0,
+                "prev_close": 9.8,
+                "volume": 1000.0,
+                "amount": 10_000.0,
+                "turn": 2.0,
+                "pct_chg": 2.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Tushare daily",
+                "updated_at": "2026-05-18T15:00:00",
+            },
+            {
+                "code": "000001.SZ",
+                "date": "2026-05-19",
+                "open": 10.0,
+                "high": 10.8,
+                "low": 9.9,
+                "close": 10.5,
+                "prev_close": 10.0,
+                "volume": 1800.0,
+                "amount": 18_900.0,
+                "turn": 3.0,
+                "pct_chg": 5.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Tushare daily",
+                "updated_at": "2026-05-19T15:00:00",
+            },
+        ],
+        ["code", "date"],
+    )
+    db.upsert(
+        "tushare_daily_basic",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": "2026-05-19",
+                "turnover_rate": 3.6,
+                "volume_ratio": 1.8,
+                "circ_mv": 12_000_000_000.0,
+                "total_mv": 18_000_000_000.0,
+                "source": "Tushare daily_basic",
+                "updated_at": "2026-05-19T17:00:00",
+            }
+        ],
+        ["code", "trade_date"],
+    )
+    db.upsert(
+        "tushare_moneyflow",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": "2026-05-19",
+                "buy_lg_amount": 800_000.0,
+                "sell_lg_amount": 300_000.0,
+                "buy_elg_amount": 1_000_000.0,
+                "sell_elg_amount": 400_000.0,
+                "main_net_amount": 1_100_000.0,
+                "net_mf_amount": 900_000.0,
+                "source": "Tushare moneyflow",
+                "updated_at": "2026-05-19T17:00:00",
+            }
+        ],
+        ["code", "trade_date"],
+    )
+    db.upsert(
+        "tushare_limit_list_d",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": "2026-05-19",
+                "name": "平安银行",
+                "close": 10.5,
+                "pct_chg": 10.0,
+                "limit_type": "U",
+                "fd_amount": 240_000_000.0,
+                "open_times": 1,
+                "source": "Tushare limit_list_d",
+                "updated_at": "2026-05-19T17:00:00",
+            }
+        ],
+        ["code", "trade_date"],
+    )
+    db.upsert(
+        "tushare_cyq_perf",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": "2026-05-19",
+                "winner_rate": 0.62,
+                "cost_15pct": 9.2,
+                "cost_50pct": 10.0,
+                "cost_85pct": 11.5,
+                "source": "Tushare cyq_perf",
+                "updated_at": "2026-05-19T17:00:00",
+            }
+        ],
+        ["code", "trade_date"],
+    )
+    db.upsert(
+        "tushare_cyq_chips",
+        [
+            {"code": "000001.SZ", "trade_date": "2026-05-19", "price": 9.5, "percent": 0.2, "source": "Tushare cyq_chips", "updated_at": "2026-05-19T17:00:00"},
+            {"code": "000001.SZ", "trade_date": "2026-05-19", "price": 10.2, "percent": 0.35, "source": "Tushare cyq_chips", "updated_at": "2026-05-19T17:00:00"},
+        ],
+        ["code", "trade_date", "price"],
+    )
+    db.upsert(
+        "tushare_top_list",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": "2026-05-19",
+                "name": "平安银行",
+                "net_amount": 8_000_000.0,
+                "amount_rate": 2.5,
+                "reason": "日涨幅偏离值达7%",
+                "source": "Tushare top_list",
+                "updated_at": "2026-05-19T17:00:00",
+            }
+        ],
+        ["code", "trade_date", "reason"],
+    )
+    db.upsert(
+        "tushare_top_inst",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": "2026-05-19",
+                "exalter": "机构专用",
+                "net_buy": 3_000_000.0,
+                "source": "Tushare top_inst",
+                "updated_at": "2026-05-19T17:00:00",
+            }
+        ],
+        ["code", "trade_date", "exalter"],
+    )
+    db.upsert(
+        "tushare_hm_detail",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": "2026-05-19",
+                "name": "平安银行",
+                "hm_name": "测试席位",
+                "net_amount": 2_000_000.0,
+                "source": "Tushare hm_detail",
+                "updated_at": "2026-05-19T17:00:00",
+            }
+        ],
+        ["code", "trade_date", "hm_name"],
+    )
+
+    frame = AnalysisService(db)._build_analysis_frame(DEFAULT_STRATEGY_CONFIG)
+    row = frame[frame["code"] == "000001.SZ"].iloc[0]
+
+    assert row["turnover_rate"] == 3.6
+    assert row["volume_ratio"] == 1.8
+    assert row["float_market_value"] == 12_000_000_000.0
+    assert row["main_net_amount"] == 1_100_000.0
+    assert row["large_net_amount"] == 500_000.0
+    assert row["super_large_net_amount"] == 600_000.0
+    assert row["limit_type"] == "U"
+    assert row["limit_open_times"] == 1
+    assert row["limit_fd_mv_ratio"] == 0.02
+    assert row["cyq_winner_rate"] == 0.62
+    assert row["price_to_cost_50pct"] == 0.05
+    assert row["cyq_chip_peak_percent"] == 0.35
+    assert row["top_list_net_amount"] == 8_000_000.0
+    assert row["top_inst_net_buy"] == 3_000_000.0
+    assert row["hot_money_net_amount"] == 2_000_000.0
+    assert row["data_sources"]["moneyflow"] == "Tushare moneyflow"
+    assert row["feature_dates"]["moneyflow"] == "2026-05-19"

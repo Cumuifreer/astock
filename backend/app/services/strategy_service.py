@@ -11,6 +11,8 @@ import duckdb
 from backend.app.db import Database
 
 
+FEATURE_DRIVEN_SIGNAL_MODE = "feature_driven"
+
 DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "min_price": 4.0,
     "min_amount": 80_000_000,
@@ -20,7 +22,7 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "ma_long_window": 60,
     "trend_filter": "ma_short_above_long",
     "analysis_mode": "strict",
-    "signal_mode": "breakout_or_pullback",
+    "signal_mode": FEATURE_DRIVEN_SIGNAL_MODE,
     "breakout_pullback_direction": "both",
     "breakout_lookback": 20,
     "pullback_tolerance": 0.035,
@@ -110,7 +112,15 @@ RULE_ACTIONS = {"filter", "score", "risk", "display"}
 RULE_OPERATORS = {"gte", "lte", "gt", "lt", "between", "eq", "neq", "is_true", "recent"}
 RULE_MISSING_POLICIES = {"skip", "keep", "neutral", "allow"}
 ANALYSIS_ENGINES = ("platform_breakout", "platform_setup", "trend_resonance")
-LEGACY_SIGNAL_MODE_ENGINES = {
+LEGACY_SIGNAL_MODES = {
+    "breakout",
+    "pullback",
+    "breakout_or_pullback",
+    "platform_breakout",
+    "platform_setup",
+    "trend_resonance",
+}
+LEGACY_SIGNAL_MODE_FEATURE_GROUPS = {
     "platform_breakout": "platform_breakout",
     "platform_setup": "platform_setup",
     "trend_resonance": "trend_resonance",
@@ -261,20 +271,15 @@ def _normalize_analysis_engines(value: Any) -> List[str]:
     return [str(item) for item in value if str(item) in ANALYSIS_ENGINES]
 
 
-def _infer_analysis_engines(strategy: Dict[str, Any]) -> List[str]:
+def _infer_analysis_engines(strategy: Dict[str, Any], legacy_signal_mode: Any = None) -> List[str]:
     engines = set(_normalize_analysis_engines(strategy.get("analysis_engines")))
-    legacy_engine = LEGACY_SIGNAL_MODE_ENGINES.get(str(strategy.get("signal_mode") or ""))
+    legacy_engine = LEGACY_SIGNAL_MODE_FEATURE_GROUPS.get(str(legacy_signal_mode or ""))
     if legacy_engine:
         engines.add(legacy_engine)
     for rule in strategy.get("strategy_rules") or []:
         engine = _engine_for_indicator(str(rule.get("indicator_id") or ""))
         if engine:
             engines.add(engine)
-    for interaction in strategy.get("strategy_interactions") or []:
-        for condition in interaction.get("conditions") or []:
-            engine = _engine_for_indicator(str(condition.get("indicator_id") or ""))
-            if engine:
-                engines.add(engine)
     return [engine for engine in ANALYSIS_ENGINES if engine in engines]
 
 
@@ -404,21 +409,20 @@ def insert_strategy_versions(db: Database, rows: List[Dict[str, Any]]) -> int:
 
 
 def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    merged = {**DEFAULT_STRATEGY_CONFIG, **(config or {})}
+    raw_config = config or {}
+    merged = {**DEFAULT_STRATEGY_CONFIG, **raw_config}
     merged["strategy_rules"] = _normalize_strategy_rules(merged.get("strategy_rules"))
-    merged["strategy_interactions"] = _normalize_strategy_interactions(merged.get("strategy_interactions"))
-    raw_signal_mode = merged.get("signal_mode")
+    migration = _migration_info(raw_config)
+    raw_signal_mode = raw_config.get("signal_mode")
     if raw_signal_mode in {"breakout", "pullback"}:
-        merged["signal_mode"] = "breakout_or_pullback"
-        if not (config or {}).get("breakout_pullback_direction"):
+        if not raw_config.get("breakout_pullback_direction"):
             merged["breakout_pullback_direction"] = str(raw_signal_mode)
-    if merged.get("signal_mode") not in {
-        "breakout_or_pullback",
-        "platform_breakout",
-        "platform_setup",
-        "trend_resonance",
-    }:
-        merged["signal_mode"] = "breakout_or_pullback"
+    merged["signal_mode"] = FEATURE_DRIVEN_SIGNAL_MODE
+    merged["strategy_interactions"] = []
+    if migration:
+        merged["migration"] = migration
+    elif isinstance(raw_config.get("migration"), dict):
+        merged["migration"] = raw_config["migration"]
     if merged.get("breakout_pullback_direction") not in {"both", "breakout", "pullback"}:
         merged["breakout_pullback_direction"] = "both"
     merged["ma_short_window"] = max(3, int(merged["ma_short_window"]))
@@ -477,8 +481,42 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
         merged["platform_setup_macd_mode"] = "dif_above_dea"
     if merged.get("analysis_mode") not in {"strict", "score"}:
         merged["analysis_mode"] = "strict"
-    merged["analysis_engines"] = _infer_analysis_engines(merged)
+    legacy_signal_for_engines = None if raw_config.get("version") == 2 else raw_signal_mode
+    merged["analysis_engines"] = _infer_analysis_engines(merged, legacy_signal_for_engines)
     return merged
+
+
+def _migration_info(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not config:
+        return None
+    preserved_fields = [
+        field
+        for field in config
+        if field in DEFAULT_STRATEGY_CONFIG
+        and field not in {"signal_mode", "strategy_interactions", "signal_profile"}
+    ]
+    dropped_fields: List[str] = []
+    warnings: List[str] = []
+    raw_signal_mode = config.get("signal_mode")
+    if raw_signal_mode and raw_signal_mode != FEATURE_DRIVEN_SIGNAL_MODE:
+        dropped_fields.append("signal_mode")
+        warnings.append("旧信号模式已转换为特征驱动策略；运行时不再按信号模式分支。")
+    if config.get("strategy_interactions"):
+        dropped_fields.append("strategy_interactions")
+        warnings.append("旧组合倍率已丢弃；新引擎使用显式评分和风险项，不再应用隐藏乘数。")
+    profile = config.get("signal_profile")
+    if isinstance(profile, dict) and profile.get("rule_groups"):
+        dropped_fields.append("signal_profile.rule_groups")
+        warnings.append("旧信号模板中的组合规则仅保留为迁移记录，不再参与执行。")
+    if not dropped_fields and not warnings:
+        return None
+    return {
+        "from_version": 1,
+        "migrated_at": datetime.utcnow().isoformat(timespec="seconds"),
+        "preserved_fields": sorted(set(preserved_fields)),
+        "dropped_fields": sorted(set(dropped_fields)),
+        "warnings": warnings,
+    }
 
 
 class StrategyService:
@@ -704,41 +742,33 @@ class StrategyService:
 
 
 def _config_hash(config: Dict[str, Any]) -> str:
-    canonical = json.dumps(normalize_strategy_config(config), ensure_ascii=False, sort_keys=True)
+    canonical = json.dumps(_config_for_hash(normalize_strategy_config(config)), ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
+
+
+def _config_for_hash(config: Dict[str, Any]) -> Dict[str, Any]:
+    stable = json.loads(json.dumps(config, ensure_ascii=False))
+    migration = stable.get("migration")
+    if isinstance(migration, dict):
+        migration.pop("migrated_at", None)
+    return stable
 
 
 def _strategy_summary(config: Dict[str, Any]) -> str:
     normalized = normalize_strategy_config(config)
-    mode_labels = {
-        "breakout_or_pullback": "突破回踩",
-        "platform_breakout": "平台突破",
-        "platform_setup": "平台临界",
-        "trend_resonance": "趋势共振",
-    }
-    mode = mode_labels.get(normalized.get("signal_mode"), "自定义")
-    if normalized.get("signal_mode") == "platform_setup":
-        return (
-            f"{mode} · {normalized['platform_setup_lookback_days']}日 · "
-            f"距上沿≤{_pct(normalized['platform_setup_max_distance_to_high'])}"
-        )
-    if normalized.get("signal_mode") == "platform_breakout":
-        return (
-            f"{mode} · {normalized['platform_lookback_days']}日 · "
-            f"区间≤{_pct(normalized['platform_max_range'])} · "
-            f"量比≥{normalized['platform_breakout_volume_ratio']:g}x"
-        )
-    if normalized.get("signal_mode") == "trend_resonance":
-        return (
-            f"{mode} · EMA{normalized['trend_ema_fast_window']}/"
-            f"{normalized['trend_ema_mid_window']}/"
-            f"{normalized['trend_ema_long_window']} · "
-            f"MACD {normalized['trend_macd_fast']}-{normalized['trend_macd_slow']}-{normalized['trend_macd_signal']}"
-        )
-    return (
-        f"{mode} · 成交额≥{_money(normalized['min_amount'])} · "
-        f"RPS{normalized['rps_window']} · MA{normalized['ma_short_window']}/{normalized['ma_long_window']}"
-    )
+    parts = [
+        "特征驱动",
+        f"成交额≥{_money(normalized['min_amount'])}",
+        f"RPS{normalized['rps_window']}",
+        f"MA{normalized['ma_short_window']}/{normalized['ma_long_window']}",
+    ]
+    if normalized.get("platform_setup_max_distance_to_high") != DEFAULT_STRATEGY_CONFIG["platform_setup_max_distance_to_high"]:
+        parts.append(f"距上沿≤{_pct(normalized['platform_setup_max_distance_to_high'])}")
+    if normalized.get("platform_breakout_clearance") != DEFAULT_STRATEGY_CONFIG["platform_breakout_clearance"]:
+        parts.append(f"突破≥{_pct(normalized['platform_breakout_clearance'])}")
+    if normalized.get("min_topic_heat") is not None:
+        parts.append(f"题材热度≥{normalized['min_topic_heat']:g}")
+    return " · ".join(parts)
 
 
 def _pct(value: Any) -> str:

@@ -206,6 +206,14 @@ export interface StrategyVersion {
   config: StrategyConfig;
 }
 
+export interface StrategyMigrationInfo {
+  from_version: number;
+  migrated_at: string;
+  preserved_fields: string[];
+  dropped_fields: string[];
+  warnings: string[];
+}
+
 export interface StrategyConfig {
   min_price: number;
   min_amount: number;
@@ -300,6 +308,7 @@ export interface StrategyConfig {
   strategy_rules: StrategyRule[];
   strategy_interactions?: StrategyInteraction[];
   signal_profile?: SignalModeTemplate | null;
+  migration?: StrategyMigrationInfo | null;
 }
 
 export interface Overview {

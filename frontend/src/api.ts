@@ -1,4 +1,4 @@
-import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, IndicatorLibrary, IntradayRadarConfig, IntradayRadarResult, IntradayTimeline, RuntimeHealth, SignalModeTemplate, StrategyConfig, StrategyPreset, StrategyVersion, WatchlistResult } from './types';
+import type { AnalysisReportDetail, AnalysisReportsResponse, BacktestResult, BacktestRunsResponse, Bootstrap, IndicatorLibrary, IntradayRadarConfig, IntradayRadarResult, IntradayTimeline, RuntimeHealth, StrategyConfig, StrategyPreset, StrategyVersion, WatchlistResult } from './types';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -23,14 +23,6 @@ export const api = {
   dataOverview: () => request('/api/data/overview'),
   capabilities: () => request('/api/data/capabilities'),
   indicators: () => request<IndicatorLibrary>('/api/indicators'),
-  createSignalMode: (name: string) =>
-    request<{ mode: SignalModeTemplate }>('/api/signal-modes/new', { method: 'POST', body: JSON.stringify({ name }) }),
-  saveSignalMode: (mode: SignalModeTemplate) =>
-    request<{ mode: SignalModeTemplate }>('/api/signal-modes', { method: 'POST', body: JSON.stringify({ mode }) }),
-  duplicateSignalMode: (id: string) =>
-    request<{ mode: SignalModeTemplate }>(`/api/signal-modes/${encodeURIComponent(id)}/duplicate`, { method: 'POST' }),
-  deleteSignalMode: (id: string) =>
-    request(`/api/signal-modes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   probeSources: () => request('/api/data/probe', { method: 'POST', body: JSON.stringify({}) }),
   stocks: (limit: number, offset: number, search: string, filters: Record<string, string> = {}) => {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset), search });

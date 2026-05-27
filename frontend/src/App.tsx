@@ -39,7 +39,6 @@ import type {
   DailyBrief,
   IndicatorDefinition,
   IndicatorLibrary,
-  IndicatorRule,
   IntradayRadarCandidate,
   IntradayRadarConfig,
   IntradayRadarResult,
@@ -54,10 +53,8 @@ import type {
   SignalModeField,
   SignalModeTemplate,
   StrategyConfig,
-  StrategyInteraction,
   StrategyPreset,
   StrategyRule,
-  StrategyRuleCondition,
   StrategyVersion,
   TaskRun,
   WatchlistBatch,
@@ -110,13 +107,6 @@ const navItems: Array<{ id: Tab; label: string; icon: ReactNode }> = [
   { id: 'status', label: '运行状态', icon: <Workflow size={17} /> },
 ];
 
-const signalModes: Array<{ id: string; label: string; sub: string }> = [
-  { id: 'breakout_or_pullback', label: '突破回踩', sub: '双形态' },
-  { id: 'platform_breakout', label: '平台突破', sub: '压缩放量' },
-  { id: 'platform_setup', label: '平台临界', sub: '贴近上沿' },
-  { id: 'trend_resonance', label: '趋势共振', sub: 'EMA/MACD/KDJ' },
-];
-
 const analysisModes: Array<{ id: string; label: string; sub: string }> = [
   { id: 'strict', label: '严格筛选', sub: '逐层淘汰，条件必须同时满足' },
   { id: 'score', label: '综合评分', sub: '基础合格后按信号强弱排序' },
@@ -128,15 +118,6 @@ const ruleActionMeta: Record<RuleAction, { label: string; verb: string; note: st
   risk: { label: '扣风险', verb: '达标扣分', note: '用于过热或异常' },
   display: { label: '只展示', verb: '不参与运算', note: '用于看板观察' },
 };
-
-const interactionMultiplierOptions = [
-  { value: 1.05, label: '轻微增强 x1.05' },
-  { value: 1.1, label: '标准增强 x1.10' },
-  { value: 1.2, label: '强确认 x1.20' },
-  { value: 1.35, label: '强共振 x1.35' },
-  { value: 0.9, label: '轻微降权 x0.90' },
-  { value: 0.8, label: '风险降权 x0.80' },
-];
 
 const ruleOperatorMeta: Record<RuleOperator, { label: string; summary: string }> = {
   gte: { label: '≥', summary: '高于或等于' },
@@ -155,6 +136,22 @@ const missingPolicyOptions = [
   { id: 'keep', label: '缺失保留' },
   { id: 'skip', label: '缺失剔除' },
 ];
+
+const emptyIndicatorLibrary: IndicatorLibrary = {
+  categories: [],
+  indicators: [],
+  signal_modes: [],
+  summary: {
+    category_count: 0,
+    indicator_count: 0,
+    active_count: 0,
+    available_count: 0,
+    planned_count: 0,
+    strategy_param_count: 0,
+    signal_mode_count: 0,
+    interaction_rule_count: 0,
+  },
+};
 
 const reviewStatuses = ['观察中', '已验证', '已放弃', '已错过'];
 const batchReviewStatuses = ['观察中', '有效', '一般', '误报', '已归档'];
@@ -325,55 +322,9 @@ function App() {
     await startAnalyze(strategy);
   }
 
-  async function createSignalMode(name: string) {
-    try {
-      const result = await api.createSignalMode(name);
-      setNotice('信号模式已创建');
-      await load(true);
-      return result.mode;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '创建信号模式失败');
-      throw err;
-    }
-  }
-
-  async function saveSignalMode(mode: SignalModeTemplate) {
-    try {
-      const result = await api.saveSignalMode(mode);
-      setNotice('信号模式已保存');
-      await load(true);
-      return result.mode;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '保存信号模式失败');
-      throw err;
-    }
-  }
-
-  async function duplicateSignalMode(id: string) {
-    try {
-      const result = await api.duplicateSignalMode(id);
-      setNotice('信号模式已复制');
-      await load(true);
-      return result.mode;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '复制信号模式失败');
-      throw err;
-    }
-  }
-
-  async function deleteSignalMode(id: string) {
-    try {
-      await api.deleteSignalMode(id);
-      setNotice('信号模式已删除');
-      await load(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '删除信号模式失败');
-      throw err;
-    }
-  }
-
   const page = useMemo(() => {
     if (!bootstrap || !strategy) return null;
+    const indicatorLibrary = bootstrap.indicator_library || emptyIndicatorLibrary;
     if (tab === 'overview') {
       return (
         <Overview
@@ -387,14 +338,14 @@ function App() {
     if (tab === 'indicators') {
       return (
         <IndicatorLibraryPage
-          library={bootstrap.indicator_library}
+          library={indicatorLibrary}
         />
       );
     }
     if (tab === 'strategy') {
       return (
         <StrategyPanel
-          indicatorLibrary={bootstrap.indicator_library}
+          indicatorLibrary={indicatorLibrary}
           presets={bootstrap.strategies}
           selectedPresetId={selectedPresetId}
           strategy={strategy}
@@ -406,10 +357,6 @@ function App() {
           }}
           saveStrategy={saveStrategy}
           saveAndRun={saveAndRun}
-          createMode={createSignalMode}
-          saveMode={saveSignalMode}
-          duplicateMode={duplicateSignalMode}
-          deleteMode={deleteSignalMode}
           duplicate={async () => {
             if (!selectedPresetId) return;
             const result = await api.duplicateStrategy(selectedPresetId);
@@ -562,31 +509,17 @@ function App() {
 }
 
 function cleanPlatformBreakoutModes(config: StrategyConfig): StrategyConfig {
+  const legacySignalMode = config.signal_mode;
   const normalized = {
     ...config,
-    signal_mode: ['breakout', 'pullback'].includes(config.signal_mode) ? 'breakout_or_pullback' : config.signal_mode,
-    breakout_pullback_direction: config.signal_mode === 'breakout'
+    signal_mode: 'feature_driven',
+    breakout_pullback_direction: legacySignalMode === 'breakout'
       ? 'breakout'
-      : config.signal_mode === 'pullback'
+      : legacySignalMode === 'pullback'
         ? 'pullback'
         : config.breakout_pullback_direction || 'both',
   };
-  if (normalized.signal_mode !== 'platform_breakout') return normalized;
-  return {
-    ...normalized,
-    platform_breakout_clearance_mode: 'must',
-    platform_breakout_max_clearance_mode: 'score',
-    platform_breakout_first_mode: 'must',
-    platform_bullish_ratio_mode: 'must',
-    platform_bull_volume_advantage_mode: 'must',
-    platform_breakout_volume_ratio_mode: 'must',
-    platform_breakout_pct_chg_mode: 'must',
-    platform_breakout_bullish_mode: 'must',
-    platform_body_strength_mode: 'must',
-    platform_ma_bullish_mode: 'score',
-    platform_ma_rising_mode: 'score',
-    platform_macd_filter_mode: 'score',
-  };
+  return normalized;
 }
 
 function Overview({
@@ -1129,7 +1062,7 @@ function IndicatorLibraryPage({
         <div className="indicator-summary">
           <span><b>{formatInt(library.summary.indicator_count)}</b><em>指标</em></span>
           <span><b>{formatInt(library.summary.active_count)}</b><em>分析可用</em></span>
-          <span><b>{formatInt(library.summary.interaction_rule_count)}</b><em>可做组合</em></span>
+          <span><b>{formatInt(library.summary.strategy_param_count)}</b><em>可填写</em></span>
         </div>
       </section>
 
@@ -1231,495 +1164,9 @@ function IndicatorLibraryPage({
 
       <section className="panel indicator-mode-note">
         <PanelTitle icon={<SlidersHorizontal size={18} />} title="策略页直接引用指标" />
-        <p>这里保持为指标字典：查字段含义、数据源、计算方法和分析状态。到策略页后可以直接把指标加入筛选、加权、风控、展示或组合倍率。</p>
+        <p>这里保持为指标字典：查字段含义、数据源、计算方法和分析状态。到策略页后可以直接把指标加入筛选、加权、风控或展示。</p>
       </section>
     </div>
-  );
-}
-
-function SignalModeManager({
-  library,
-  createMode,
-  saveMode,
-  duplicateMode,
-  deleteMode,
-  embedded = false,
-}: {
-  library: IndicatorLibrary;
-  createMode: (name: string) => Promise<SignalModeTemplate>;
-  saveMode: (mode: SignalModeTemplate) => Promise<SignalModeTemplate>;
-  duplicateMode: (id: string) => Promise<SignalModeTemplate>;
-  deleteMode: (id: string) => Promise<void>;
-  embedded?: boolean;
-}) {
-  const indicatorById = useMemo(
-    () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
-    [library.indicators],
-  );
-  const [selectedModeId, setSelectedModeId] = useState(library.signal_modes[0]?.id || '');
-  const [draft, setDraft] = useState<SignalModeTemplate | null>(library.signal_modes[0] ? cloneSignalProfile(library.signal_modes[0]) : null);
-  const [addIndicatorId, setAddIndicatorId] = useState('');
-  const [addRole, setAddRole] = useState('filter');
-  const [busy, setBusy] = useState(false);
-  const selectedMode = useMemo(
-    () => library.signal_modes.find((mode) => mode.id === selectedModeId) || library.signal_modes[0] || null,
-    [library.signal_modes, selectedModeId],
-  );
-
-  useEffect(() => {
-    if (!library.signal_modes.some((mode) => mode.id === selectedModeId) && library.signal_modes[0]) {
-      setSelectedModeId(library.signal_modes[0].id);
-    }
-  }, [library.signal_modes, selectedModeId]);
-
-  useEffect(() => {
-    setDraft(selectedMode ? cloneSignalProfile(selectedMode) : null);
-  }, [selectedMode]);
-
-  const activeIndicatorIds = useMemo(
-    () => new Set((draft?.fields || []).map((field) => field.indicator_id)),
-    [draft?.fields],
-  );
-  const addableIndicators = useMemo(
-    () => library.indicators
-      .filter((indicator) => indicator.status !== 'planned' || indicator.kind === 'strategy_param')
-      .filter((indicator) => !activeIndicatorIds.has(indicator.id))
-      .sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN')),
-    [activeIndicatorIds, library.indicators],
-  );
-  const addableStrategyParams = addableIndicators.filter((indicator) => indicator.kind === 'strategy_param');
-  const addableObservationIndicators = addableIndicators.filter((indicator) => indicator.kind !== 'strategy_param');
-  const selectedAddId = addIndicatorId || addableIndicators[0]?.id || '';
-  const selectedAddIndicator = indicatorById[selectedAddId];
-  const selectedPairIndicators = pairedStrategyIndicators(selectedAddIndicator, indicatorById)
-    .filter((indicator) => !activeIndicatorIds.has(indicator.id));
-  const fieldGroups = useMemo(() => {
-    const groups = new Map<string, { id: string; label: string; fields: SignalModeField[] }>();
-    (draft?.fields || []).forEach((field) => {
-      const indicator = indicatorById[field.indicator_id];
-      const id = field.group_id || indicator?.group_id || 'other';
-      const label = field.group_label || indicator?.group_label || '其他';
-      if (!groups.has(id)) groups.set(id, { id, label, fields: [] });
-      groups.get(id)?.fields.push(field);
-    });
-    return Array.from(groups.values());
-  }, [draft?.fields, indicatorById]);
-
-  const patchDraft = (patch: Partial<SignalModeTemplate>) => {
-    if (!draft) return;
-    setDraft({ ...draft, ...patch });
-  };
-  const patchField = (indicatorId: string, patch: Partial<SignalModeField>) => {
-    if (!draft) return;
-    setDraft({
-      ...draft,
-      fields: draft.fields.map((field) => (field.indicator_id === indicatorId ? { ...field, ...patch } : field)),
-    });
-  };
-  const removeField = (indicatorId: string) => {
-    if (!draft) return;
-    setDraft({
-      ...draft,
-      fields: draft.fields.filter((field) => field.indicator_id !== indicatorId),
-      rule_groups: draft.rule_groups
-        .map((group) => ({
-          ...group,
-          rules: group.rules
-            .map((rule) => ({ ...rule, indicator_ids: rule.indicator_ids.filter((id) => id !== indicatorId) }))
-            .filter((rule) => rule.indicator_ids.length > 0),
-        }))
-        .filter((group) => group.rules.length > 0),
-    });
-  };
-  const addFieldById = (indicatorId: string, role = addRole) => {
-    if (!draft || !indicatorId || activeIndicatorIds.has(indicatorId)) return;
-    const indicator = indicatorById[indicatorId];
-    if (!indicator) return;
-    setDraft({
-      ...draft,
-      fields: [
-        ...draft.fields,
-        {
-          indicator_id: indicator.id,
-          role,
-          group_id: indicator.group_id,
-          group_label: indicator.group_label,
-        },
-      ],
-    });
-    setAddIndicatorId('');
-  };
-  const addField = () => addFieldById(selectedAddId, addRole);
-  const patchRule = (groupId: string, ruleId: string, patch: Partial<IndicatorRule>) => {
-    if (!draft) return;
-    setDraft({
-      ...draft,
-      rule_groups: draft.rule_groups.map((group) => (
-        group.id === groupId
-          ? { ...group, rules: group.rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)) }
-          : group
-      )),
-    });
-  };
-  const removeRule = (groupId: string, ruleId: string) => {
-    if (!draft) return;
-    setDraft({
-      ...draft,
-      rule_groups: draft.rule_groups
-        .map((group) => (
-          group.id === groupId
-            ? { ...group, rules: group.rules.filter((rule) => rule.id !== ruleId) }
-            : group
-        ))
-        .filter((group) => group.rules.length > 0),
-    });
-  };
-  const addRule = () => {
-    if (!draft) return;
-    const firstIndicators = draft.fields.slice(0, 2).map((field) => field.indicator_id);
-    const rule: IndicatorRule = {
-      id: `rule-${Date.now().toString(36)}`,
-      name: '新的组合条件',
-      kind: 'interaction',
-      indicator_ids: firstIndicators,
-      expression: '',
-      effect: { type: 'score', value: 0 },
-      missing_policy: 'neutral',
-      editable: true,
-    };
-    const customGroup = draft.rule_groups.find((group) => group.id === 'custom_conditions');
-    const ruleGroups = customGroup
-      ? draft.rule_groups.map((group) => (
-        group.id === 'custom_conditions' ? { ...group, rules: [...group.rules, rule] } : group
-      ))
-      : [...draft.rule_groups, { id: 'custom_conditions', label: '组合条件', rules: [rule] }];
-    setDraft({ ...draft, rule_groups: ruleGroups });
-  };
-  const addRuleIndicator = (groupId: string, ruleId: string, indicatorId: string) => {
-    if (!draft || !indicatorId) return;
-    setDraft({
-      ...draft,
-      rule_groups: draft.rule_groups.map((group) => (
-        group.id === groupId
-          ? {
-            ...group,
-            rules: group.rules.map((rule) => (
-              rule.id === ruleId && !rule.indicator_ids.includes(indicatorId)
-                ? { ...rule, indicator_ids: [...rule.indicator_ids, indicatorId] }
-                : rule
-            )),
-          }
-          : group
-      )),
-    });
-  };
-  const removeRuleIndicator = (groupId: string, ruleId: string, indicatorId: string) => {
-    if (!draft) return;
-    patchRule(groupId, ruleId, {
-      indicator_ids: draft.rule_groups
-        .find((group) => group.id === groupId)
-        ?.rules.find((rule) => rule.id === ruleId)
-        ?.indicator_ids.filter((id) => id !== indicatorId) || [],
-    });
-  };
-  const runModeAction = async (action: () => Promise<unknown>) => {
-    try {
-      setBusy(true);
-      await action();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!draft) {
-    return null;
-  }
-
-  const ruleCount = draft.rule_groups.reduce((sum, group) => sum + group.rules.length, 0);
-
-  return (
-    <section className={embedded ? 'signal-mode-manager embedded' : 'panel signal-mode-manager'}>
-      <div className="signal-manager-head">
-        <div>
-          <PanelTitle icon={<SlidersHorizontal size={18} />} title="信号模式" />
-          <p>模式只定义“有哪些指标和组合条件”，具体阈值和运行方式在当前策略里填写。</p>
-        </div>
-        <div className="signal-manager-actions">
-          <button className="ghost compact" disabled={busy} type="button" onClick={() => void runModeAction(async () => {
-            const mode = await createMode('新信号模式');
-            setSelectedModeId(mode.id);
-          })}>
-            <Plus size={14} />
-            新建
-          </button>
-          <button className="ghost compact" disabled={busy} type="button" onClick={() => void runModeAction(async () => {
-            const mode = await duplicateMode(draft.id);
-            setSelectedModeId(mode.id);
-          })}>
-            <Copy size={14} />
-            复制
-          </button>
-          <button className="ghost compact danger" disabled={busy || library.signal_modes.length <= 1} type="button" onClick={() => void runModeAction(async () => {
-            if (!window.confirm(`删除“${draft.name}”？`)) return;
-            await deleteMode(draft.id);
-            setSelectedModeId(library.signal_modes.find((mode) => mode.id !== draft.id)?.id || '');
-          })}>
-            <Trash2 size={14} />
-            删除
-          </button>
-          <button className="primary compact" disabled={busy} type="button" onClick={() => void runModeAction(async () => {
-            const mode = await saveMode(draft);
-            setSelectedModeId(mode.id);
-          })}>
-            <Save size={14} />
-            保存
-          </button>
-        </div>
-      </div>
-
-      <div className="signal-manager-layout">
-        <aside className="signal-mode-list">
-          {library.signal_modes.map((mode) => {
-            const count = mode.fields?.length || 0;
-            const combinations = mode.rule_groups.reduce((sum, group) => sum + group.rules.length, 0);
-            const active = mode.id === draft.id;
-            return (
-              <button
-                key={mode.id}
-                type="button"
-                className={active ? 'active' : ''}
-                onClick={() => setSelectedModeId(mode.id)}
-              >
-                <strong>{mode.name}</strong>
-                <span>{formatInt(count)} 个指标 · {formatInt(combinations)} 条组合条件</span>
-              </button>
-            );
-          })}
-        </aside>
-
-        <div className="signal-mode-editor">
-          <div className="profile-editor-grid">
-            <label className="field">
-              <span>模式名称</span>
-              <input
-                value={draft.name}
-                onChange={(event) => patchDraft({ name: event.target.value })}
-              />
-            </label>
-            <label className="field">
-              <span>说明</span>
-              <input
-                value={draft.description}
-                onChange={(event) => patchDraft({ description: event.target.value })}
-              />
-            </label>
-            <label className="field wide">
-              <span>备注</span>
-              <textarea
-                value={draft.note}
-                onChange={(event) => patchDraft({ note: event.target.value })}
-                rows={2}
-              />
-            </label>
-          </div>
-
-          <div className="signal-editor-section">
-            <div className="signal-section-head">
-              <div>
-                <strong>模式指标</strong>
-                <span>{formatInt(draft.fields.length)} 个</span>
-              </div>
-              <div className="indicator-add-stack">
-                <div className="indicator-add-controls">
-                  <select value={selectedAddId} onChange={(event) => setAddIndicatorId(event.target.value)}>
-                    {addableStrategyParams.length > 0 && (
-                      <optgroup label="可填写参数">
-                        {addableStrategyParams.map((indicator) => (
-                          <option key={indicator.id} value={indicator.id}>
-                            {indicator.group_label} / {indicator.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {addableObservationIndicators.length > 0 && (
-                      <optgroup label="观察指标">
-                        {addableObservationIndicators.map((indicator) => (
-                          <option key={indicator.id} value={indicator.id}>
-                            {indicator.group_label} / {indicator.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </select>
-                  <SignalRoleChips value={addRole} onChange={setAddRole} />
-                  <button className="ghost compact" type="button" disabled={!selectedAddId} onClick={addField}>
-                    <Plus size={13} />
-                    加入
-                  </button>
-                </div>
-                {selectedAddIndicator && selectedAddIndicator.kind !== 'strategy_param' && (
-                  <div className="indicator-pair-hint">
-                    <span>
-                      <strong>{selectedAddIndicator.name}</strong>
-                      观察值
-                    </span>
-                    {selectedPairIndicators.length > 0 ? (
-                      <div>
-                        {selectedPairIndicators.map((indicator) => (
-                          <button key={indicator.id} className="tiny-action" type="button" onClick={() => addFieldById(indicator.id, addRole)}>
-                            <Plus size={12} />
-                            {indicator.name}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <em>无需填写参数</em>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="mode-field-groups">
-              {fieldGroups.map((group) => (
-                <div key={group.id} className="mode-field-group">
-                  <header>
-                    <strong>{group.label}</strong>
-                    <span>{formatInt(group.fields.length)}</span>
-                  </header>
-                  <div>
-                    {group.fields.map((field) => {
-                      const indicator = indicatorById[field.indicator_id];
-                      if (!indicator) return null;
-                      const pairNames = pairedStrategyIndicators(indicator, indicatorById)
-                        .filter((item) => !activeIndicatorIds.has(item.id))
-                        .map((item) => item.name);
-                      return (
-                        <article key={field.indicator_id} className="mode-field-item">
-                          <div>
-                            <strong>{indicator.name}</strong>
-                            <span>{indicator.kind === 'strategy_param' ? '可填写参数' : indicator.source}</span>
-                            {pairNames.length > 0 && <small>可配：{pairNames.join('、')}</small>}
-                          </div>
-                          <SignalRoleChips value={field.role || 'filter'} onChange={(role) => patchField(field.indicator_id, { role })} compact />
-                          <button className="table-action" type="button" onClick={() => removeField(field.indicator_id)} title="移除指标">
-                            <X size={13} />
-                          </button>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="signal-editor-section">
-            <div className="signal-section-head">
-              <div>
-                <strong>组合条件</strong>
-                <span>{formatInt(ruleCount)} 条</span>
-              </div>
-              <button className="ghost compact" type="button" onClick={addRule}>
-                <Plus size={13} />
-                新增条件
-              </button>
-            </div>
-            <div className="signal-rule-board compact">
-              {draft.rule_groups.length === 0 && <EmptyState text="暂无组合条件。可以先保存这个简单模式，也可以新增条件。" />}
-              {draft.rule_groups.map((group) => (
-                <article key={group.id} className="signal-rule-group">
-                  <header>
-                    <strong>{group.label}</strong>
-                    <span>{formatInt(group.rules.length)} 条</span>
-                  </header>
-                  <div className="signal-rule-list">
-                    {group.rules.map((rule) => {
-                      const unusedIndicators = draft.fields
-                        .map((field) => indicatorById[field.indicator_id])
-                        .filter(Boolean)
-                        .filter((indicator) => !rule.indicator_ids.includes(indicator.id));
-                      return (
-                        <div key={rule.id} className={`signal-rule-card ${rule.kind}`}>
-                          <div className="rule-edit-grid">
-                            <label className="field">
-                              <span>条件名称</span>
-                              <input value={rule.name} onChange={(event) => patchRule(group.id, rule.id, { name: event.target.value })} />
-                            </label>
-                            <label className="field">
-                              <span>用途</span>
-                              <select value={rule.kind} onChange={(event) => patchRule(group.id, rule.id, { kind: event.target.value as IndicatorRule['kind'] })}>
-                                <option value="filter">过滤</option>
-                                <option value="score">加分</option>
-                                <option value="risk">风控</option>
-                                <option value="interaction">组合条件</option>
-                              </select>
-                            </label>
-                          </div>
-                          <div className="rule-indicator-chips editable">
-                            {rule.indicator_ids.map((indicatorId) => (
-                              <button key={indicatorId} type="button" onClick={() => removeRuleIndicator(group.id, rule.id, indicatorId)}>
-                                {indicatorById[indicatorId]?.name || indicatorId}
-                                <X size={12} />
-                              </button>
-                            ))}
-                            {unusedIndicators.length > 0 && (
-                              <select value="" onChange={(event) => addRuleIndicator(group.id, rule.id, event.target.value)}>
-                                <option value="">加入指标</option>
-                                {unusedIndicators.map((indicator) => <option key={indicator.id} value={indicator.id}>{indicator.name}</option>)}
-                              </select>
-                            )}
-                          </div>
-                          <label className="field wide">
-                            <span>条件表达</span>
-                            <textarea
-                              value={rule.expression}
-                              onChange={(event) => patchRule(group.id, rule.id, { expression: event.target.value })}
-                              rows={3}
-                              placeholder="例如：突破上沿达标，并且量比达到设定阈值"
-                            />
-                          </label>
-                          <div className="rule-edit-grid">
-                            <label className="field">
-                              <span>效果</span>
-                              <select
-                                value={rule.effect?.type || 'score'}
-                                onChange={(event) => patchRule(group.id, rule.id, { effect: { ...rule.effect, type: event.target.value } })}
-                              >
-                                <option value="gate">门槛</option>
-                                <option value="score">评分</option>
-                                <option value="risk">风险扣分</option>
-                              </select>
-                            </label>
-                            <label className="field">
-                              <span>数值</span>
-                              <input
-                                value={String(rule.effect?.value ?? '')}
-                                onChange={(event) => patchRule(group.id, rule.id, { effect: { ...rule.effect, value: event.target.value } })}
-                              />
-                            </label>
-                            <label className="field">
-                              <span>缺失处理</span>
-                              <select value={rule.missing_policy} onChange={(event) => patchRule(group.id, rule.id, { missing_policy: event.target.value })}>
-                                <option value="allow">允许缺失</option>
-                                <option value="neutral">缺失中性</option>
-                                <option value="skip">缺失跳过</option>
-                              </select>
-                            </label>
-                          </div>
-                          <button className="table-action remove-rule" type="button" onClick={() => removeRule(group.id, rule.id)} title="移除条件">
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -1734,10 +1181,6 @@ function StrategyPanel(props: {
   selectPreset: (preset: StrategyPreset) => void;
   saveStrategy: (setDefault?: boolean) => Promise<void>;
   saveAndRun: () => Promise<void>;
-  createMode: (name: string) => Promise<SignalModeTemplate>;
-  saveMode: (mode: SignalModeTemplate) => Promise<SignalModeTemplate>;
-  duplicateMode: (id: string) => Promise<SignalModeTemplate>;
-  deleteMode: (id: string) => Promise<void>;
   duplicate: () => Promise<void>;
   createBlank: () => Promise<void>;
   remove: () => Promise<void>;
@@ -1863,6 +1306,12 @@ function StrategyPanel(props: {
             保存后会进入“我的策略”。
           </div>
         )}
+        {props.strategy.migration?.warnings?.length ? (
+          <div className="template-banner migration-banner">
+            <strong>旧策略已迁移到特征驱动</strong>
+            <span>{props.strategy.migration.warnings.join(' ')}</span>
+          </div>
+        ) : null}
 
         <div className="form-grid">
           <div className="field wide strategy-name-field">
@@ -1886,7 +1335,7 @@ function StrategyPanel(props: {
                 ))}
               </select>
             </label>
-            <span className="strategy-mode-note">策略由运行参数和可选组合倍率共同决定；需要的形态/趋势计算会自动启用。</span>
+            <span className="strategy-mode-note">策略由特征参数、过滤条件、评分项和风险项共同决定；需要的形态/趋势计算会自动启用。</span>
           </div>
           <details className="legacy-strategy-controls wide" open>
             <summary>
@@ -1902,253 +1351,8 @@ function StrategyPanel(props: {
               />
             </div>
           </details>
-          <StrategyInteractionBuilder
-            library={props.indicatorLibrary}
-            strategy={props.strategy}
-            setStrategy={props.setStrategy}
-          />
         </div>
       </section>
-    </div>
-  );
-}
-
-function StrategyInteractionBuilder({
-  library,
-  strategy,
-  setStrategy,
-}: {
-  library: IndicatorLibrary;
-  strategy: StrategyConfig;
-  setStrategy: (config: StrategyConfig) => void;
-}) {
-  const usableIndicators = library.indicators.filter((indicator) => (
-    indicator.data_status === 'executable' && (indicator.usage || []).includes('interaction')
-  ));
-  const indicatorById = useMemo(
-    () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
-    [library.indicators],
-  );
-  const [firstId, setFirstId] = useState(usableIndicators[0]?.id || '');
-  const [secondId, setSecondId] = useState(usableIndicators[1]?.id || usableIndicators[0]?.id || '');
-  const interactions = Array.isArray(strategy.strategy_interactions) ? strategy.strategy_interactions : [];
-  const patchInteractions = (next: StrategyInteraction[]) => {
-    setStrategy({ ...strategy, strategy_interactions: next });
-  };
-  const addInteraction = () => {
-    const ids = Array.from(new Set([firstId, secondId].filter(Boolean)));
-    if (ids.length < 2) return;
-    const conditions = ids
-      .map((id) => indicatorById[id])
-      .filter((indicator): indicator is IndicatorDefinition => Boolean(indicator))
-      .map((indicator) => defaultRuleCondition(indicator));
-    patchInteractions([
-      ...interactions,
-      {
-        id: createInteractionId(),
-        name: conditions.map((condition) => indicatorById[condition.indicator_id]?.name || condition.indicator_id).join(' + '),
-        conditions,
-        multiplier: 1.1,
-        enabled: true,
-      },
-    ]);
-  };
-  const patchInteraction = (id: string, patch: Partial<StrategyInteraction>) => {
-    patchInteractions(interactions.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-  };
-  const removeInteraction = (id: string) => {
-    patchInteractions(interactions.filter((item) => item.id !== id));
-  };
-
-  return (
-    <section className="interaction-builder">
-      <div className="interaction-head">
-        <div>
-          <span className="section-kicker">可选高级项</span>
-          <h3>组合倍率</h3>
-          <p>当两个确认条件同时命中时，调整最终信号强度。平时可以不填。</p>
-        </div>
-        <div className="interaction-create">
-          <label>
-            <span>条件一</span>
-            <select value={firstId} onChange={(event) => setFirstId(event.target.value)}>
-              {usableIndicators.map((indicator) => (
-                <option key={indicator.id} value={indicator.id}>{indicator.name}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>条件二</span>
-            <select value={secondId} onChange={(event) => setSecondId(event.target.value)}>
-              {usableIndicators.map((indicator) => (
-                <option key={indicator.id} value={indicator.id}>{indicator.name}</option>
-              ))}
-            </select>
-          </label>
-          <button className="primary compact" type="button" disabled={!firstId || !secondId || firstId === secondId} onClick={addInteraction}>
-            <Plus size={14} />
-            新增组合
-          </button>
-        </div>
-      </div>
-      {interactions.length === 0 ? (
-        <div className="rule-empty-state compact">
-          <strong>还没有组合条件</strong>
-          <span>例如：突破上沿距离达标 + 量比放大 + 题材热度高，信号强度 x1.20。</span>
-        </div>
-      ) : (
-        <div className="interaction-list">
-          {interactions.map((interaction) => (
-            <StrategyInteractionCard
-              key={interaction.id}
-              interaction={interaction}
-              usableIndicators={usableIndicators}
-              indicatorById={indicatorById}
-              patch={(patch) => patchInteraction(interaction.id, patch)}
-              remove={() => removeInteraction(interaction.id)}
-            />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function StrategyInteractionCard({
-  interaction,
-  usableIndicators,
-  indicatorById,
-  patch,
-  remove,
-}: {
-  interaction: StrategyInteraction;
-  usableIndicators: IndicatorDefinition[];
-  indicatorById: Record<string, IndicatorDefinition>;
-  patch: (patch: Partial<StrategyInteraction>) => void;
-  remove: () => void;
-}) {
-  const updateCondition = (index: number, condition: StrategyRuleCondition) => {
-    patch({ conditions: interaction.conditions.map((item, itemIndex) => (itemIndex === index ? condition : item)) });
-  };
-  const addCondition = () => {
-    const nextIndicator = usableIndicators.find((indicator) => !interaction.conditions.some((condition) => condition.indicator_id === indicator.id));
-    if (!nextIndicator) return;
-    patch({ conditions: [...interaction.conditions, defaultRuleCondition(nextIndicator)] });
-  };
-  const removeCondition = (index: number) => {
-    if (interaction.conditions.length <= 2) return;
-    patch({ conditions: interaction.conditions.filter((_, itemIndex) => itemIndex !== index) });
-  };
-  return (
-    <article className={`interaction-card ${interaction.enabled === false ? 'disabled' : ''}`}>
-      <header>
-        <label>
-          <span>名称</span>
-          <input value={interaction.name} onChange={(event) => patch({ name: event.target.value })} />
-        </label>
-        <label>
-          <span>效果</span>
-          <select value={String(interaction.multiplier || 1.1)} onChange={(event) => patch({ multiplier: Number(event.target.value) })}>
-            {interactionMultiplierOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="rule-enabled-toggle">
-          <input type="checkbox" checked={interaction.enabled !== false} onChange={(event) => patch({ enabled: event.target.checked })} />
-          启用
-        </label>
-        <button className="table-action" type="button" onClick={remove} title="移除组合">
-          <X size={14} />
-        </button>
-      </header>
-      <div className="interaction-conditions">
-        {interaction.conditions.map((condition, index) => {
-          const indicator = indicatorById[condition.indicator_id] || usableIndicators[0];
-          return (
-            <InteractionConditionEditor
-              key={`${interaction.id}-${index}-${condition.indicator_id}`}
-              condition={condition}
-              indicator={indicator}
-              indicators={usableIndicators}
-              patch={(next) => updateCondition(index, next)}
-              remove={() => removeCondition(index)}
-              canRemove={interaction.conditions.length > 2}
-            />
-          );
-        })}
-      </div>
-      <button className="ghost compact add-condition-button" type="button" onClick={addCondition}>
-        <Plus size={14} />
-        添加指标
-      </button>
-    </article>
-  );
-}
-
-function InteractionConditionEditor({
-  condition,
-  indicator,
-  indicators,
-  patch,
-  remove,
-  canRemove,
-}: {
-  condition: StrategyRuleCondition;
-  indicator: IndicatorDefinition;
-  indicators: IndicatorDefinition[];
-  patch: (condition: StrategyRuleCondition) => void;
-  remove: () => void;
-  canRemove: boolean;
-}) {
-  const operators = supportedRuleOperators(indicator, 'filter');
-  const operator = operators.includes(condition.operator) ? condition.operator : operators[0] || 'gte';
-  const numeric = isNumericIndicator(indicator);
-  const setIndicator = (indicatorId: string) => {
-    const nextIndicator = indicators.find((item) => item.id === indicatorId) || indicator;
-    patch(defaultRuleCondition(nextIndicator));
-  };
-  const setValue = (key: 'value' | 'value2', value: string) => {
-    patch({ ...condition, [key]: value === '' ? null : numeric ? Number(value) : value });
-  };
-  return (
-    <div className="interaction-condition">
-      <select value={condition.indicator_id} onChange={(event) => setIndicator(event.target.value)}>
-        {indicators.map((item) => (
-          <option key={item.id} value={item.id}>{item.name}</option>
-        ))}
-      </select>
-      <select value={operator} onChange={(event) => patch({ ...condition, operator: event.target.value as RuleOperator })}>
-        {operators.map((item) => (
-          <option key={item} value={item}>{ruleOperatorMeta[item]?.label || item}</option>
-        ))}
-      </select>
-      {operator !== 'is_true' && (
-        <div className="rule-value-input">
-          <input
-            type={numeric ? 'number' : 'text'}
-            step={numeric ? ruleInputStep(indicator) : undefined}
-            value={String(condition.value ?? '')}
-            onChange={(event) => setValue('value', event.target.value)}
-            placeholder={ruleValuePlaceholder(indicator)}
-          />
-          {indicator.unit && <em>{indicator.unit}</em>}
-        </div>
-      )}
-      {operator === 'between' && (
-        <div className="rule-value-input">
-          <input
-            type={numeric ? 'number' : 'text'}
-            step={numeric ? ruleInputStep(indicator) : undefined}
-            value={String(condition.value2 ?? '')}
-            onChange={(event) => setValue('value2', event.target.value)}
-          />
-          {indicator.unit && <em>{indicator.unit}</em>}
-        </div>
-      )}
-      <button className="table-action" type="button" disabled={!canRemove} onClick={remove} title="移除指标">
-        <X size={14} />
-      </button>
     </div>
   );
 }
@@ -2386,8 +1590,6 @@ function SignalModeFieldForm({
 
     return Array.from(next.values());
   }, [categoryLabelById, indicatorById, profile.fields]);
-  const rules = profile.rule_groups.flatMap((group) => group.rules.map((rule) => ({ ...rule, groupLabel: group.label })));
-
   return (
     <>
       <div className="strategy-profile-note wide">
@@ -2426,21 +1628,6 @@ function SignalModeFieldForm({
           ))}
         </Fragment>
       ))}
-      {rules.length > 0 && (
-        <div className="strategy-signal-context wide">
-          <div>
-            <strong>组合条件</strong>
-            <div className="context-rule-list">
-              {rules.map((rule) => (
-                <span key={`${rule.groupLabel}-${rule.id}`}>
-                  <em>{signalRuleKindLabel(rule.kind)}</em>
-                  {rule.name}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }
@@ -2604,7 +1791,7 @@ function ReportResults({
   const selectedReports = groups.find((group) => group.signal_mode === selectedMode)?.reports || [];
   const selectedReport = selectedReports.find((report) => report.id === selectedRunId);
   const sourceLabel = selectedReport
-    ? `${analysisModeLabel(selectedReport.config?.analysis_mode)} · ${signalModeLabel(selectedReport.config?.signal_mode)}`
+    ? `${analysisModeLabel(selectedReport.config?.analysis_mode)} · ${strategyGroupLabel(selectedReport.config?.signal_mode)}`
     : '分析结果';
   const addRows = addToWatchlist
     ? (rows: Candidate[]) => addToWatchlist({
@@ -2806,7 +1993,6 @@ function CandidateScoreDetails({ row }: { row: Candidate }) {
     { key: 'trend', label: '趋势', note: 'RPS、均线与 MACD' },
     { key: 'theme', label: '题材', note: '题材热度和涨停扩散' },
     { key: 'custom_rules', label: '规则', note: '自定义指标规则' },
-    { key: 'custom_multiplier', label: '倍率', note: '组合条件命中后的乘数' },
     { key: 'freshness', label: '新鲜度', note: '越靠近触发点越高' },
     { key: 'risk', label: '风险扣分', note: '过热、偏离和追高' },
   ];
@@ -2848,14 +2034,11 @@ function CandidateScoreDetails({ row }: { row: Candidate }) {
             {scoreItems.map((item) => {
               const value = breakdown[item.key];
               const isRisk = item.key === 'risk';
-              const isMultiplier = item.key === 'custom_multiplier';
-              const width = isMultiplier
-                ? Math.min(Math.abs(Number(value || 1) - 1) / 0.6, 1) * 100
-                : Math.min(Math.abs(Number(value || 0)) / (isRisk ? 20 : 30), 1) * 100;
+              const width = Math.min(Math.abs(Number(value || 0)) / (isRisk ? 20 : 30), 1) * 100;
               return (
-                <div className={isRisk ? 'score-card risk' : isMultiplier ? 'score-card multiplier' : 'score-card'} key={item.key}>
+                <div className={isRisk ? 'score-card risk' : 'score-card'} key={item.key}>
                   <span>{item.label}</span>
-                  <strong>{isMultiplier ? formatMultiplier(value) : formatSignedScore(value, isRisk)}</strong>
+                  <strong>{formatSignedScore(value, isRisk)}</strong>
                   <div className="score-meter"><i style={{ width: `${width}%` }} /></div>
                   <small>{item.note}</small>
                 </div>
@@ -2940,24 +2123,24 @@ function ReportSelector({
       </div>
       {error && <div className="report-error">{error}</div>}
       <div className="report-mode-tabs">
-        {signalModes.map((mode) => {
-          const count = groups.find((group) => group.signal_mode === mode.id)?.reports.length || 0;
+        {groups.map((group) => {
+          const count = group.reports.length;
           return (
             <button
-              key={mode.id}
-              className={mode.id === selectedMode ? 'active' : ''}
+              key={group.signal_mode}
+              className={group.signal_mode === selectedMode ? 'active' : ''}
               disabled={count === 0}
-              onClick={() => onModeChange(mode.id)}
+              onClick={() => onModeChange(group.signal_mode)}
               type="button"
             >
-              <strong>{mode.label}</strong>
+              <strong>{strategyGroupLabel(group.signal_mode)}</strong>
               <small>{count ? `${count} 份` : '暂无'}</small>
             </button>
           );
         })}
       </div>
       <div className="report-run-list">
-        {selectedReports.length === 0 && <div className="report-empty">这个信号模式还没有完成的分析报告。</div>}
+        {selectedReports.length === 0 && <div className="report-empty">这个策略分组还没有完成的分析报告。</div>}
         {selectedReports.map((report) => (
           <button
             key={report.id}
@@ -3379,7 +2562,7 @@ function BacktestReportLibrary({
             type="button"
           >
             <strong>{formatShortDateTime(run.finished_at || run.started_at)}</strong>
-            <span>{analysisModeLabel(run.config?.analysis_mode)} · {signalModeLabel(run.config?.signal_mode)}</span>
+            <span>{analysisModeLabel(run.config?.analysis_mode)} · {strategyGroupLabel(run.config?.signal_mode)}</span>
             <small>{formatDate(run.summary?.start_date)} → {formatDate(run.summary?.end_date)} · {formatInt(run.summary?.signal_count)} 条</small>
           </button>
         ))}
@@ -4608,12 +3791,8 @@ function strategySummary(strategy: StrategyConfig) {
   const rules = Array.isArray(strategy.strategy_rules)
     ? strategy.strategy_rules.filter((rule) => rule.enabled !== false).length
     : 0;
-  const interactions = Array.isArray(strategy.strategy_interactions)
-    ? strategy.strategy_interactions.filter((interaction) => interaction.enabled !== false).length
-    : 0;
   const parts = [
     rules > 0 ? `${rules} 条指标` : '基础参数',
-    interactions > 0 ? `${interactions} 个组合倍率` : '',
     `成交额≥${formatMoneyCompact(strategy.min_amount || 0)}`,
     `RPS${strategy.rps_window}`,
     `MA${strategy.ma_short_window}/${strategy.ma_long_window}`,
@@ -4626,12 +3805,8 @@ function suggestStrategyName(strategy: StrategyConfig) {
   const rules = Array.isArray(strategy.strategy_rules)
     ? strategy.strategy_rules.filter((rule) => rule.enabled !== false).length
     : 0;
-  const interactions = Array.isArray(strategy.strategy_interactions)
-    ? strategy.strategy_interactions.filter((interaction) => interaction.enabled !== false).length
-    : 0;
   const core = rules > 0 ? `${rules}指标` : `RPS${strategy.rps_window}`;
-  const combo = interactions > 0 ? `-${interactions}组合` : '';
-  return `自定义策略-${analysis}-${core}${combo}`;
+  return `自定义策略-${analysis}-${core}`;
 }
 
 function dataHealthHints(bootstrap: Bootstrap) {
@@ -4804,45 +3979,11 @@ function defaultStrategyRule(indicator: IndicatorDefinition): StrategyRule {
   };
 }
 
-function defaultRuleCondition(indicator: IndicatorDefinition): StrategyRuleCondition {
-  const recommendation = (indicator.recommended_rules || []).find((item) => item.action === 'filter')
-    || (indicator.recommended_rules || [])[0];
-  const operator = recommendation?.operator || defaultOperatorForIndicator(indicator);
-  const missingPolicy = indicator.default_missing_policy === 'skip'
-    ? 'skip'
-    : indicator.default_missing_policy === 'allow'
-      ? 'keep'
-      : 'neutral';
-  return {
-    id: createInteractionConditionId(indicator.id),
-    indicator_id: indicator.id,
-    operator,
-    value: recommendation?.value ?? defaultValueForIndicator(indicator),
-    value2: recommendation?.value2 ?? (operator === 'between' ? indicator.range_hint?.max ?? '' : undefined),
-    window_days: recommendation?.window_days,
-    missing_policy: missingPolicy,
-  };
-}
-
 function createRuleId(indicatorId: string) {
   const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   return `rule-${indicatorId}-${random}`;
-}
-
-function createInteractionId() {
-  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  return `combo-${random}`;
-}
-
-function createInteractionConditionId(indicatorId: string) {
-  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  return `combo-condition-${indicatorId}-${random}`;
 }
 
 function isNumericIndicator(indicator: IndicatorDefinition) {
@@ -4904,10 +4045,9 @@ function indicatorUsageLabel(values: string[] = []) {
     risk: '扣分',
     sort: '排序',
     display: '展示',
-    interaction: '组合',
     context: '环境',
   };
-  return values.map((value) => labels[value] || value).join(' / ') || '-';
+  return values.filter((value) => value !== 'interaction').map((value) => labels[value] || value).join(' / ') || '-';
 }
 
 function indicatorKindLabel(indicator: IndicatorDefinition) {
@@ -4951,38 +4091,6 @@ function strategyParameterProfile(library: IndicatorLibrary): SignalModeTemplate
     fields,
     rule_groups: [],
   };
-}
-
-function activeSignalProfile(strategy: StrategyConfig, library: IndicatorLibrary): SignalModeTemplate | null {
-  if (strategy.signal_profile) {
-    return strategy.signal_profile;
-  }
-  return library.signal_modes.find((template) => template.id === strategy.signal_mode)
-    || library.signal_modes.find((template) => (template.runtime_signal_mode || template.id) === strategy.signal_mode)
-    || library.signal_modes[0]
-    || null;
-}
-
-function cloneSignalProfile(profile: SignalModeTemplate): SignalModeTemplate {
-  return JSON.parse(JSON.stringify(profile)) as SignalModeTemplate;
-}
-
-function signalRuleKindLabel(kind: IndicatorRule['kind']) {
-  const labels: Record<IndicatorRule['kind'], string> = {
-    filter: '过滤',
-    score: '加分',
-    risk: '风控',
-    interaction: '组合',
-  };
-  return labels[kind] || kind;
-}
-
-function signalRuleEffectLabel(effect: IndicatorRule['effect']) {
-  if (!effect) return '-';
-  if (effect.type === 'gate') return `门槛 ${String(effect.value)}`;
-  if (effect.type === 'risk') return `风险 ${String(effect.value)}`;
-  if (effect.type === 'score') return `评分 ${String(effect.value)}`;
-  return `${effect.type} ${String(effect.value)}`;
 }
 
 function formatPercent(value: unknown) {
@@ -5094,7 +4202,6 @@ function candidateScoreBreakdown(row: Candidate) {
     freshness: nullableNumber(raw.freshness),
     risk: nullableNumber(raw.risk),
     custom_rules: nullableNumber(raw.custom_rules),
-    custom_multiplier: nullableNumber(raw.custom_multiplier),
   };
 }
 
@@ -5160,12 +4267,6 @@ function formatSignedScore(value: unknown, isRisk = false) {
   if (number === null) return '-';
   if (isRisk && number === 0) return '0.00';
   return number > 0 ? `+${number.toFixed(2)}` : number.toFixed(2);
-}
-
-function formatMultiplier(value: unknown) {
-  const number = nullableNumber(value);
-  if (number === null) return '-';
-  return `x${number.toFixed(2)}`;
 }
 
 function formatDays(value: unknown) {
@@ -5243,8 +4344,15 @@ function analysisModeLabel(mode: string | undefined) {
   return analysisModes.find((item) => item.id === (mode || 'strict'))?.label || '严格筛选';
 }
 
-function signalModeLabel(mode: string | undefined) {
-  return signalModes.find((item) => item.id === mode)?.label || '策略';
+function strategyGroupLabel(mode: string | undefined) {
+  const labels: Record<string, string> = {
+    feature_driven: '特征驱动',
+    breakout_or_pullback: '旧策略迁移',
+    platform_breakout: '平台参数迁移',
+    platform_setup: '平台临界迁移',
+    trend_resonance: '趋势参数迁移',
+  };
+  return labels[String(mode || 'feature_driven')] || '特征驱动';
 }
 
 function toneClass(value: number) {

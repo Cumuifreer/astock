@@ -1,4 +1,4 @@
-from backend.app.services.indicator_registry import blank_signal_mode, indicator_library
+from backend.app.services.indicator_registry import indicator_library
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG
 
 
@@ -24,8 +24,6 @@ def test_indicator_library_groups_a_share_indicators_by_domain():
 def test_observation_indicators_point_to_editable_strategy_params():
     library = indicator_library()
     indicators = {indicator["id"]: indicator for indicator in library["indicators"]}
-    theme_mode = next(mode for mode in library["signal_modes"] if mode["id"] == "theme_resonance_breakout")
-    theme_fields = {field["indicator_id"] for field in theme_mode["fields"]}
 
     assert indicators["rps120"]["paired_strategy_ids"] == ["min_rps120"]
     assert indicators["volume_ratio"]["paired_strategy_ids"] == ["volume_ratio_min", "platform_breakout_volume_ratio"]
@@ -33,46 +31,17 @@ def test_observation_indicators_point_to_editable_strategy_params():
     assert indicators["topic_heat"]["paired_strategy_ids"] == ["min_topic_heat"]
     assert indicators["theme_limit_count"]["paired_strategy_ids"] == ["min_theme_limit_count"]
     assert {"min_topic_count", "min_topic_heat", "min_theme_limit_count"}.issubset(set(indicators))
-    assert {"topic_heat", "theme_limit_count", "min_topic_heat", "min_theme_limit_count"}.issubset(theme_fields)
+    assert indicators["topic_heat"]["data_status"] == "executable"
+    assert indicators["theme_limit_count"]["data_status"] == "executable"
 
 
-def test_existing_theme_mode_is_extended_with_new_theme_parameters():
-    library = indicator_library(
-        [
-            {
-                "id": "theme_resonance_breakout",
-                "name": "题材共振突破",
-                "description": "",
-                "note": "",
-                "runtime_signal_mode": "platform_breakout",
-                "fields": [
-                    {"indicator_id": "topic_heat", "role": "score"},
-                    {"indicator_id": "theme_limit_count", "role": "score"},
-                ],
-                "rule_groups": [],
-            }
-        ]
-    )
-    fields = {field["indicator_id"]: field["role"] for field in library["signal_modes"][0]["fields"]}
-
-    assert fields["min_topic_count"] == "filter"
-    assert fields["min_topic_heat"] == "score"
-    assert fields["min_theme_limit_count"] == "score"
-    assert fields["topic_count"] == "display"
-
-
-def test_signal_mode_templates_include_editable_interaction_rules():
+def test_indicator_library_no_longer_exposes_signal_mode_templates_or_interactions():
     library = indicator_library()
-    templates = {template["id"]: template for template in library["signal_modes"]}
 
-    template = templates["theme_resonance_breakout"]
-    interactions = [rule for group in template["rule_groups"] for rule in group["rules"] if rule["kind"] == "interaction"]
-
-    assert "base_signal_mode" not in template
-    assert interactions
-    assert interactions[0]["editable"] is True
-    assert {"platform_breakout_clearance", "volume_ratio", "topic_heat"}.issubset(set(interactions[0]["indicator_ids"]))
-    assert interactions[0]["effect"]["type"] == "score"
+    assert library["signal_modes"] == []
+    assert library["summary"]["signal_mode_count"] == 0
+    assert library["summary"]["interaction_rule_count"] == 0
+    assert all("interaction" not in (indicator.get("usage") or []) for indicator in library["indicators"])
 
 
 def test_all_strategy_form_fields_are_defined_in_indicator_library():
@@ -121,36 +90,24 @@ def test_all_strategy_form_fields_are_defined_in_indicator_library():
     }
 
     assert required_keys.issubset(strategy_keys)
-    assert set(DEFAULT_STRATEGY_CONFIG) - strategy_keys == {"analysis_mode", "signal_mode", "strategy_rules"}
+    assert set(DEFAULT_STRATEGY_CONFIG) - strategy_keys == {
+        "analysis_mode",
+        "analysis_engines",
+        "signal_mode",
+        "strategy_rules",
+        "strategy_interactions",
+    }
     assert all(key in DEFAULT_STRATEGY_CONFIG for key in strategy_keys if key)
     assert all(indicator.get("control", {}).get("type") for indicator in indicators.values() if indicator.get("kind") == "strategy_param")
 
 
-def test_signal_modes_reference_existing_indicators_and_new_mode_starts_with_stock_pool_only():
+def test_strategy_parameter_profile_can_be_built_from_indicator_library():
     library = indicator_library()
     indicator_ids = {indicator["id"] for indicator in library["indicators"]}
+    strategy_param_ids = [indicator["id"] for indicator in library["indicators"] if indicator["kind"] == "strategy_param"]
 
-    for mode in library["signal_modes"]:
-        assert "base_signal_mode" not in mode
-        assert mode["fields"]
-        assert all(field["indicator_id"] in indicator_ids for field in mode["fields"])
-        for group in mode["rule_groups"]:
-            for rule in group["rules"]:
-                assert all(indicator_id in indicator_ids for indicator_id in rule["indicator_ids"])
-
-    blank = blank_signal_mode("我的信号模式")
-    assert blank["name"] == "我的信号模式"
-    assert [field["indicator_id"] for field in blank["fields"]] == [
-        "min_price",
-        "min_amount",
-        "min_float_market_value",
-        "max_float_market_value",
-        "include_bj",
-        "exclude_star_board",
-        "missing_turnover_policy",
-        "missing_float_market_value_policy",
-    ]
-    assert blank["rule_groups"] == []
+    assert {"min_price", "min_amount", "candidate_limit", "sort_by"}.issubset(set(strategy_param_ids))
+    assert set(strategy_param_ids).issubset(indicator_ids)
 
 
 def test_indicator_library_exposes_rule_builder_metadata():
@@ -175,8 +132,8 @@ def test_indicator_library_exposes_rule_builder_metadata():
     assert topic_heat["direction"] == "higher_better"
 
     top_list = indicators["top_list_net_amount"]
-    assert top_list["data_status"] == "display_only"
-    assert top_list["supported_actions"] == ["display"]
+    assert top_list["data_status"] == "executable"
+    assert {"score", "risk", "display"}.issubset(set(top_list["supported_actions"]))
 
     min_price = indicators["min_price"]
     assert min_price["value_type"] == "number"

@@ -595,7 +595,7 @@ def test_strategy_rules_filter_score_and_risk_candidates():
     assert any(step["step_name"] == "题材热度规则" for step in funnel)
 
 
-def test_strategy_interactions_apply_multiplier_to_candidate_scores():
+def test_strategy_interactions_are_ignored_by_feature_engine():
     rows = pd.DataFrame(
         [
             {
@@ -667,9 +667,63 @@ def test_strategy_interactions_apply_multiplier_to_candidate_scores():
 
     assert zero_reason is None
     assert [candidate["code"] for candidate in candidates] == ["000001.SZ", "000002.SZ"]
-    assert candidates[0]["score_breakdown"]["custom_multiplier"] == 1.2
-    assert candidates[1]["score_breakdown"]["custom_multiplier"] == 1.0
-    assert candidates[0]["signal_score"] > candidates[1]["signal_score"] * 1.15
+    assert "custom_multiplier" not in candidates[0]["score_breakdown"]
+    assert candidates[0]["signal_score"] == candidates[1]["signal_score"]
+
+
+def test_explicit_feature_engines_ignore_legacy_signal_mode_value():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "显式特征",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "is_st": False,
+                "suspended": False,
+                "trend_ready": True,
+                "trend_price_above_ema_long": False,
+                "trend_ema_long_rising": False,
+                "trend_ema_fast_above_mid": False,
+                "trend_ema_mid_distance": 0.2,
+                "trend_recent_gain_10d": 0.4,
+                "trend_macd_dif": -0.2,
+                "trend_macd_dea": 0.1,
+                "trend_stoch_k_above_d": False,
+                "trend_signal_match": False,
+            }
+        ]
+    )
+    base_config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "version": 2,
+        "trend_filter": "none",
+        "analysis_engines": [],
+        "min_price": 0,
+        "min_amount": 0,
+        "min_rps20": None,
+        "max_turnover": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "max_amplitude": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+    }
+
+    platform_candidates, _, _ = apply_strategy_filters(rows, {**base_config, "signal_mode": "platform_breakout"})
+    trend_candidates, _, _ = apply_strategy_filters(rows, {**base_config, "signal_mode": "trend_resonance"})
+
+    assert [candidate["code"] for candidate in platform_candidates] == ["000001.SZ"]
+    assert platform_candidates == trend_candidates
 
 
 def test_platform_breakout_filters_remove_overheated_clearance_when_required():

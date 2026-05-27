@@ -302,7 +302,7 @@ def strategy_param(
         "strategy_key": key,
         "status": "active",
         "source": "策略配置",
-        "formula": formula or "由用户在信号模式参数中设置，分析运行时读取该参数。",
+        "formula": formula or "由用户在策略参数中设置，分析运行时读取该参数。",
         "description": description,
         "usage": resolved_usage,
         "default_missing_policy": missing,
@@ -397,7 +397,7 @@ DATA_INDICATORS: List[Dict[str, Any]] = [
         "Tushare daily_basic / 本地 K 线估算",
         "优先取 daily_basic.volume_ratio；为空时用最新成交量 / 前 20 根成交量均值。",
         "判断当前成交是否明显放大，是右侧突破和资金确认的重要指标。",
-        ["filter", "score", "interaction"],
+        ["filter", "score"],
         missing="allow",
         paired_strategy_ids=["volume_ratio_min", "platform_breakout_volume_ratio"],
     ),
@@ -415,21 +415,27 @@ DATA_INDICATORS: List[Dict[str, Any]] = [
     data_indicator("rps20", "RPS20", "technical", "本地历史 K 线", "按最近 20 日收益率在全市场排序并映射到 0-100。", "短期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps20", "rps_window"]),
     data_indicator("rps60", "RPS60", "technical", "本地历史 K 线", "按最近 60 日收益率在全市场排序并映射到 0-100。", "中期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps60", "rps_window"]),
     data_indicator("rps120", "RPS120", "technical", "本地历史 K 线", "按最近 120 日收益率在全市场排序并映射到 0-100。", "中长期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps120"]),
-    data_indicator("macd_state", "MACD 状态", "technical", "本地历史 K 线 / Tushare stk_factor", "DIF、DEA 和 0 轴关系。", "确认动能是否改善。", ["filter", "score", "interaction"], missing="allow"),
+    data_indicator("macd_state", "MACD 状态", "technical", "本地历史 K 线 / Tushare stk_factor", "DIF、DEA 和 0 轴关系。", "确认动能是否改善。", ["filter", "score"], missing="allow"),
     data_indicator("platform_range", "平台振幅", "platform", "本地历史 K 线", "平台窗口内最高价 / 最低价 - 1，或按收盘价区间计算。", "衡量横盘收敛程度。", ["filter", "score"], missing="skip", paired_strategy_ids=["platform_max_range", "platform_max_range_mode"]),
-    data_indicator("platform_breakout_clearance", "突破上沿距离", "platform", "本地历史 K 线", "最新收盘价 / 平台上沿 - 1。", "判断是否刚刚有效站上平台上沿。", ["filter", "score", "interaction"], missing="skip", paired_strategy_ids=["platform_breakout_clearance", "platform_breakout_max_clearance"]),
-    data_indicator("platform_setup_distance_to_high", "距平台上沿", "platform", "本地历史 K 线", "平台上沿 / 最新收盘价 - 1。", "平台临界模式的核心位置指标。", ["filter", "score", "interaction"], missing="skip", paired_strategy_ids=["platform_setup_max_distance_to_high"]),
-    data_indicator("main_net_amount", "主力净额", "capital_flow", "Tushare moneyflow", "大单与超大单买入金额 - 卖出金额。", "判断主动资金是否回流。", ["score", "interaction"], status="available", analysis_ready=False),
-    data_indicator("net_mf_amount", "资金净流入", "capital_flow", "Tushare moneyflow", "全口径买入金额 - 卖出金额。", "辅助确认资金方向。", ["score"], status="available", analysis_ready=False),
+    data_indicator("platform_breakout_clearance", "突破上沿距离", "platform", "本地历史 K 线", "最新收盘价 / 平台上沿 - 1。", "判断是否刚刚有效站上平台上沿。", ["filter", "score"], missing="skip", paired_strategy_ids=["platform_breakout_clearance", "platform_breakout_max_clearance"]),
+    data_indicator("platform_setup_distance_to_high", "距平台上沿", "platform", "本地历史 K 线", "平台上沿 / 最新收盘价 - 1。", "平台临界模式的核心位置指标。", ["filter", "score"], missing="skip", paired_strategy_ids=["platform_setup_max_distance_to_high"]),
+    data_indicator("main_net_amount", "主力净额", "capital_flow", "Tushare moneyflow", "大单与超大单买入金额 - 卖出金额。", "判断主动资金是否回流。", ["score", "display"], status="active", analysis_ready=True),
+    data_indicator("net_mf_amount", "资金净流入", "capital_flow", "Tushare moneyflow", "全口径买入金额 - 卖出金额。", "辅助确认资金方向。", ["score", "display"], status="active", analysis_ready=True),
+    data_indicator("large_net_amount", "大单净额", "capital_flow", "Tushare moneyflow", "大单买入金额 - 大单卖出金额。", "观察大单资金方向。", ["score", "display"], status="active", analysis_ready=True),
+    data_indicator("super_large_net_amount", "超大单净额", "capital_flow", "Tushare moneyflow", "超大单买入金额 - 超大单卖出金额。", "观察强资金方向。", ["score", "display"], status="active", analysis_ready=True),
     data_indicator("topic_count", "题材数", "theme", "Tushare ths_member", "统计股票关联的同花顺概念/行业成分数量。", "表示股票挂在哪些题材里。", ["display", "score"], status="active", analysis_ready=True, paired_strategy_ids=["min_topic_count"]),
-    data_indicator("topic_heat", "题材热度", "theme", "ths_member + 当日行情 + 涨跌停", "成分股上涨比例、RPS 高分股数量、涨停数量和成交额扩张综合评分。", "判断个股是否站在活跃主线上。", ["score", "interaction", "sort"], status="active", analysis_ready=True, paired_strategy_ids=["min_topic_heat"]),
-    data_indicator("theme_limit_count", "题材涨停数", "theme", "ths_member + Tushare limit_list_d", "统计股票所属题材内最近交易日涨停成分股数量。", "衡量题材短线爆发力。", ["score", "interaction"], status="active", analysis_ready=True, paired_strategy_ids=["min_theme_limit_count"]),
-    data_indicator("limit_event", "涨跌停 / 炸板", "event", "Tushare limit_list_d", "读取最近涨停、跌停或炸板事件及开板次数、封单金额。", "低覆盖事件指标。", ["risk", "score", "interaction"], status="available", analysis_ready=False),
-    data_indicator("top_list_net_amount", "龙虎榜净额", "event", "Tushare top_list / top_inst / hm_detail", "取最近龙虎榜或游资明细中的净买入金额。", "短线资金偏好指标。", ["score", "interaction", "risk"], status="available", analysis_ready=False),
-    data_indicator("cyq_winner_rate", "筹码胜率", "chips", "Tushare cyq_perf", "获利筹码占比。", "观察筹码位置与潜在抛压。", ["score", "risk"], status="available", analysis_ready=False),
-    data_indicator("cost_50pct", "中位成本", "chips", "Tushare cyq_perf", "筹码分布中 50% 成本位置。", "观察当前价和中位成本的距离。", ["score", "risk"], status="available", analysis_ready=False),
+    data_indicator("topic_heat", "题材热度", "theme", "ths_member + 当日行情 + 涨跌停", "成分股上涨比例、RPS 高分股数量、涨停数量和成交额扩张综合评分。", "判断个股是否站在活跃主线上。", ["score", "sort"], status="active", analysis_ready=True, paired_strategy_ids=["min_topic_heat"]),
+    data_indicator("theme_limit_count", "题材涨停数", "theme", "ths_member + Tushare limit_list_d", "统计股票所属题材内最近交易日涨停成分股数量。", "衡量题材短线爆发力。", ["score"], status="active", analysis_ready=True, paired_strategy_ids=["min_theme_limit_count"]),
+    data_indicator("limit_event", "涨跌停 / 炸板", "event", "Tushare limit_list_d", "读取最近涨停、跌停或炸板事件及开板次数、封单金额。", "低覆盖事件指标。", ["risk", "score", "display"], status="active", analysis_ready=True, analysis_field="limit_type"),
+    data_indicator("limit_fd_mv_ratio", "封单市值比", "event", "Tushare limit_list_d", "封单金额 / 流通市值。", "判断涨停封单强度。", ["score", "display"], status="active", analysis_ready=True),
+    data_indicator("top_list_net_amount", "龙虎榜净额", "event", "Tushare top_list / top_inst / hm_detail", "取最近龙虎榜净买入金额。", "短线资金偏好指标。", ["score", "risk", "display"], status="active", analysis_ready=True),
+    data_indicator("top_inst_net_buy", "机构净买额", "event", "Tushare top_inst", "机构席位净买入金额合计。", "观察机构席位方向。", ["score", "display"], status="active", analysis_ready=True),
+    data_indicator("hot_money_net_amount", "游资净买额", "event", "Tushare hm_detail", "游资席位净买入金额合计。", "观察游资方向。", ["score", "display"], status="active", analysis_ready=True),
+    data_indicator("cyq_winner_rate", "筹码胜率", "chips", "Tushare cyq_perf", "获利筹码占比。", "观察筹码位置与潜在抛压。", ["score", "risk"], status="active", analysis_ready=True),
+    data_indicator("cost_50pct", "中位成本", "chips", "Tushare cyq_perf", "筹码分布中 50% 成本位置。", "观察当前价和中位成本的距离。", ["score", "risk"], status="active", analysis_ready=True),
+    data_indicator("price_to_cost_50pct", "距中位成本", "chips", "Tushare cyq_perf", "当前价 / 中位成本 - 1。", "衡量当前价相对筹码中枢的位置。", ["score", "risk", "display"], status="active", analysis_ready=True),
     data_indicator("is_st", "ST 状态", "risk", "股票基础信息 / 历史 K 线", "股票名或历史数据中的 ST 标记。", "默认风险过滤项。", ["filter", "risk"], missing="allow"),
-    data_indicator("overheat_risk", "过热风险", "risk", "本地计算", "近 5/10 日涨幅、当前涨幅、换手率和距均线偏离度。", "识别脱离买点或分歧过大的候选股。", ["risk", "interaction"]),
+    data_indicator("overheat_risk", "过热风险", "risk", "本地计算", "近 5/10 日涨幅、当前涨幅、换手率和距均线偏离度。", "识别脱离买点或分歧过大的候选股。", ["risk"]),
     data_indicator("market_breadth", "市场宽度", "market", "本地历史 K 线 / 市场环境表", "全市场上涨比例、涨跌停温度和指数趋势综合评分。", "判断策略环境是否顺风。", ["context", "risk"], status="available", analysis_ready=False),
 ]
 
@@ -841,12 +847,10 @@ def normalize_signal_mode(mode: Dict[str, Any]) -> Dict[str, Any]:
 def indicator_library(signal_modes: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     indicators = deepcopy(INDICATORS)
     categories = deepcopy(INDICATOR_CATEGORIES)
-    modes = deepcopy(signal_modes if signal_modes is not None else DEFAULT_SIGNAL_MODES)
-    modes = [normalize_signal_mode(mode) for mode in modes]
     return {
         "categories": categories,
         "indicators": indicators,
-        "signal_modes": modes,
+        "signal_modes": [],
         "summary": {
             "category_count": len(categories),
             "indicator_count": len(indicators),
@@ -854,13 +858,7 @@ def indicator_library(signal_modes: Optional[List[Dict[str, Any]]] = None) -> Di
             "available_count": sum(1 for item in indicators if item["status"] == "available"),
             "planned_count": sum(1 for item in indicators if item["status"] == "planned"),
             "strategy_param_count": sum(1 for item in indicators if item.get("kind") == "strategy_param"),
-            "signal_mode_count": len(modes),
-            "interaction_rule_count": sum(
-                1
-                for template in modes
-                for group in template["rule_groups"]
-                for rule in group["rules"]
-                if rule["kind"] == "interaction"
-            ),
+            "signal_mode_count": 0,
+            "interaction_rule_count": 0,
         },
     }
