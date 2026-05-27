@@ -671,6 +671,84 @@ def test_strategy_interactions_are_ignored_by_feature_engine():
     assert candidates[0]["signal_score"] == candidates[1]["signal_score"]
 
 
+def test_strategy_resonances_apply_visible_score_multiplier():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "共振增强",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "topic_heat": 82.0,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "000002.SZ",
+                "name": "普通候选",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "topic_heat": 42.0,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "trend_filter": "none",
+        "min_price": 0,
+        "min_amount": 0,
+        "min_rps20": None,
+        "max_turnover": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "max_amplitude": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+        "strategy_resonances": [
+            {
+                "id": "hot-volume-confirm",
+                "name": "题材放量确认",
+                "conditions": [
+                    {"indicator_id": "topic_heat", "operator": "gte", "value": 70},
+                    {"indicator_id": "volume_ratio", "operator": "gte", "value": 2},
+                ],
+                "multiplier": 1.2,
+                "enabled": True,
+            }
+        ],
+    }
+
+    candidates, _, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert [candidate["code"] for candidate in candidates] == ["000001.SZ", "000002.SZ"]
+    assert candidates[0]["score_breakdown"]["resonance_multiplier"] == 1.2
+    assert candidates[1]["score_breakdown"]["resonance_multiplier"] == 1.0
+    assert candidates[0]["signal_score"] > candidates[1]["signal_score"]
+    assert any("题材放量确认 x1.20" in reason for reason in candidates[0]["reasons"])
+
+
 def test_explicit_feature_engines_ignore_legacy_signal_mode_value():
     rows = pd.DataFrame(
         [

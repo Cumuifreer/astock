@@ -5,6 +5,7 @@ import {
   Activity,
   BarChart3,
   CandlestickChart,
+  ChevronDown,
   Copy,
   Database,
   Gauge,
@@ -16,6 +17,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
   Settings2,
   ShieldAlert,
   SlidersHorizontal,
@@ -54,7 +56,9 @@ import type {
   SignalModeTemplate,
   StrategyConfig,
   StrategyPreset,
+  StrategyResonance,
   StrategyRule,
+  StrategyRuleCondition,
   StrategyVersion,
   TaskRun,
   WatchlistBatch,
@@ -135,6 +139,14 @@ const missingPolicyOptions = [
   { id: 'neutral', label: '缺失中性' },
   { id: 'keep', label: '缺失保留' },
   { id: 'skip', label: '缺失剔除' },
+];
+
+const resonanceMultiplierOptions = [
+  { value: 1.05, label: '轻微 x1.05' },
+  { value: 1.1, label: '确认 x1.10' },
+  { value: 1.2, label: '强确认 x1.20' },
+  { value: 1.35, label: '高共振 x1.35' },
+  { value: 0.9, label: '降权 x0.90' },
 ];
 
 const reviewStatuses = ['观察中', '已验证', '已放弃', '已错过'];
@@ -1355,11 +1367,6 @@ function StrategyPanel(props: {
             </label>
             <span className="strategy-mode-note">策略由特征参数、过滤条件、评分项和风险项共同决定；需要的形态/趋势计算会自动启用。</span>
           </div>
-          <StrategyRuleBuilder
-            library={props.indicatorLibrary}
-            strategy={props.strategy}
-            setStrategy={props.setStrategy}
-          />
           <details className="legacy-strategy-controls wide" open>
             <summary>
               <span>运行参数</span>
@@ -1374,6 +1381,16 @@ function StrategyPanel(props: {
               />
             </div>
           </details>
+          <StrategyRuleBuilder
+            library={props.indicatorLibrary}
+            strategy={props.strategy}
+            setStrategy={props.setStrategy}
+          />
+          <StrategyResonanceBuilder
+            library={props.indicatorLibrary}
+            strategy={props.strategy}
+            setStrategy={props.setStrategy}
+          />
         </div>
       </section>
     </div>
@@ -1389,33 +1406,20 @@ function StrategyRuleBuilder({
   strategy: StrategyConfig;
   setStrategy: (config: StrategyConfig) => void;
 }) {
-  const [query, setQuery] = useState('');
-  const [category, setCategory] = useState('all');
   const [selectedId, setSelectedId] = useState('');
   const indicatorById = useMemo(
     () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
     [library.indicators],
   );
-  const categoryById = useMemo(
-    () => Object.fromEntries(library.categories.map((item) => [item.id, item])),
-    [library.categories],
-  );
   const usableIndicators = useMemo(
     () => library.indicators
       .filter((indicator) => indicator.kind === 'data' && indicator.status !== 'planned')
+      .filter((indicator) => !indicator.paired_strategy_ids?.length)
       .filter((indicator) => (indicator.supported_actions || []).length > 0)
       .sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN')),
     [library.indicators],
   );
-  const visibleIndicators = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return usableIndicators.filter((indicator) => {
-      if (category !== 'all' && indicator.category_id !== category) return false;
-      if (!needle) return true;
-      return `${indicator.name} ${indicator.id} ${indicator.source} ${indicator.description}`.toLowerCase().includes(needle);
-    });
-  }, [category, query, usableIndicators]);
-  const selectedIndicator = indicatorById[selectedId] || visibleIndicators[0] || usableIndicators[0];
+  const selectedIndicator = usableIndicators.find((indicator) => indicator.id === selectedId) || usableIndicators[0];
   const rules = Array.isArray(strategy.strategy_rules) ? strategy.strategy_rules : [];
   const actionCounts = rules.reduce<Record<RuleAction, number>>((acc, rule) => {
     if (rule.enabled !== false && rule.action in acc) acc[rule.action as RuleAction] += 1;
@@ -1444,8 +1448,8 @@ function StrategyRuleBuilder({
       <div className="rule-builder-head">
         <div>
           <span className="section-kicker">指标规则</span>
-          <h3>按分类加入指标条件</h3>
-          <p>选一个指标，直接决定它是硬筛选、排序加权、风险扣分还是只随结果展示。</p>
+          <h3>补充指标条件</h3>
+          <p>运行参数里已有的指标不再重复出现；这里放资金、事件、筹码等补充条件。</p>
         </div>
         <div className="rule-builder-stats">
           {(Object.keys(ruleActionMeta) as RuleAction[]).map((action) => (
@@ -1459,34 +1463,13 @@ function StrategyRuleBuilder({
 
       <div className="rule-builder-layout">
         <aside className="rule-picker">
-          <div className="rule-picker-search">
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索指标 / 数据源 / 公式" />
-          </div>
-          <div className="rule-category-rail">
-            <button className={category === 'all' ? 'active' : ''} type="button" onClick={() => setCategory('all')}>
-              全部
-            </button>
-            {categories.map((item) => (
-              <button key={item.id} className={category === item.id ? 'active' : ''} type="button" onClick={() => setCategory(item.id)}>
-                {item.label}
-              </button>
-            ))}
-          </div>
-          <div className="rule-indicator-list">
-            {visibleIndicators.map((indicator) => (
-              <button
-                key={indicator.id}
-                className={selectedIndicator?.id === indicator.id ? 'active' : ''}
-                type="button"
-                onClick={() => setSelectedId(indicator.id)}
-              >
-                <strong>{indicator.name}</strong>
-                <span>{categoryById[indicator.category_id]?.label || indicator.category_id}</span>
-                <em>{indicatorRuleCapabilityLabel(indicator)}</em>
-              </button>
-            ))}
-            {visibleIndicators.length === 0 && <EmptyState text="没有匹配指标。" />}
-          </div>
+          <IndicatorSelect
+            indicators={usableIndicators}
+            categories={categories}
+            value={selectedIndicator?.id || ''}
+            onChange={setSelectedId}
+            placeholder="选择补充指标"
+          />
           <button className="primary compact add-rule-button" type="button" disabled={!selectedIndicator} onClick={() => addRule()}>
             <Plus size={14} />
             加入规则
@@ -1673,6 +1656,385 @@ function StrategyRuleCard({
           ))}
         </div>
       )}
+    </article>
+  );
+}
+
+function IndicatorSelect({
+  indicators,
+  categories,
+  value,
+  onChange,
+  placeholder,
+  compact = false,
+}: {
+  indicators: IndicatorDefinition[];
+  categories: IndicatorLibrary['categories'];
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('all');
+  const categoryById = useMemo(
+    () => Object.fromEntries(categories.map((item) => [item.id, item])),
+    [categories],
+  );
+  const selected = indicators.find((indicator) => indicator.id === value);
+  const visibleIndicators = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return indicators.filter((indicator) => {
+      if (category !== 'all' && indicator.category_id !== category) return false;
+      if (!needle) return true;
+      return `${indicator.name} ${indicator.id} ${indicator.source} ${indicator.description}`.toLowerCase().includes(needle);
+    });
+  }, [category, indicators, query]);
+
+  return (
+    <div
+      className={compact ? 'indicator-select compact' : 'indicator-select'}
+      onBlur={(event) => {
+        const nextFocus = event.relatedTarget as Node | null;
+        if (!nextFocus || !event.currentTarget.contains(nextFocus)) setOpen(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') setOpen(false);
+      }}
+    >
+      <button
+        className={open ? 'indicator-select-trigger active' : 'indicator-select-trigger'}
+        type="button"
+        disabled={indicators.length === 0}
+        onClick={() => setOpen((next) => !next)}
+      >
+        <span>
+          <strong>{selected?.name || placeholder}</strong>
+          <em>
+            {selected
+              ? `${categoryById[selected.category_id]?.label || selected.category_id} · ${indicatorRuleCapabilityLabel(selected)}`
+              : '按分类搜索可用指标'}
+          </em>
+        </span>
+        <ChevronDown size={15} />
+      </button>
+      {open && (
+        <div className="indicator-select-menu">
+          <label className="indicator-select-search">
+            <Search size={14} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索指标 / 数据源 / 公式" />
+          </label>
+          <div className="indicator-select-categories">
+            <button className={category === 'all' ? 'active' : ''} type="button" onClick={() => setCategory('all')}>
+              全部
+            </button>
+            {categories.map((item) => (
+              <button key={item.id} className={category === item.id ? 'active' : ''} type="button" onClick={() => setCategory(item.id)}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div className="indicator-select-options">
+            {visibleIndicators.map((indicator) => (
+              <button
+                key={indicator.id}
+                className={indicator.id === value ? 'active' : ''}
+                type="button"
+                onClick={() => {
+                  onChange(indicator.id);
+                  setOpen(false);
+                }}
+              >
+                <span>
+                  <strong>{indicator.name}</strong>
+                  <em>{categoryById[indicator.category_id]?.label || indicator.category_id}</em>
+                </span>
+                <small>{indicatorRuleCapabilityLabel(indicator)}</small>
+              </button>
+            ))}
+            {visibleIndicators.length === 0 && <EmptyState text="没有匹配指标。" />}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StrategyResonanceBuilder({
+  library,
+  strategy,
+  setStrategy,
+}: {
+  library: IndicatorLibrary;
+  strategy: StrategyConfig;
+  setStrategy: (config: StrategyConfig) => void;
+}) {
+  const [draftIds, setDraftIds] = useState<string[]>([]);
+  const [draftMultiplier, setDraftMultiplier] = useState(1.1);
+  const indicatorById = useMemo(
+    () => Object.fromEntries(library.indicators.map((indicator) => [indicator.id, indicator])),
+    [library.indicators],
+  );
+  const availableIndicators = useMemo(
+    () => library.indicators
+      .filter((indicator) => indicator.kind === 'data' && indicator.data_status === 'executable')
+      .filter((indicator) => (indicator.supported_actions || []).length > 0)
+      .sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN')),
+    [library.indicators],
+  );
+  const categories = library.categories
+    .filter((item) => availableIndicators.some((indicator) => indicator.category_id === item.id));
+  const resonances = Array.isArray(strategy.strategy_resonances) ? strategy.strategy_resonances : [];
+  const effectiveDraftIds = [...(draftIds.length ? draftIds : availableIndicators.slice(0, 2).map((indicator) => indicator.id))];
+  while (effectiveDraftIds.length < 2) effectiveDraftIds.push('');
+  const uniqueDraftIds = Array.from(new Set(effectiveDraftIds.filter((id) => indicatorById[id])));
+
+  const updateResonances = (nextResonances: StrategyResonance[]) => {
+    setStrategy({ ...strategy, strategy_resonances: nextResonances });
+  };
+  const patchResonance = (resonanceId: string, patch: Partial<StrategyResonance>) => {
+    updateResonances(resonances.map((resonance) => (resonance.id === resonanceId ? { ...resonance, ...patch } : resonance)));
+  };
+  const addDraftSlot = () => {
+    setDraftIds([...effectiveDraftIds, '']);
+  };
+  const setDraftId = (index: number, indicatorId: string) => {
+    const next = [...effectiveDraftIds];
+    next[index] = indicatorId;
+    setDraftIds(next);
+  };
+  const addResonance = () => {
+    if (uniqueDraftIds.length < 2) return;
+    const indicators = uniqueDraftIds.map((id) => indicatorById[id]).filter(Boolean);
+    updateResonances([
+      ...resonances,
+      {
+        id: createResonanceId(),
+        name: indicators.map((indicator) => indicator.name).slice(0, 3).join(' + '),
+        conditions: indicators.map(defaultRuleCondition),
+        multiplier: draftMultiplier,
+        enabled: true,
+      },
+    ]);
+    setDraftIds([]);
+  };
+  const removeResonance = (resonanceId: string) => {
+    updateResonances(resonances.filter((resonance) => resonance.id !== resonanceId));
+  };
+
+  return (
+    <section className="strategy-rule-builder strategy-resonance-builder wide">
+      <div className="rule-builder-head">
+        <div>
+          <span className="section-kicker">组合共振</span>
+          <h3>条件同时命中后乘系数</h3>
+          <p>这里不是旧的隐藏 interaction；用户明确选择一组指标，命中后按固定系数放大或降权总分。</p>
+        </div>
+        <div className="rule-builder-stats">
+          <span>
+            <b>{resonances.filter((item) => item.enabled !== false).length}</b>
+            <em>启用</em>
+          </span>
+          <span>
+            <b>{resonances.length}</b>
+            <em>组合</em>
+          </span>
+        </div>
+      </div>
+
+      <div className="resonance-draft">
+        <div className="resonance-draft-selects">
+          {effectiveDraftIds.map((indicatorId, index) => (
+            <IndicatorSelect
+              key={`${index}-${indicatorId || 'blank'}`}
+              indicators={availableIndicators}
+              categories={categories}
+              value={indicatorId}
+              onChange={(nextId) => setDraftId(index, nextId)}
+              placeholder={`选择指标 ${index + 1}`}
+              compact
+            />
+          ))}
+        </div>
+        <div className="resonance-draft-actions">
+          <select value={draftMultiplier} onChange={(event) => setDraftMultiplier(Number(event.target.value))}>
+            {resonanceMultiplierOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <button className="ghost compact" type="button" onClick={addDraftSlot}>
+            <Plus size={14} />
+            再加一项
+          </button>
+          <button className="primary compact" type="button" disabled={uniqueDraftIds.length < 2} onClick={addResonance}>
+            <Plus size={14} />
+            新增共振
+          </button>
+        </div>
+      </div>
+
+      <div className="resonance-board">
+        {resonances.length === 0 && (
+          <div className="rule-empty-state">
+            <strong>还没有组合共振</strong>
+            <span>例如“题材热度 + 放量 + 突破位置”同时达标时，把总分乘以 x1.10 或 x1.20。</span>
+          </div>
+        )}
+        {resonances.map((resonance) => (
+          <StrategyResonanceCard
+            key={resonance.id}
+            resonance={resonance}
+            indicators={availableIndicators}
+            categories={categories}
+            indicatorById={indicatorById}
+            patch={(patch) => patchResonance(resonance.id, patch)}
+            remove={() => removeResonance(resonance.id)}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StrategyResonanceCard({
+  resonance,
+  indicators,
+  categories,
+  indicatorById,
+  patch,
+  remove,
+}: {
+  resonance: StrategyResonance;
+  indicators: IndicatorDefinition[];
+  categories: IndicatorLibrary['categories'];
+  indicatorById: Record<string, IndicatorDefinition>;
+  patch: (patch: Partial<StrategyResonance>) => void;
+  remove: () => void;
+}) {
+  const conditions = Array.isArray(resonance.conditions) ? resonance.conditions : [];
+  const patchCondition = (index: number, conditionPatch: Partial<StrategyRuleCondition>) => {
+    patch({ conditions: conditions.map((condition, itemIndex) => (itemIndex === index ? { ...condition, ...conditionPatch } : condition)) });
+  };
+  const replaceConditionIndicator = (index: number, indicatorId: string) => {
+    const indicator = indicatorById[indicatorId];
+    if (!indicator) return;
+    const nextCondition = defaultRuleCondition(indicator);
+    patch({ conditions: conditions.map((condition, itemIndex) => (itemIndex === index ? { ...nextCondition, id: condition.id } : condition)) });
+  };
+  const addCondition = () => {
+    const used = new Set(conditions.map((condition) => condition.indicator_id));
+    const nextIndicator = indicators.find((indicator) => !used.has(indicator.id)) || indicators[0];
+    if (!nextIndicator) return;
+    patch({ conditions: [...conditions, defaultRuleCondition(nextIndicator)] });
+  };
+  const removeCondition = (index: number) => {
+    if (conditions.length <= 2) return;
+    patch({ conditions: conditions.filter((_, itemIndex) => itemIndex !== index) });
+  };
+
+  return (
+    <article className={`strategy-resonance-card ${resonance.enabled === false ? 'disabled' : ''}`}>
+      <header>
+        <label>
+          <span>组合名称</span>
+          <input value={resonance.name || ''} onChange={(event) => patch({ name: event.target.value })} placeholder="组合共振" />
+        </label>
+        <div className="rule-card-actions">
+          <label className="rule-enabled-toggle">
+            <input type="checkbox" checked={resonance.enabled !== false} onChange={(event) => patch({ enabled: event.target.checked })} />
+            启用
+          </label>
+          <button className="table-action" type="button" onClick={remove} title="移除共振">
+            <X size={14} />
+          </button>
+        </div>
+      </header>
+
+      <div className="resonance-multiplier-row">
+        {resonanceMultiplierOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={Number(resonance.multiplier || 1) === option.value ? 'active' : ''}
+            onClick={() => patch({ multiplier: option.value })}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="resonance-condition-list">
+        {conditions.map((condition, index) => {
+          const indicator = indicatorById[condition.indicator_id];
+          const operators: RuleOperator[] = indicator ? supportedRuleOperators(indicator, 'filter') : ['gte'];
+          const operator: RuleOperator = operators.includes(condition.operator) ? condition.operator : operators[0];
+          const numeric = indicator ? isNumericIndicator(indicator) : true;
+          const unit = indicator?.unit || '';
+          return (
+            <div className="resonance-condition" key={condition.id || `${condition.indicator_id}-${index}`}>
+              <IndicatorSelect
+                indicators={indicators}
+                categories={categories}
+                value={condition.indicator_id}
+                onChange={(indicatorId) => replaceConditionIndicator(index, indicatorId)}
+                placeholder={`共振条件 ${index + 1}`}
+                compact
+              />
+              {indicator && (
+                <div className="resonance-condition-controls">
+                  <div className="rule-operator-row compact">
+                    {operators.map((item) => (
+                      <button key={item} type="button" className={operator === item ? 'active' : ''} onClick={() => patchCondition(index, { operator: item })}>
+                        {ruleOperatorMeta[item]?.label || item}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="resonance-condition-values">
+                    {operator !== 'is_true' && (
+                      <label>
+                        <span>{operator === 'between' ? '下限' : '数值'}</span>
+                        <div className="rule-value-input">
+                          <input
+                            type={numeric ? 'number' : 'text'}
+                            step={numeric ? ruleInputStep(indicator) : undefined}
+                            value={String(condition.value ?? '')}
+                            onChange={(event) => patchCondition(index, { value: event.target.value === '' ? null : numeric ? Number(event.target.value) : event.target.value })}
+                            placeholder={ruleValuePlaceholder(indicator)}
+                          />
+                          {unit && <em>{unit}</em>}
+                        </div>
+                      </label>
+                    )}
+                    {operator === 'between' && (
+                      <label>
+                        <span>上限</span>
+                        <div className="rule-value-input">
+                          <input
+                            type={numeric ? 'number' : 'text'}
+                            step={numeric ? ruleInputStep(indicator) : undefined}
+                            value={String(condition.value2 ?? '')}
+                            onChange={(event) => patchCondition(index, { value2: event.target.value === '' ? null : numeric ? Number(event.target.value) : event.target.value })}
+                            placeholder={indicator.range_hint?.max !== undefined ? String(indicator.range_hint.max) : ''}
+                          />
+                          {unit && <em>{unit}</em>}
+                        </div>
+                      </label>
+                    )}
+                  </div>
+                </div>
+              )}
+              <button className="table-action" type="button" disabled={conditions.length <= 2} onClick={() => removeCondition(index)} title="移除条件">
+                <X size={14} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <button className="ghost compact add-condition-button" type="button" onClick={addCondition}>
+        <Plus size={14} />
+        增加条件
+      </button>
     </article>
   );
 }
@@ -2157,6 +2519,7 @@ function CandidateScoreDetails({ row }: { row: Candidate }) {
     { key: 'trend', label: '趋势', note: 'RPS、均线与 MACD' },
     { key: 'theme', label: '题材', note: '题材热度和涨停扩散' },
     { key: 'custom_rules', label: '规则', note: '自定义指标规则' },
+    { key: 'resonance_multiplier', label: '共振', note: '组合条件乘系数' },
     { key: 'freshness', label: '新鲜度', note: '越靠近触发点越高' },
     { key: 'risk', label: '风险扣分', note: '过热、偏离和追高' },
   ];
@@ -2198,11 +2561,14 @@ function CandidateScoreDetails({ row }: { row: Candidate }) {
             {scoreItems.map((item) => {
               const value = breakdown[item.key];
               const isRisk = item.key === 'risk';
-              const width = Math.min(Math.abs(Number(value || 0)) / (isRisk ? 20 : 30), 1) * 100;
+              const isMultiplier = item.key === 'resonance_multiplier';
+              const width = isMultiplier
+                ? Math.min(Math.abs(Number(value || 1) - 1) / 0.4, 1) * 100
+                : Math.min(Math.abs(Number(value || 0)) / (isRisk ? 20 : 30), 1) * 100;
               return (
-                <div className={isRisk ? 'score-card risk' : 'score-card'} key={item.key}>
+                <div className={isRisk ? 'score-card risk' : isMultiplier ? 'score-card multiplier' : 'score-card'} key={item.key}>
                   <span>{item.label}</span>
-                  <strong>{formatSignedScore(value, isRisk)}</strong>
+                  <strong>{isMultiplier ? formatMultiplier(value) : formatSignedScore(value, isRisk)}</strong>
                   <div className="score-meter"><i style={{ width: `${width}%` }} /></div>
                   <small>{item.note}</small>
                 </div>
@@ -4112,10 +4478,16 @@ function defaultOperatorForIndicator(indicator: IndicatorDefinition): RuleOperat
 }
 
 function defaultValueForIndicator(indicator: IndicatorDefinition) {
-  const recommendation = (indicator.recommended_rules || [])[0];
+  const recommendation = defaultConditionRecommendation(indicator);
   if (recommendation?.value !== undefined) return recommendation.value;
   if (indicator.default_operator === 'between' && indicator.range_hint?.min !== undefined) return indicator.range_hint.min;
   return '';
+}
+
+function defaultConditionRecommendation(indicator: IndicatorDefinition) {
+  return (indicator.recommended_rules || []).find((item) => item.action === 'filter')
+    || (indicator.recommended_rules || []).find((item) => item.action === 'score')
+    || (indicator.recommended_rules || [])[0];
 }
 
 function defaultStrategyRule(indicator: IndicatorDefinition): StrategyRule {
@@ -4143,11 +4515,39 @@ function defaultStrategyRule(indicator: IndicatorDefinition): StrategyRule {
   };
 }
 
+function defaultRuleCondition(indicator: IndicatorDefinition): StrategyRuleCondition {
+  const recommendation = defaultConditionRecommendation(indicator);
+  const operator = recommendation?.operator || defaultOperatorForIndicator(indicator);
+  return {
+    id: createConditionId(indicator.id),
+    indicator_id: indicator.id,
+    operator,
+    value: recommendation?.value ?? defaultValueForIndicator(indicator),
+    value2: recommendation?.value2 ?? (operator === 'between' ? indicator.range_hint?.max ?? '' : undefined),
+    window_days: recommendation?.window_days,
+    missing_policy: 'skip',
+  };
+}
+
 function createRuleId(indicatorId: string) {
   const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   return `rule-${indicatorId}-${random}`;
+}
+
+function createConditionId(indicatorId: string) {
+  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return `${indicatorId}-${random}`;
+}
+
+function createResonanceId() {
+  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return `resonance-${random}`;
 }
 
 function isNumericIndicator(indicator: IndicatorDefinition) {
@@ -4366,6 +4766,7 @@ function candidateScoreBreakdown(row: Candidate) {
     freshness: nullableNumber(raw.freshness),
     risk: nullableNumber(raw.risk),
     custom_rules: nullableNumber(raw.custom_rules),
+    resonance_multiplier: nullableNumber(raw.resonance_multiplier),
   };
 }
 
@@ -4431,6 +4832,12 @@ function formatSignedScore(value: unknown, isRisk = false) {
   if (number === null) return '-';
   if (isRisk && number === 0) return '0.00';
   return number > 0 ? `+${number.toFixed(2)}` : number.toFixed(2);
+}
+
+function formatMultiplier(value: unknown) {
+  const number = nullableNumber(value);
+  if (number === null) return '-';
+  return `x${number.toFixed(2)}`;
 }
 
 function formatDays(value: unknown) {

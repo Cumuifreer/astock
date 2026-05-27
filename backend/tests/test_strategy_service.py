@@ -87,6 +87,55 @@ def test_normalize_drops_strategy_interactions_with_migration_warning():
     assert "trend_resonance" not in normalized["analysis_engines"]
 
 
+def test_normalize_preserves_explicit_strategy_resonances():
+    normalized = normalize_strategy_config(
+        {
+            "signal_mode": "feature_driven",
+            "strategy_resonances": [
+                {
+                    "id": "hot-volume-confirm",
+                    "name": "题材放量确认",
+                    "conditions": [
+                        {"indicator_id": "topic_heat", "operator": "gte", "value": "70"},
+                        {"indicator_id": "volume_ratio", "operator": "gte", "value": 2},
+                    ],
+                    "multiplier": 1.35,
+                    "enabled": True,
+                }
+            ],
+        }
+    )
+
+    assert normalized["strategy_resonances"] == [
+        {
+            "id": "hot-volume-confirm",
+            "name": "题材放量确认",
+            "conditions": [
+                {
+                    "id": "topic_heat-1",
+                    "indicator_id": "topic_heat",
+                    "operator": "gte",
+                    "value": 70.0,
+                    "value2": None,
+                    "window_days": 0,
+                    "missing_policy": "neutral",
+                },
+                {
+                    "id": "volume_ratio-2",
+                    "indicator_id": "volume_ratio",
+                    "operator": "gte",
+                    "value": 2.0,
+                    "value2": None,
+                    "window_days": 0,
+                    "missing_policy": "neutral",
+                },
+            ],
+            "multiplier": 1.35,
+            "enabled": True,
+        }
+    ]
+
+
 def test_migrate_refreshes_system_template_config_without_resetting_user_default(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

@@ -96,6 +96,7 @@ def test_all_strategy_form_fields_are_defined_in_indicator_library():
         "signal_mode",
         "strategy_rules",
         "strategy_interactions",
+        "strategy_resonances",
     }
     assert all(key in DEFAULT_STRATEGY_CONFIG for key in strategy_keys if key)
     assert all(indicator.get("control", {}).get("type") for indicator in indicators.values() if indicator.get("kind") == "strategy_param")

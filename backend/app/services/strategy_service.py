@@ -106,6 +106,7 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "analysis_engines": [],
     "strategy_rules": [],
     "strategy_interactions": [],
+    "strategy_resonances": [],
 }
 
 RULE_ACTIONS = {"filter", "score", "risk", "display"}
@@ -255,6 +256,45 @@ def _normalize_strategy_interactions(value: Any) -> List[Dict[str, Any]]:
     return normalized
 
 
+def _normalize_strategy_resonances(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            continue
+        conditions = [
+            condition
+            for condition in (
+                _normalize_rule_condition(condition_raw, condition_index)
+                for condition_index, condition_raw in enumerate(raw.get("conditions") or [])
+                if isinstance(condition_raw, dict)
+            )
+            if condition is not None
+        ]
+        if len(conditions) < 2:
+            continue
+        resonance_id = str(raw.get("id") or f"resonance-{index + 1}").strip()
+        if not resonance_id or resonance_id in seen:
+            resonance_id = f"resonance-{index + 1}"
+        seen.add(resonance_id)
+        multiplier = _coerce_number(raw.get("multiplier"))
+        if multiplier is None:
+            multiplier = 1.0
+        multiplier = max(0.6, min(1.8, float(multiplier)))
+        normalized.append(
+            {
+                "id": resonance_id,
+                "name": str(raw.get("name") or "组合共振"),
+                "conditions": conditions,
+                "multiplier": round(multiplier, 2),
+                "enabled": bool(raw.get("enabled", True)),
+            }
+        )
+    return normalized
+
+
 def _engine_for_indicator(indicator_id: str) -> Optional[str]:
     if indicator_id.startswith("trend_"):
         return "trend_resonance"
@@ -280,6 +320,11 @@ def _infer_analysis_engines(strategy: Dict[str, Any], legacy_signal_mode: Any = 
         engine = _engine_for_indicator(str(rule.get("indicator_id") or ""))
         if engine:
             engines.add(engine)
+    for resonance in strategy.get("strategy_resonances") or []:
+        for condition in resonance.get("conditions") or []:
+            engine = _engine_for_indicator(str(condition.get("indicator_id") or ""))
+            if engine:
+                engines.add(engine)
     return [engine for engine in ANALYSIS_ENGINES if engine in engines]
 
 
@@ -412,6 +457,7 @@ def normalize_strategy_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any
     raw_config = config or {}
     merged = {**DEFAULT_STRATEGY_CONFIG, **raw_config}
     merged["strategy_rules"] = _normalize_strategy_rules(merged.get("strategy_rules"))
+    merged["strategy_resonances"] = _normalize_strategy_resonances(merged.get("strategy_resonances"))
     migration = _migration_info(raw_config)
     raw_signal_mode = raw_config.get("signal_mode")
     if raw_signal_mode in {"breakout", "pullback"}:

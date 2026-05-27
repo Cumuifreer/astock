@@ -850,6 +850,24 @@ def _strategy_rule_matches_row(row: Dict[str, Any], rule: Dict[str, Any], action
     return bool(_strategy_rule_mask(series, rule).iloc[0])
 
 
+def _strategy_condition_matches_row(row: Dict[str, Any], condition: Dict[str, Any]) -> bool:
+    indicator = INDICATOR_BY_ID.get(str(condition.get("indicator_id") or ""))
+    if not indicator or indicator.get("data_status") != "executable":
+        return False
+    column = str(indicator.get("analysis_field") or indicator.get("id") or "")
+    if column not in row:
+        return False
+    value = row.get(column)
+    try:
+        value_missing = bool(pd.isna(value))
+    except (TypeError, ValueError):
+        value_missing = value is None
+    if value_missing:
+        return str(condition.get("missing_policy") or "neutral") in {"keep", "allow"}
+    series = pd.Series([value])
+    return bool(_strategy_rule_mask(series, condition).iloc[0])
+
+
 def _strategy_rule_score_adjustment(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
     adjustment = 0.0
     for rule in strategy.get("strategy_rules") or []:
@@ -863,6 +881,28 @@ def _strategy_rule_score_adjustment(row: Dict[str, Any], strategy: Dict[str, Any
             weight = 5.0
         adjustment += float(weight) if action == "score" else -float(weight)
     return round(adjustment, 2)
+
+
+def _matching_strategy_resonances(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[Dict[str, Any]]:
+    matches: List[Dict[str, Any]] = []
+    for resonance in strategy.get("strategy_resonances") or []:
+        if not resonance.get("enabled", True):
+            continue
+        conditions = [condition for condition in resonance.get("conditions") or [] if isinstance(condition, dict)]
+        if len(conditions) < 2:
+            continue
+        if all(_strategy_condition_matches_row(row, condition) for condition in conditions):
+            matches.append(resonance)
+    return matches
+
+
+def _strategy_resonance_multiplier(row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
+    multiplier = 1.0
+    for resonance in _matching_strategy_resonances(row, strategy):
+        value = safe_float(resonance.get("multiplier"))
+        if value is not None:
+            multiplier *= float(value)
+    return round(multiplier, 4)
 
 
 def _apply_theme_filters(
@@ -1234,6 +1274,7 @@ def _signal_type(row: Dict[str, Any], strategy: Dict[str, Any]) -> str:
 
 def _with_strategy_rule_adjustment(score: float, row: Dict[str, Any], strategy: Dict[str, Any]) -> float:
     adjusted = max(score + _strategy_rule_score_adjustment(row, strategy), 0)
+    adjusted *= _strategy_resonance_multiplier(row, strategy)
     return round(adjusted, 2)
 
 
@@ -1611,6 +1652,7 @@ def _score_breakdown(row: Dict[str, Any], strategy: Dict[str, Any]) -> Dict[str,
         "freshness": round(max(freshness, 0.0), 2),
         "risk": round(-max(risk, 0.0), 2),
         "custom_rules": _strategy_rule_score_adjustment(row, strategy),
+        "resonance_multiplier": _strategy_resonance_multiplier(row, strategy),
     }
 
 
@@ -1884,6 +1926,10 @@ def _candidate_reasons(row: Dict[str, Any], strategy: Dict[str, Any]) -> List[st
         label = row.get("trend_signal_label")
         if label:
             reasons.append(str(label))
+    for resonance in _matching_strategy_resonances(row, strategy):
+        multiplier = safe_float(resonance.get("multiplier"))
+        if multiplier is not None and multiplier != 1:
+            reasons.append(f"{resonance.get('name') or '组合共振'} x{multiplier:.2f}")
     return reasons
 
 

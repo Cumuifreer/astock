@@ -166,6 +166,14 @@ export interface StrategyInteraction {
   enabled: boolean;
 }
 
+export interface StrategyResonance {
+  id: string;
+  name: string;
+  conditions: StrategyRuleCondition[];
+  multiplier: number;
+  enabled: boolean;
+}
+
 export interface IndicatorLibrary {
   categories: IndicatorCategory[];
   indicators: IndicatorDefinition[];
@@ -307,6 +315,7 @@ export interface StrategyConfig {
   analysis_engines?: string[];
   strategy_rules: StrategyRule[];
   strategy_interactions?: StrategyInteraction[];
+  strategy_resonances?: StrategyResonance[];
   signal_profile?: SignalModeTemplate | null;
   migration?: StrategyMigrationInfo | null;
 }
