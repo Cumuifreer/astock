@@ -957,6 +957,83 @@ button {
   font-weight: 900;
 }
 
+.indicator-active-strip {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+
+.indicator-active-list {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.indicator-active-chip,
+.combo-selected-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.indicator-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.indicator-card {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+  min-height: 188px;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: white;
+}
+
+.indicator-card.active {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent-soft) 35%, white);
+}
+
+.indicator-card-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2);
+}
+
+.indicator-card-head strong,
+.indicator-card-head small {
+  display: block;
+}
+
+.indicator-card-head small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.indicator-card-body {
+  min-width: 0;
+}
+
 .indicator-table {
   display: grid;
   overflow-x: auto;
@@ -1117,6 +1194,29 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
   margin-top: var(--space-4);
+}
+
+.combo-selected-row {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.combo-choice-section {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+}
+
+.combo-choice-list {
+  display: grid;
+  gap: var(--space-2);
 }
 
 .combo-choice {
@@ -1593,6 +1693,7 @@ button {
   .parameter-grid,
   .rule-editor,
   .brief-list-grid,
+  .indicator-card-grid,
   .combo-choice-grid {
     grid-template-columns: 1fr;
   }

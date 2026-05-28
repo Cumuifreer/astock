@@ -13,7 +13,7 @@ export const ruleActionMeta: Record<RuleAction, { label: string; verb: string; n
   filter: { label: '硬性筛选', verb: '必须满足', note: '不满足直接剔除' },
   score: { label: '加分', verb: '命中加分', note: '参与排序分数' },
   risk: { label: '风险控制', verb: '命中扣分', note: '只做风险折减' },
-  display: { label: '仅展示', verb: '候选展示', note: '不参与决策' },
+  display: { label: '展示字段', verb: '候选展示', note: '由系统自动展示' },
 };
 
 export const ruleOperatorMeta: Record<RuleOperator, { label: string; summary: string }> = {
@@ -99,8 +99,7 @@ export function indicatorParameterScope(indicator: IndicatorDefinition): '股票
 }
 
 export function supportedRuleActions(indicator: IndicatorDefinition): RuleAction[] {
-  const actions = (indicator.supported_actions || []).filter((action): action is RuleAction => action in ruleActionMeta);
-  return actions.length > 0 ? actions : ['display'];
+  return (indicator.supported_actions || []).filter((action): action is RuleAction => action in ruleActionMeta && action !== 'display');
 }
 
 export function supportedRuleOperators(indicator: IndicatorDefinition, action: RuleAction): RuleOperator[] {
@@ -116,7 +115,7 @@ export function defaultOperatorForIndicator(indicator: IndicatorDefinition): Rul
 
 export function defaultStrategyRule(indicator: IndicatorDefinition): StrategyRule {
   const actions = supportedRuleActions(indicator);
-  const action = actions.includes('filter') ? 'filter' : actions[0] || 'display';
+  const action = actions.includes('filter') ? 'filter' : actions[0] || 'score';
   const recommendation = (indicator.recommended_rules || []).find((item) => item.action === action) || (indicator.recommended_rules || [])[0];
   const operator = recommendation?.operator || defaultOperatorForIndicator(indicator);
   const missingPolicy = indicator.default_missing_policy === 'skip' ? 'skip' : indicator.default_missing_policy === 'allow' ? 'keep' : 'neutral';

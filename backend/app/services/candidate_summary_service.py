@@ -12,7 +12,6 @@ from backend.app.services.daily_brief_service import _extract_json, _http_error_
 
 
 PROMPT_VERSION = "candidate-ai-v2"
-FALLBACK_SUMMARY = "未配置模型，以下先按规则证据生成解释。"
 
 
 class CandidateSummaryService:
@@ -40,25 +39,26 @@ class CandidateSummaryService:
         if cached:
             return cached
         generated_at = datetime.utcnow().isoformat(timespec="seconds")
+        matched = matched_rules or []
+        risks = risk_items or []
         if not self.api_key:
-            return {
-                "enabled": False,
-                "summary": _fallback_summary(candidate, matched_rules or []),
-                "opportunities": _fallback_opportunities(candidate, matched_rules or []),
-                "risks": _fallback_risks(candidate, risk_items or []),
-                "watch_plan": _fallback_watch_plan(),
-                "generated_at": generated_at,
-                "prompt_version": PROMPT_VERSION,
-            }
-        result = self._call_llm(candidate, matched_rules or [], risk_items or [])
+            return _fallback_result(candidate, matched, risks, generated_at, "missing_api_key")
+        try:
+            result = self._call_llm(candidate, matched, risks)
+        except ValueError as exc:
+            return _fallback_result(candidate, matched, risks, generated_at, "invalid_response", str(exc))
+        except Exception as exc:
+            return _fallback_result(candidate, matched, risks, generated_at, "llm_error", str(exc))
         result = {
             "enabled": True,
-            "summary": str(result.get("summary") or result.get("ai_interpretation") or _fallback_summary(candidate, matched_rules or [])),
-            "opportunities": _string_list(result.get("opportunities")) or _fallback_opportunities(candidate, matched_rules or []),
-            "risks": _string_list(result.get("risks")) or _fallback_risks(candidate, risk_items or []),
+            "summary": str(result.get("summary") or result.get("ai_interpretation") or _fallback_summary(candidate, matched)),
+            "opportunities": _string_list(result.get("opportunities")) or _fallback_opportunities(candidate, matched),
+            "risks": _string_list(result.get("risks")) or _fallback_risks(candidate, risks),
             "watch_plan": _string_list(result.get("watch_plan")) or _fallback_watch_plan(),
             "generated_at": generated_at,
             "prompt_version": PROMPT_VERSION,
+            "fallback_reason": None,
+            "error_message": None,
         }
         self.db.upsert(
             "candidate_ai_summaries",
@@ -176,6 +176,27 @@ def _compact_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
         "interpretation",
     ]
     return {key: metrics.get(key) for key in keep if key in metrics}
+
+
+def _fallback_result(
+    candidate: Dict[str, Any],
+    matched_rules: List[Dict[str, Any]],
+    risk_items: List[Dict[str, Any]],
+    generated_at: str,
+    fallback_reason: str,
+    error_message: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "enabled": False,
+        "summary": _fallback_summary(candidate, matched_rules),
+        "opportunities": _fallback_opportunities(candidate, matched_rules),
+        "risks": _fallback_risks(candidate, risk_items),
+        "watch_plan": _fallback_watch_plan(),
+        "generated_at": generated_at,
+        "prompt_version": PROMPT_VERSION,
+        "fallback_reason": fallback_reason,
+        "error_message": error_message,
+    }
 
 
 def _fallback_summary(candidate: Dict[str, Any], matched_rules: List[Dict[str, Any]]) -> str:

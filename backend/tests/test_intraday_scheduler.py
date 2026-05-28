@@ -1,8 +1,10 @@
 from datetime import datetime
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from backend.app.db import Database
 from backend.app.schema import migrate
+from backend.app.services import data_service as data_service_module
 from backend.app.services.data_service import DataService
 from backend.app.services.intraday_schedule import DEFAULT_INTRADAY_SCHEDULE_TEXT, parse_intraday_schedule
 from backend.app.services.intraday_scheduler import IntradayScheduler
@@ -120,3 +122,24 @@ def test_runtime_health_reports_scheduler_slots_and_data_dates(tmp_path, monkeyp
     assert slot_1455["task_id"] == "intraday-auto-20260522-1455"
     assert health["tasks"]["queued"] == 1
     assert health["data"]["latest_history_date"] is None
+
+
+def test_runtime_health_reports_desensitized_llm_status(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    monkeypatch.setattr(
+        data_service_module,
+        "settings",
+        SimpleNamespace(
+            daily_brief_api_key="sk-test-secret",
+            daily_brief_model="deepseek-chat",
+            daily_brief_llm_url="https://api.deepseek.com/chat/completions",
+        ),
+    )
+
+    health = DataService(db).runtime_health(now=datetime(2026, 5, 22, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")))
+
+    assert health["llm"]["configured"] is True
+    assert health["llm"]["model"] == "deepseek-chat"
+    assert health["llm"]["url_host"] == "api.deepseek.com"
+    assert "sk-test-secret" not in str(health)

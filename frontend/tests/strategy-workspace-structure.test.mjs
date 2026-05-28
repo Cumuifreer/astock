@@ -26,7 +26,7 @@ test('scanner page is organized as one indicator matrix plus combination panel',
     assert.match(combined, new RegExp(label));
   }
   assert.match(indicatorMatrixSource, /点击左侧开启/);
-  assert.doesNotMatch(combined, /高级参数|规则配置|调整参数|怎么用|尚未启用|开启后填写/);
+  assert.doesNotMatch(combined, /高级参数|规则配置|调整参数|怎么用|尚未启用|开启后填写|仅展示|移除|影响/);
   assert.doesNotMatch(scannerSource, /StrategyRuleBuilder/);
   assert.doesNotMatch(scannerSource, /StrategyResonanceBuilder/);
 });
@@ -35,7 +35,10 @@ test('combination bonus can only reference enabled filter and score indicators',
   assert.match(scannerSource, /selectableResonanceRules/);
   assert.match(scannerSource, /rule\.enabled/);
   assert.match(scannerSource, /rule\.action === 'filter' \|\| rule\.action === 'score'/);
+  assert.match(combinationSource, /添加组合加分/);
   assert.match(combinationSource, /combo-choice-grid/);
+  assert.match(combinationSource, /combo-selected-chip/);
+  assert.match(combinationSource, /至少选择两个指标/);
   assert.doesNotMatch(scannerSource, /risk.*resonance/i);
   assert.doesNotMatch(scannerSource, /display.*resonance/i);
 });
@@ -43,11 +46,12 @@ test('combination bonus can only reference enabled filter and score indicators',
 test('scanner supports adding editing saving and running current draft', () => {
   assert.match(indicatorMatrixSource, /onAddRule/);
   assert.match(indicatorMatrixSource, /onPatchRule/);
-  assert.match(indicatorMatrixSource, /onRemoveRule/);
+  assert.doesNotMatch(indicatorMatrixSource, /onRemoveRule|removeRule/);
   assert.match(combinationSource, /onSetResonances/);
   assert.match(scannerSource, /保存/);
   assert.doesNotMatch(scannerSource, /保存为默认|系统策略|默认策略/);
   assert.match(scannerSource, /运行当前策略/);
+  assert.match(scannerSource, /strategy_name/);
   assert.match(shellSource, /useStrategyDraft\.getState/);
   assert.match(shellSource, /composeStrategyConfig/);
   assert.doesNotMatch(shellSource, /const config = bootstrap\.data\?\.default_strategy/);

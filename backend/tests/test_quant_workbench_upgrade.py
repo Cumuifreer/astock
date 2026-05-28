@@ -764,6 +764,31 @@ def test_sync_today_route_maps_to_daily_light(tmp_path, monkeypatch):
     assert calls == [{"mode": "daily_light"}]
 
 
+def test_analyze_route_preserves_strategy_name(tmp_path, monkeypatch):
+    routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
+
+    calls = []
+
+    class FakeUpdateService:
+        def start_analysis(self, config, runner):
+            calls.append(config)
+            return "analyze-test"
+
+    monkeypatch.setattr(routes, "update_service", FakeUpdateService())
+    client = TestClient(routes.router)
+
+    response = client.post(
+        "/api/tasks/analyze",
+        json={"strategy_name": "右侧突破", "config": {"candidate_limit": 5}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["task_id"] == "analyze-test"
+    assert calls[0]["strategy_name"] == "右侧突破"
+    assert calls[0]["name"] == "右侧突破"
+    assert calls[0]["preset_name"] == "右侧突破"
+
+
 def test_backtest_lab_routes_enqueue_long_running_jobs(tmp_path, monkeypatch):
     routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
 

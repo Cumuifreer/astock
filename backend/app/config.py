@@ -61,7 +61,7 @@ class Settings:
     daily_brief_schedule_time: str = os.getenv("ASHARE_DAILY_BRIEF_TIME", "08:20")
     daily_brief_source_timeout_seconds: int = int(os.getenv("ASHARE_DAILY_BRIEF_SOURCE_TIMEOUT", "12"))
     daily_brief_api_key: str = os.getenv("ASHARE_DAILY_BRIEF_API_KEY") or os.getenv("DEEPSEEK_API_KEY", "")
-    daily_brief_model: str = os.getenv("ASHARE_DAILY_BRIEF_MODEL", "deepseek-v4-flash")
+    daily_brief_model: str = os.getenv("ASHARE_DAILY_BRIEF_MODEL", "deepseek-chat")
     daily_brief_llm_url: str = os.getenv("ASHARE_DAILY_BRIEF_LLM_URL", "https://api.deepseek.com/chat/completions")
     tushare_realtime_enabled: bool = os.getenv("ASHARE_TUSHARE_REALTIME", "1") == "1"
     tushare_token: str = os.getenv("ASHARE_TUSHARE_TOKEN") or os.getenv("TUSHARE_TOKEN", "")

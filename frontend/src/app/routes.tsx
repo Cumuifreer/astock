@@ -58,7 +58,7 @@ export const routes: RouteDefinition[] = [
     id: 'watchlist',
     label: '观察池',
     eyebrow: '观察',
-    description: '按交易假设跟踪候选的后验表现、触发规则和失效条件。',
+    description: '按交易假设跟踪候选的后验表现、来源和备注。',
     icon: Star,
     component: WatchlistPage,
   },

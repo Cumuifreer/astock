@@ -33,6 +33,7 @@ export function StatusPage() {
   const failedTasks = recentRows.filter((task) => task.status === 'failed');
   const activeTask = runningTasks[0] || queuedTasks[0] || fallbackTasks.find((task) => ['queued', 'running'].includes(task.status)) || fallbackTasks[0];
   const scheduler = bootstrap.data?.runtime_health?.scheduler;
+  const llm = bootstrap.data?.runtime_health?.llm;
   const taskFlow = useQuery({
     queryKey: ['task-flow', activeTask?.id],
     queryFn: () => getTaskFlow(activeTask?.id || ''),
@@ -78,6 +79,7 @@ export function StatusPage() {
           <Metric label="系统状态" value={systemLabel(activeTask)} />
           <Metric label="任务队列" value={`运行 ${runningTasks.length} · 排队 ${queuedTasks.length}`} />
           <Metric label="定时计划" value={schedulerLabel(scheduler)} />
+          <Metric label="AI 模型" value={llmLabel(llm)} tone={llm?.configured ? 'neutral' : 'risk'} />
           <Metric label="最近失败" value={failedTasks[0]?.error_message || failedTasks[0]?.warning || '无'} tone={failedTasks.length ? 'risk' : 'neutral'} />
         </div>
         {activeTask && ['queued', 'running'].includes(activeTask.status) ? (
@@ -161,6 +163,11 @@ function schedulerLabel(scheduler?: { enabled?: boolean; next_slot?: { time?: st
   const latest = scheduler.latest_slot?.sample_at;
   const remaining = scheduler.remaining_count ?? 0;
   return `${latest ? `最近 ${formatDateTime(latest)}` : '最近暂无'} · ${next ? `下次 ${next}` : '下次待定'} · 今日还剩 ${remaining} 次`;
+}
+
+function llmLabel(llm?: { configured?: boolean; model?: string | null; url_host?: string | null } | null) {
+  if (!llm?.configured) return '未配置';
+  return `${llm.model || '已配置'} · ${llm.url_host || '兼容接口'}`;
 }
 
 function systemLabel(task?: TaskRun | null) {

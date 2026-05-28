@@ -18,7 +18,13 @@ export function getIndicatorLibrary(): Promise<IndicatorLibrary> {
 }
 
 export function runStrategy(config: StrategyConfig): Promise<unknown> {
-  return post('/api/tasks/analyze', { config });
+  const strategyName = config.strategy_name || config.name || config.preset_name;
+  return post('/api/tasks/analyze', {
+    config,
+    strategy_name: strategyName,
+    name: strategyName,
+    preset_name: strategyName,
+  });
 }
 
 export function getAnalysisReports(): Promise<AnalysisReportsResponse> {
@@ -37,6 +43,8 @@ export type CandidateAiSummary = {
   watch_plan?: string[];
   generated_at?: string | null;
   prompt_version?: string | null;
+  fallback_reason?: 'missing_api_key' | 'llm_error' | 'invalid_response' | null;
+  error_message?: string | null;
 };
 
 export function getCandidateAiSummary(runId: string, code: string, payload: Record<string, unknown>): Promise<CandidateAiSummary> {

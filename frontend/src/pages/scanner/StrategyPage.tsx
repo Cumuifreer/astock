@@ -57,6 +57,16 @@ export function StrategyPage() {
   );
   const selectableResonanceRules = rules.filter((rule) => rule.enabled && (rule.action === 'filter' || rule.action === 'score'));
   const currentConfig = useMemo(() => composeStrategyConfig(config, rules, resonances), [config, rules, resonances]);
+  const strategyName = draftName.trim() || nextUnnamedName(strategies);
+  const namedConfig = useMemo(
+    () => ({
+      ...currentConfig,
+      strategy_name: strategyName,
+      name: strategyName,
+      preset_name: strategyName,
+    }),
+    [currentConfig, strategyName],
+  );
   const invalidate = () => {
     void queryClient.invalidateQueries();
   };
@@ -91,8 +101,8 @@ export function StrategyPage() {
     mutationFn: ({ saveAs }: { saveAs: boolean }) =>
       saveStrategy({
         id: !saveAs ? presetId || undefined : undefined,
-        name: draftName || nextUnnamedName(strategies),
-        config: currentConfig,
+        name: strategyName,
+        config: namedConfig,
       }),
     onSuccess: (result) => {
       applyPreset(result.preset);
@@ -100,11 +110,18 @@ export function StrategyPage() {
     },
   });
   const duplicateMutation = useMutation({
-    mutationFn: () =>
-      saveStrategy({
-        name: `${draftName || nextUnnamedName(strategies)} 副本`,
-        config: currentConfig,
-      }),
+    mutationFn: () => {
+      const duplicateName = `${strategyName} 副本`;
+      return saveStrategy({
+        name: duplicateName,
+        config: {
+          ...namedConfig,
+          strategy_name: duplicateName,
+          name: duplicateName,
+          preset_name: duplicateName,
+        },
+      });
+    },
     onSuccess: (result) => {
       applyPreset(result.preset);
       invalidate();
@@ -118,15 +135,11 @@ export function StrategyPage() {
     },
   });
   const runMutation = useMutation({
-    mutationFn: () => runStrategy(currentConfig),
+    mutationFn: () => runStrategy(namedConfig),
     onSuccess: invalidate,
   });
   const patchRule = (ruleId: string, patch: Partial<StrategyRule>) => {
     setRules(rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)));
-  };
-  const removeRule = (ruleId: string) => {
-    setRules(rules.filter((rule) => rule.id !== ruleId));
-    setResonances(resonances.map((item) => ({ ...item, rule_ids: (item.rule_ids || []).filter((id) => id !== ruleId) })));
   };
   const addRule = (indicator: IndicatorDefinition) => {
     setRules([...rules, defaultStrategyRule(indicator)]);
@@ -189,12 +202,11 @@ export function StrategyPage() {
           </div>
         </section>
         <IndicatorMatrix
-          config={currentConfig}
+          config={namedConfig}
           indicators={matrixIndicators}
           onAddRule={addRule}
           onPatchConfig={patchConfig}
           onPatchRule={patchRule}
-          onRemoveRule={removeRule}
           rules={rules}
         />
         <CombinationBonusPanel
@@ -205,7 +217,7 @@ export function StrategyPage() {
         />
       </main>
       <aside className="list-stack">
-        <StrategySummary config={currentConfig} name={draftName} rules={rules} />
+        <StrategySummary config={namedConfig} name={strategyName} rules={rules} />
       </aside>
     </div>
   );

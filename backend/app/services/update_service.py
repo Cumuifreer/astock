@@ -2362,6 +2362,144 @@ class UpdateService:
         )
         return count
 
+    def _update_realtime_market_environment(self, trade_date: date) -> int:
+        bars = self.db.query(
+            """
+            SELECT s.pct_chg, s.amount
+            FROM daily_snapshots s
+            JOIN stock_basic b ON b.code = s.code
+            WHERE s.date = ?
+              AND b.suspended IS DISTINCT FROM TRUE
+            """,
+            [trade_date],
+        )
+        if not bars:
+            return 0
+        pct_values = [safe_float(row.get("pct_chg")) for row in bars]
+        pct_values = [value for value in pct_values if value is not None]
+        if not pct_values:
+            return 0
+        up_count = sum(1 for value in pct_values if value > 0)
+        down_count = sum(1 for value in pct_values if value < 0)
+        flat_count = max(0, len(pct_values) - up_count - down_count)
+        strong_count = sum(1 for value in pct_values if value >= 5)
+        weak_count = sum(1 for value in pct_values if value <= -5)
+        total_amount = sum(safe_float(row.get("amount")) or 0 for row in bars)
+        official_limits = self.db.query("SELECT limit_type FROM tushare_limit_list_d WHERE trade_date = ?", [trade_date])
+        if official_limits:
+            limit_up_count = sum(1 for row in official_limits if str(row.get("limit_type") or "").upper().startswith("U"))
+            limit_down_count = sum(1 for row in official_limits if str(row.get("limit_type") or "").upper().startswith("D"))
+            limit_source = "official_daily"
+        else:
+            limit_up_count = sum(1 for value in pct_values if value >= 9.8)
+            limit_down_count = sum(1 for value in pct_values if value <= -9.8)
+            limit_source = "intraday_estimate"
+        index_score = 50
+        breadth_score = _clamp(up_count / len(pct_values) * 100, 0, 100)
+        turnover_score, turnover_ratio = self._market_turnover_score(trade_date, total_amount)
+        limit_score = _clamp(50 + (limit_up_count - limit_down_count) / max(len(pct_values), 1) * 100, 0, 100)
+        trend_score = round(index_score * 0.25 + breadth_score * 0.45 + turnover_score * 0.15 + limit_score * 0.15, 2)
+        risk_level = "risk_on" if trend_score >= 65 else "neutral" if trend_score >= 45 else "risk_off"
+        return self.db.upsert(
+            "market_environment",
+            [
+                {
+                    "date": trade_date,
+                    "trend_score": trend_score,
+                    "risk_level": risk_level,
+                    "index_score": round(index_score, 2),
+                    "breadth_score": round(breadth_score, 2),
+                    "turnover_score": round(turnover_score, 2),
+                    "limit_score": round(limit_score, 2),
+                    "up_count": up_count,
+                    "down_count": down_count,
+                    "flat_count": flat_count,
+                    "limit_up_count": limit_up_count,
+                    "limit_down_count": limit_down_count,
+                    "strong_count": strong_count,
+                    "weak_count": weak_count,
+                    "total_amount": total_amount,
+                    "source": f"实时快照宽度 + {limit_source}",
+                    "summary_json": {
+                        "turnover_ratio": turnover_ratio,
+                        "limit_source": limit_source,
+                        "realtime": True,
+                    },
+                    "updated_at": datetime.utcnow(),
+                }
+            ],
+            ["date"],
+        )
+
+    def _update_realtime_concept_heat(self, trade_date: date) -> int:
+        rows = self.db.query(
+            """
+            WITH joined AS (
+              SELECT m.con_code,
+                     m.con_name,
+                     s.code,
+                     s.name,
+                     s.pct_chg,
+                     s.amount,
+                     l.limit_type,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY m.con_code
+                       ORDER BY s.pct_chg DESC NULLS LAST, s.amount DESC NULLS LAST
+                     ) AS rn
+              FROM tushare_ths_member m
+              JOIN daily_snapshots s ON s.code = m.code AND s.date = ?
+              LEFT JOIN tushare_limit_list_d l ON l.code = s.code AND l.trade_date = ?
+            )
+            SELECT con_code AS sector_code,
+                   con_name AS sector_name,
+                   COUNT(*) AS company_count,
+                   COUNT(*) AS member_count,
+                   AVG(pct_chg) AS pct_chg,
+                   SUM(amount) AS amount,
+                   SUM(CASE WHEN pct_chg >= 5 THEN 1 ELSE 0 END) AS strong_count,
+                   SUM(CASE WHEN UPPER(COALESCE(limit_type, '')) LIKE 'U%' THEN 1 ELSE 0 END) AS limit_up_count,
+                   SUM(CASE WHEN limit_type IS NOT NULL THEN 1 ELSE 0 END) AS limit_rows,
+                   MAX(CASE WHEN rn = 1 THEN code END) AS leader_code,
+                   MAX(CASE WHEN rn = 1 THEN name END) AS leader_name,
+                   MAX(CASE WHEN rn = 1 THEN pct_chg END) AS leader_pct_chg
+            FROM joined
+            GROUP BY con_code, con_name
+            HAVING COUNT(*) > 0
+            """,
+            [trade_date, trade_date],
+        )
+        output = []
+        for row in rows:
+            pct_chg = safe_float(row.get("pct_chg")) or 0
+            strong_count = int(row.get("strong_count") or 0)
+            limit_rows = int(row.get("limit_rows") or 0)
+            output.append(
+                {
+                    "sector_code": row.get("sector_code"),
+                    "sector_name": row.get("sector_name"),
+                    "sector_type": "concept",
+                    "trade_date": trade_date,
+                    "pct_chg": pct_chg,
+                    "amount": row.get("amount"),
+                    "net_amount": None,
+                    "company_count": row.get("company_count"),
+                    "member_count": row.get("member_count"),
+                    "limit_up_count": int(row.get("limit_up_count") or 0) if limit_rows else None,
+                    "limit_up_count_status": "computed" if limit_rows else "daily_only",
+                    "strong_count": strong_count,
+                    "strong_count_status": "computed",
+                    "limit_data_date": trade_date if limit_rows else None,
+                    "quote_data_date": trade_date,
+                    "leader_code": row.get("leader_code"),
+                    "leader_name": row.get("leader_name"),
+                    "leader_pct_chg": row.get("leader_pct_chg"),
+                    "heat_score": round(_clamp(50 + pct_chg * 4 + strong_count * 1.5, 0, 100), 2),
+                    "source": "实时快照概念热度",
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+        return self.db.upsert("market_sector_daily", output, ["sector_code", "sector_type", "trade_date"])
+
     def _build_market_environment_row(
         self,
         trade_date: date,
@@ -2651,11 +2789,13 @@ class UpdateService:
                 trade_date=trade_date,
             )
             daily_snapshot_count = self._upsert_realtime_daily_snapshots(frame, trade_date)
+            market_environment_count = self._update_realtime_market_environment(trade_date)
+            sector_heat_count = self._update_realtime_concept_heat(trade_date)
             self._patch_task(
                 task_id,
                 stage="生成盘中雷达",
                 source="本地仓库",
-                total=2,
+                total=3,
                 processed=1,
                 success=1 if snapshot_count else 0,
             )
@@ -2666,13 +2806,15 @@ class UpdateService:
                 status="completed_full" if not warnings else "completed_partial",
                 stage="盘中雷达完成",
                 source="本地仓库",
-                total=2,
-                processed=2,
+                total=3,
+                processed=3,
                 success=1,
                 warning=warnings[-1] if warnings else None,
                 summary={
                     "snapshot_count": snapshot_count,
                     "daily_snapshot_count": daily_snapshot_count,
+                    "market_environment_count": market_environment_count,
+                    "sector_heat_count": sector_heat_count,
                     "candidate_count": candidate_count,
                     "strict_count": radar_result.get("summary", {}).get("strict_count", candidate_count),
                     "score_count": radar_result.get("summary", {}).get("score_count", 0),

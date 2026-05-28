@@ -21,6 +21,7 @@ export function CombinationBonusPanel({ resonances, selectableResonanceRules, in
   const [selectedRuleIds, setSelectedRuleIds] = useState<string[]>([]);
   const [bonus, setBonus] = useState('8');
   const availableIds = useMemo(() => new Set(selectableResonanceRules.map((rule) => rule.id)), [selectableResonanceRules]);
+  const groupedRules = useMemo(() => groupSelectableRules(selectableResonanceRules, indicators), [selectableResonanceRules, indicators]);
   const selected = selectedRuleIds.filter((id) => availableIds.has(id));
   const enabledResonances = resonances.filter((item) => item.source !== 'legacy_unmatched');
   const addCombination = () => {
@@ -58,7 +59,7 @@ export function CombinationBonusPanel({ resonances, selectableResonanceRules, in
         <div className="button-row">
           <Badge tone="purple">{selectableResonanceRules.length} 个可选指标</Badge>
           <Button disabled={selectableResonanceRules.length < 2} icon={<Plus size={15} />} onClick={() => setOpen(true)} variant="secondary">
-            新建组合
+            添加组合加分
           </Button>
         </div>
       </div>
@@ -94,22 +95,49 @@ export function CombinationBonusPanel({ resonances, selectableResonanceRules, in
           <Dialog.Content className="dialog-content combo-dialog">
             <Dialog.Title>选择组合指标</Dialog.Title>
             <Dialog.Description className="card-copy">只显示当前已启用、且能参与筛选或加分的指标。</Dialog.Description>
-            <div className="combo-choice-grid">
-              {selectableResonanceRules.map((rule) => {
-                const active = selectedRuleIds.includes(rule.id);
-                return (
-                  <button
-                    className={active ? 'combo-choice active' : 'combo-choice'}
-                    key={rule.id}
-                    type="button"
-                    onClick={() => setSelectedRuleIds((current) => (current.includes(rule.id) ? current.filter((id) => id !== rule.id) : [...current, rule.id]))}
-                  >
-                    <strong>{indicatorName(rule, indicators)}</strong>
-                    <span>{rule.action === 'score' ? '加分排序' : '硬性筛选'}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {selectableResonanceRules.length >= 2 ? (
+              <>
+                <div className="combo-selected-row">
+                  {selected.length ? (
+                    selected.map((ruleId) => {
+                      const rule = selectableResonanceRules.find((item) => item.id === ruleId);
+                      return rule ? (
+                        <span className="combo-selected-chip" key={rule.id}>
+                          {indicatorName(rule, indicators)}
+                        </span>
+                      ) : null;
+                    })
+                  ) : (
+                    <span className="field-readonly muted">至少选择两个指标</span>
+                  )}
+                </div>
+                <div className="combo-choice-grid">
+                  {groupedRules.map(([group, groupRules]) => (
+                    <section className="combo-choice-section" key={group}>
+                      <strong>{group}</strong>
+                      <div className="combo-choice-list">
+                        {groupRules.map((rule) => {
+                          const active = selectedRuleIds.includes(rule.id);
+                          return (
+                            <button
+                              className={active ? 'combo-choice active' : 'combo-choice'}
+                              key={rule.id}
+                              type="button"
+                              onClick={() => setSelectedRuleIds((current) => (current.includes(rule.id) ? current.filter((id) => id !== rule.id) : [...current, rule.id]))}
+                            >
+                              <strong>{indicatorName(rule, indicators)}</strong>
+                              <span>{rule.action === 'score' ? '加分排序' : '硬性筛选'}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <EmptyState title="可选指标不足" description="先开启两个硬筛或加分指标，再添加组合加分。" />
+            )}
             <div className="split-row combo-dialog-footer">
               <Select label="加分" value={bonus} onChange={setBonus} options={resonanceBonusOptions.map((option) => ({ value: String(option.value), label: option.label }))} />
               <div className="button-row">
@@ -117,7 +145,7 @@ export function CombinationBonusPanel({ resonances, selectableResonanceRules, in
                   <Button variant="secondary">取消</Button>
                 </Dialog.Close>
                 <Button disabled={selected.length < 2} onClick={addCombination} variant="primary">
-                  保存组合
+                  {selected.length < 2 ? '至少选择两个指标' : '保存组合'}
                 </Button>
               </div>
             </div>
@@ -130,6 +158,16 @@ export function CombinationBonusPanel({ resonances, selectableResonanceRules, in
 
 function indicatorName(rule: StrategyRule, indicators: Map<string, IndicatorDefinition>) {
   return indicators.get(rule.indicator_id)?.name || rule.indicator_id;
+}
+
+function groupSelectableRules(rules: StrategyRule[], indicators: Map<string, IndicatorDefinition>): Array<[string, StrategyRule[]]> {
+  const groups = new Map<string, StrategyRule[]>();
+  rules.forEach((rule) => {
+    const indicator = indicators.get(rule.indicator_id);
+    const group = indicator?.group_label || indicator?.category_id || '其他指标';
+    groups.set(group, [...(groups.get(group) || []), rule]);
+  });
+  return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right, 'zh-CN'));
 }
 
 function combinationTitle(item: StrategyResonance, indicators: Map<string, IndicatorDefinition>, rules: StrategyRule[]) {

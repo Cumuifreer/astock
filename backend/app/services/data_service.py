@@ -4,8 +4,10 @@ import json
 import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
+from backend.app.config import settings
 from backend.app.db import Database
 from backend.app.services.intraday_schedule import parse_intraday_schedule
 from backend.app.services.market_utils import safe_float
@@ -362,6 +364,14 @@ class DataService:
             "sector_heatmap": sector_nodes,
             "action_items": self._daily_action_items(state, sector_nodes),
             "data_freshness": self._data_freshness(),
+            "realtime_capabilities": {
+                "daily_snapshots": "realtime",
+                "market_environment": "realtime_from_snapshots",
+                "intraday_concept_heat": "realtime_from_snapshots",
+                "sector_moneyflow": "daily_or_source_dependent",
+                "limit_list": "daily_or_after_close",
+                "ths_daily": "daily_or_source_dependent",
+            },
         }
 
     def sector_heatmap(self, sector_type: str = "concept", metric: str = "heat", limit: int = 80) -> List[Dict[str, Any]]:
@@ -634,6 +644,11 @@ class DataService:
                 "remaining_count": remaining_count,
                 "latest_slot": latest_slot,
                 "slots": slots,
+            },
+            "llm": {
+                "configured": bool(settings.daily_brief_api_key),
+                "model": settings.daily_brief_model,
+                "url_host": _url_host(settings.daily_brief_llm_url),
             },
         }
 
@@ -1090,12 +1105,50 @@ class DataService:
             "zero_reason": summary.get("zero_reason"),
         }
 
-    @staticmethod
-    def _decode_analysis_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _decode_analysis_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
         decoded = dict(row)
         decoded["summary"] = json.loads(decoded.pop("summary_json") or "{}")
         decoded["config"] = json.loads(decoded.pop("config_json") or "{}")
+        strategy_name = self._analysis_strategy_name(decoded["summary"], decoded["config"])
+        if strategy_name:
+            decoded["summary"]["strategy_name"] = strategy_name
+            decoded["config"]["strategy_name"] = strategy_name
+            decoded["config"]["name"] = strategy_name
+            decoded["config"]["preset_name"] = strategy_name
         return decoded
+
+    def _analysis_strategy_name(self, summary: Dict[str, Any], config: Dict[str, Any]) -> str:
+        for source in (summary, config):
+            for key in ("strategy_name", "name", "preset_name"):
+                value = str(source.get(key) or "").strip()
+                if value and value != "未命名策略":
+                    return value
+        matched = self._strategy_name_from_matching_preset(config)
+        return matched or "未命名策略"
+
+    def _strategy_name_from_matching_preset(self, config: Dict[str, Any]) -> Optional[str]:
+        target = _config_signature(config)
+        if not target:
+            return None
+        rows = self.db.query(
+            """
+            SELECT name, config_json
+            FROM strategy_presets
+            WHERE deleted_at IS NULL
+            ORDER BY is_default DESC, updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+            LIMIT 500
+            """
+        )
+        for row in rows:
+            try:
+                preset_config = json.loads(row.get("config_json") or "{}")
+            except json.JSONDecodeError:
+                continue
+            if _config_signature(preset_config) == target:
+                name = str(row.get("name") or "").strip()
+                if name:
+                    return name
+        return None
 
     @staticmethod
     def _decode_backtest_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -1604,6 +1657,26 @@ def _date_value(value: Any) -> Optional[date]:
         return date.fromisoformat(text[:10])
     except ValueError:
         return None
+
+
+def _url_host(url: str) -> str:
+    parsed = urlparse(str(url or ""))
+    return parsed.netloc or parsed.path or ""
+
+
+def _config_signature(config: Dict[str, Any]) -> str:
+    if not isinstance(config, dict):
+        return ""
+    ignored = {"strategy_name", "name", "preset_name", "migration"}
+
+    def clean(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: clean(item) for key, item in sorted(value.items()) if key not in ignored}
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        return value
+
+    return json.dumps(clean(config), ensure_ascii=False, sort_keys=True, default=str)
 
 
 def _round(value: Any) -> Optional[float]:

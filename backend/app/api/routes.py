@@ -314,12 +314,21 @@ def start_analyze(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     body = payload or {}
     config = body.get("config")
     preset_id = body.get("preset_id")
+    strategy_name = body.get("strategy_name") or body.get("name") or body.get("preset_name")
     if preset_id and not config:
         preset = strategy_service.get_preset(preset_id)
         if not preset:
             raise HTTPException(status_code=404, detail="策略预设不存在。")
         config = preset["config"]
-    config = config or strategy_service.default_config()
+        strategy_name = strategy_name or preset.get("name")
+    config = dict(config or strategy_service.default_config())
+    if not strategy_name:
+        strategy_name = config.get("strategy_name") or config.get("name") or config.get("preset_name")
+    if strategy_name:
+        name = str(strategy_name).strip()
+        config["strategy_name"] = name
+        config["name"] = name
+        config["preset_name"] = name
     try:
         task_id = update_service.start_analysis(config, analysis_service)
     except TaskBusy as exc:

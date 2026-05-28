@@ -105,3 +105,35 @@ def test_analysis_report_returns_selected_run_candidates_and_funnel(tmp_path):
     assert report["analysis"]["id"] == "run-1"
     assert report["candidates"]["rows"][0]["code"] == "000001.SZ"
     assert report["candidates"]["funnel"][0]["step_name"] == "平台压缩"
+
+
+def test_analysis_report_infers_strategy_name_from_saved_preset(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    finished_at = datetime(2026, 5, 21, 10, 0)
+    config = {**DEFAULT_STRATEGY_CONFIG, "candidate_limit": 23}
+    db.upsert(
+        "strategy_presets",
+        [
+            {
+                "id": "preset-named",
+                "name": "右侧突破",
+                "config_json": json.dumps(config, ensure_ascii=False),
+                "is_system": False,
+                "is_default": False,
+                "created_at": finished_at,
+                "updated_at": finished_at,
+                "deleted_at": None,
+            }
+        ],
+        ["id"],
+    )
+    row = _run("run-old", "feature_driven", finished_at)
+    row["config_json"] = json.dumps(config, ensure_ascii=False)
+    row["summary_json"] = json.dumps({"candidate_count": 2}, ensure_ascii=False)
+    db.upsert("analysis_runs", [row], ["id"])
+
+    report = DataService(db).analysis_report("run-old")
+
+    assert report["analysis"]["summary"]["strategy_name"] == "右侧突破"
+    assert report["analysis"]["config"]["strategy_name"] == "右侧突破"

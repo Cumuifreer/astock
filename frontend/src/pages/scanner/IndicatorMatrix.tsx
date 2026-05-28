@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { IndicatorDefinition, RuleAction, StrategyConfig, StrategyRule } from '../../types';
 import { Badge } from '../../design/Badge';
 import { Select } from '../../design/Select';
@@ -18,7 +18,6 @@ type IndicatorMatrixProps = {
   config: StrategyConfig;
   onAddRule: (indicator: IndicatorDefinition) => void;
   onPatchRule: (ruleId: string, patch: Partial<StrategyRule>) => void;
-  onRemoveRule: (ruleId: string) => void;
   onPatchConfig: (patch: Partial<StrategyConfig>) => void;
 };
 
@@ -37,11 +36,9 @@ const sectionOrder = [
   '待接入',
 ];
 
-const defaultExpanded = new Set(['基础股票池', '流动性与成交']);
 const alwaysOnKeys = new Set(['candidate_limit', 'sort_by', 'analysis_mode', 'signal_mode', 'rps_window']);
 
-export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchRule, onRemoveRule, onPatchConfig }: IndicatorMatrixProps) {
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set(defaultExpanded));
+export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchRule, onPatchConfig }: IndicatorMatrixProps) {
   const parameterByKey = useMemo(() => buildParameterMap(indicators), [indicators]);
   const displayIndicators = useMemo(() => dedupeIndicators(indicators), [indicators]);
   const groups = useMemo(() => groupIndicators(displayIndicators), [displayIndicators]);
@@ -52,101 +49,95 @@ export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchR
     });
     return map;
   }, [rules]);
+  const enabledIndicators = displayIndicators.filter((indicator) => {
+    const parameterKeys = indicatorParameterKeys(indicator);
+    const rule = ruleByIndicator.get(indicator.id);
+    return parameterKeys.length ? parameterEnabled(config, parameterKeys, parameterByKey) : Boolean(rule?.enabled);
+  });
 
   return (
     <section className="surface pad indicator-matrix">
       <div className="section-heading">
         <div>
           <h2>指标配置矩阵</h2>
-          <p>每个指标只出现一次，开启后直接在本行填写条件或参数。</p>
+          <p>直接开启需要的指标，并在卡片里填写条件、分值或风险阈值。</p>
         </div>
         <Badge tone="info">{displayIndicators.length} 个指标</Badge>
       </div>
+      <div className="indicator-active-strip" aria-label="已启用指标">
+        <strong>已启用指标</strong>
+        <div className="indicator-active-list">
+          {enabledIndicators.length ? (
+            enabledIndicators.slice(0, 18).map((indicator) => (
+              <span className="indicator-active-chip" key={indicator.id}>
+                {indicator.name}
+              </span>
+            ))
+          ) : (
+            <span className="field-readonly muted">点击左侧开启</span>
+          )}
+        </div>
+      </div>
       <div className="list-stack">
-        {groups.map(([group, rows]) => {
-          const expanded = expandedGroups.has(group);
-          return (
-            <section className="indicator-group" key={group}>
-              <button
-                className="indicator-group-header"
-                type="button"
-                onClick={() =>
-                  setExpandedGroups((current) => {
-                    const next = new Set(current);
-                    if (next.has(group)) next.delete(group);
-                    else next.add(group);
-                    return next;
-                  })
-                }
-              >
-                <span>{group}</span>
-                <Badge>{rows.length} 项</Badge>
-              </button>
-              {expanded ? (
-                <div className="indicator-table compact" role="table" aria-label={`${group}指标`}>
-                  <div className="indicator-row indicator-row-head" role="row">
-                    <span>开关</span>
-                    <span>指标</span>
-                    <span>填写规则</span>
-                    <span>影响</span>
-                    <span>说明</span>
-                  </div>
-                  {rows.map((indicator) => {
-                    const rule = ruleByIndicator.get(indicator.id);
-                    const parameterKeys = indicatorParameterKeys(indicator);
-                    const isParameter = parameterKeys.length > 0;
-                    const enabled = isParameter ? parameterEnabled(config, parameterKeys, parameterByKey) : Boolean(rule?.enabled);
-                    const disabled = indicator.status === 'planned' || indicator.data_status === 'planned';
-                    const alwaysOn = parameterKeys.length > 0 && parameterKeys.every((key) => alwaysOnKeys.has(key));
-                    const booleanOnly = isSingleBooleanParameter(parameterKeys, parameterByKey);
-                    return (
-                      <div className="indicator-row" role="row" key={indicator.id}>
-                        <span>
-                          <Switch
-                            checked={enabled}
-                            disabled={disabled || alwaysOn}
-                            label={enabled ? '开' : '关'}
-                            onCheckedChange={(checked) => {
-                              if (isParameter) {
-                                onPatchConfig(parameterPatch(indicator, config, checked, parameterByKey));
-                              } else if (rule) {
-                                onPatchRule(rule.id, { enabled: checked });
-                              } else if (checked) {
-                                onAddRule(indicator);
-                              }
-                            }}
-                          />
-                        </span>
-                        <span>
-                          <strong>{indicator.name}</strong>
-                          <small>{sectionForIndicator(indicator)}</small>
-                        </span>
-                        <span>
-                          {isParameter && booleanOnly ? (
-                            <span className="field-readonly muted">左侧开关控制</span>
-                          ) : isParameter && (enabled || alwaysOn) ? (
-                            <ParameterControls config={config} indicator={indicator} keys={parameterKeys} onPatchConfig={onPatchConfig} parameterByKey={parameterByKey} />
-                          ) : isParameter ? (
-                            <span className="field-readonly muted">点击左侧开启</span>
-                          ) : enabled ? (
-                            <RuleControls indicator={indicator} onPatchRule={onPatchRule} onRemoveRule={onRemoveRule} rule={rule} />
-                          ) : (
-                            <span className="field-readonly muted">点击左侧开启</span>
-                          )}
-                        </span>
-                        <span>{effectText(indicator, rule, isParameter)}</span>
-                        <span>
-                          <span className="indicator-note">{indicator.description || inputHint(indicator)}</span>
-                          <Badge tone={statusTone(indicator)}>{statusLabel(indicator)}</Badge>
-                        </span>
+        {groups.map(([group, rows]) => (
+          <section className="indicator-group" key={group}>
+            <div className="indicator-group-header">
+              <span>{group}</span>
+              <Badge>{rows.length} 项</Badge>
+            </div>
+            <div className="indicator-card-grid">
+              {rows.map((indicator) => {
+                const rule = ruleByIndicator.get(indicator.id);
+                const parameterKeys = indicatorParameterKeys(indicator);
+                const isParameter = parameterKeys.length > 0;
+                const enabled = isParameter ? parameterEnabled(config, parameterKeys, parameterByKey) : Boolean(rule?.enabled);
+                const disabled = indicator.status === 'planned' || indicator.data_status === 'planned';
+                const alwaysOn = parameterKeys.length > 0 && parameterKeys.every((key) => alwaysOnKeys.has(key));
+                const booleanOnly = isSingleBooleanParameter(parameterKeys, parameterByKey);
+                return (
+                  <article className={enabled || alwaysOn ? 'indicator-card active' : 'indicator-card'} key={indicator.id}>
+                    <div className="indicator-card-head">
+                      <Switch
+                        checked={enabled || alwaysOn}
+                        disabled={disabled || alwaysOn}
+                        label={(enabled || alwaysOn) ? '开' : '关'}
+                        onCheckedChange={(checked) => {
+                          if (isParameter) {
+                            onPatchConfig(parameterPatch(indicator, config, checked, parameterByKey));
+                          } else if (rule) {
+                            onPatchRule(rule.id, { enabled: checked });
+                          } else if (checked) {
+                            onAddRule(indicator);
+                          }
+                        }}
+                      />
+                      <div>
+                        <small>开关</small>
+                        <strong>{indicator.name}</strong>
+                        <small>{sectionForIndicator(indicator)}</small>
                       </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </section>
-          );
-        })}
+                      <Badge tone={statusTone(indicator)}>{statusLabel(indicator)}</Badge>
+                    </div>
+                    <div className="indicator-card-body">
+                      {isParameter && booleanOnly ? (
+                        <span className="field-readonly muted">左侧开关控制</span>
+                      ) : isParameter && (enabled || alwaysOn) ? (
+                        <ParameterControls config={config} indicator={indicator} keys={parameterKeys} onPatchConfig={onPatchConfig} parameterByKey={parameterByKey} />
+                      ) : isParameter ? (
+                        <span className="field-readonly muted">点击左侧开启</span>
+                      ) : enabled ? (
+                        <RuleControls indicator={indicator} onPatchRule={onPatchRule} rule={rule} />
+                      ) : (
+                        <span className="field-readonly muted">点击左侧开启</span>
+                      )}
+                    </div>
+                    <p className="indicator-note">{indicator.description || inputHint(indicator)}</p>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ))}
       </div>
     </section>
   );
@@ -192,7 +183,7 @@ function ParameterInput({
   const value = (config as unknown as Record<string, unknown>)[parameterKey];
   const patchValue = (nextValue: unknown) => onPatchConfig({ [parameterKey]: nextValue } as Partial<StrategyConfig>);
   if (control.type === 'boolean') {
-    return <Switch checked={Boolean(value)} label={name} onCheckedChange={patchValue} />;
+    return <span className="field-readonly muted">{name}由左侧开关控制</span>;
   }
   if (control.type === 'select' && control.options?.length) {
     const options = control.options.map((option) => ({ value: String(option.value), label: option.label }));
@@ -227,35 +218,35 @@ function RuleControls({
   indicator,
   rule,
   onPatchRule,
-  onRemoveRule,
 }: {
   indicator: IndicatorDefinition;
   rule?: StrategyRule;
   onPatchRule: (ruleId: string, patch: Partial<StrategyRule>) => void;
-  onRemoveRule: (ruleId: string) => void;
 }) {
   if (!rule) {
     return <span className="field-readonly muted">点击左侧开启</span>;
   }
   const actions = supportedRuleActions(indicator);
-  const operators = supportedRuleOperators(indicator, rule.action);
+  if (!actions.length) {
+    return <span className="field-readonly muted">由系统自动展示</span>;
+  }
+  const action = actions.includes(rule.action) ? rule.action : actions[0] || 'filter';
+  const operators = supportedRuleOperators(indicator, action);
+  const operator = operators.includes(rule.operator) ? rule.operator : operators[0] || 'gte';
   const patch = (change: Partial<StrategyRule>) => onPatchRule(rule.id, change);
   return (
     <div className="matrix-control-stack">
       <div className="matrix-control-inline">
-        <Select label="使用方式" value={rule.action} onChange={(value) => patch({ action: value as RuleAction })} options={actions.map((action) => ({ value: action, label: actionLabel(action) }))} />
-        <Select label="条件" value={rule.operator} onChange={(value) => patch({ operator: value as StrategyRule['operator'] })} options={operators.map((operator) => ({ value: operator, label: ruleOperatorMeta[operator]?.label || operator }))} />
-        <RuleValueInput indicator={indicator} onPatch={patch} rule={rule} />
-        {rule.action === 'score' || rule.action === 'risk' ? (
+        <Select label="使用方式" value={action} onChange={(value) => patch({ action: value as RuleAction })} options={actions.map((item) => ({ value: item, label: actionLabel(item) }))} />
+        <Select label="条件" value={operator} onChange={(value) => patch({ operator: value as StrategyRule['operator'] })} options={operators.map((item) => ({ value: item, label: ruleOperatorMeta[item]?.label || item }))} />
+        <RuleValueInput indicator={indicator} onPatch={patch} rule={{ ...rule, action, operator }} />
+        {action === 'score' || action === 'risk' ? (
           <label className="compact-field tiny">
-            <span>{rule.action === 'score' ? '加分' : '降权'}</span>
+            <span>{action === 'score' ? '加分' : '降权'}</span>
             <input step="1" type="number" value={rule.weight ?? 5} onChange={(event) => patch({ weight: Number(event.target.value) })} />
           </label>
         ) : null}
       </div>
-      <button className="text-button danger" type="button" onClick={() => onRemoveRule(rule.id)}>
-        移除
-      </button>
     </div>
   );
 }
@@ -306,20 +297,21 @@ function isSingleBooleanParameter(keys: string[], parameterByKey: Map<string, In
 function dedupeIndicators(indicators: IndicatorDefinition[]) {
   const reservedParameterKeys = new Set<string>();
   const output: IndicatorDefinition[] = [];
+  const shouldShow = (indicator: IndicatorDefinition) => indicator.status !== 'planned' && indicator.data_status !== 'planned' && (indicatorParameterKeys(indicator).length > 0 || supportedRuleActions(indicator).length > 0);
   indicators.forEach((indicator) => {
     const keys = indicatorParameterKeys(indicator);
-    if (indicator.kind === 'data' && keys.length) {
+    if (indicator.kind === 'data' && keys.length && shouldShow(indicator)) {
       keys.forEach((key) => reservedParameterKeys.add(key));
       output.push(indicator);
     }
   });
   indicators.forEach((indicator) => {
-    if (indicator.kind === 'data' && !indicatorParameterKeys(indicator).length) output.push(indicator);
+    if (indicator.kind === 'data' && !indicatorParameterKeys(indicator).length && shouldShow(indicator)) output.push(indicator);
   });
   indicators.forEach((indicator) => {
     if (indicator.kind !== 'strategy_param') return;
     const keys = indicatorParameterKeys(indicator);
-    if (!keys.some((key) => reservedParameterKeys.has(key))) output.push(indicator);
+    if (shouldShow(indicator) && !keys.some((key) => reservedParameterKeys.has(key))) output.push(indicator);
   });
   const seen = new Set<string>();
   return output.filter((indicator) => {
@@ -361,7 +353,7 @@ function sectionForIndicator(indicator: IndicatorDefinition) {
   if (indicator.category_id === 'event') return '涨停与事件';
   if (indicator.category_id === 'chips') return '筹码成本';
   if (indicator.category_id === 'risk') return '风险过滤';
-  return indicator.data_status === 'display_only' ? '候选展示' : indicator.group_label || '候选展示';
+  return indicator.group_label || '候选展示';
 }
 
 function sectionIndex(section: string) {
@@ -455,20 +447,7 @@ function actionLabel(action: RuleAction) {
   if (action === 'filter') return '硬性筛选';
   if (action === 'score') return '加分排序';
   if (action === 'risk') return '风险降权';
-  return '候选展示';
-}
-
-function effectText(indicator: IndicatorDefinition, rule: StrategyRule | undefined, isParameter: boolean) {
-  if (isParameter) {
-    if ((indicator.usage || []).includes('sort')) return '影响排序';
-    if ((indicator.usage || []).includes('score')) return '影响分数';
-    return '影响入选范围';
-  }
-  if (!rule) return '点击开启';
-  if (rule.action === 'score') return `命中 +${rule.weight ?? 5} 分`;
-  if (rule.action === 'risk') return `命中降低 ${rule.weight ?? 5} 分`;
-  if (rule.action === 'filter') return '不满足会剔除';
-  return '仅展示';
+  return '展示字段';
 }
 
 function inputHint(indicator: IndicatorDefinition) {
@@ -479,7 +458,7 @@ function inputHint(indicator: IndicatorDefinition) {
 
 function statusLabel(indicator: IndicatorDefinition) {
   if (indicator.data_status === 'planned' || indicator.status === 'planned') return '待接入';
-  if (indicator.data_status === 'display_only') return '仅展示';
+  if (indicator.data_status === 'display_only') return '自动展示';
   if (indicator.data_status === 'partial') return '覆盖较少';
   return '可用';
 }

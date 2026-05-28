@@ -47,10 +47,12 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName }: Candi
           })
         : Promise.resolve({
             enabled: false,
-            summary: '未配置模型，以下先按规则证据生成解释。',
+            summary: 'AI 解读暂不可用，当前显示规则证据。',
             opportunities: [],
             risks: [],
             watch_plan: [],
+            fallback_reason: 'missing_api_key' as const,
+            error_message: null,
           }),
     enabled: Boolean(candidate && runId),
     staleTime: 5 * 60 * 1000,
@@ -96,7 +98,7 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName }: Candi
   const aiData = aiSummary.data;
   const primaryExplanation = aiSummary.isLoading
     ? ['正在生成候选解释...']
-    : [aiData?.summary || '未配置模型，以下先按规则证据生成解释。'];
+    : [aiData?.summary || fallbackExplanation(aiData?.fallback_reason, aiData?.error_message, aiSummary.isError)];
   const opportunityItems = aiData?.opportunities?.length ? aiData.opportunities : candidate.reasons?.length ? candidate.reasons : matchedRules;
   const riskItems = aiData?.risks?.length
     ? aiData.risks
@@ -116,7 +118,7 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName }: Candi
             {candidate.code} · 总分 {formatRatio(candidate.signal_score)}
           </p>
         </div>
-        <Badge tone={aiData?.enabled === false ? 'watch' : 'info'}>{aiData?.enabled === false ? '规则解释' : '自然语言解释'}</Badge>
+        <Badge tone={aiData?.enabled ? 'info' : 'watch'}>{aiData?.enabled ? '自然语言解释' : '规则解释'}</Badge>
       </div>
       <div className="grid-2 evidence-grid">
         <EvidenceBlock title="AI 解读" items={primaryExplanation} />
@@ -151,6 +153,14 @@ function EvidenceBlock({ title, items }: { title: string; items: string[] }) {
       </div>
     </article>
   );
+}
+
+function fallbackExplanation(reason?: string | null, errorMessage?: string | null, requestFailed?: boolean) {
+  if (requestFailed) return 'AI 解读暂不可用，当前显示规则证据。';
+  if (reason === 'missing_api_key') return '模型未启用，当前显示规则证据。';
+  if (reason === 'llm_error') return errorMessage ? `模型请求失败，当前显示规则证据：${errorMessage}` : '模型请求失败，当前显示规则证据。';
+  if (reason === 'invalid_response') return '模型返回格式异常，当前显示规则证据。';
+  return 'AI 解读暂不可用，当前显示规则证据。';
 }
 
 function extractRuleResults(candidate: Candidate): Array<Record<string, unknown>> {

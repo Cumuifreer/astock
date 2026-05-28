@@ -618,10 +618,10 @@ class IntradayRadarService:
             FROM intraday_snapshots
             WHERE code IN ({placeholders})
               AND trade_date = ?
-              AND sample_at < ?
+              AND sample_at < CAST(? AS TIMESTAMP)
             QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY sample_at DESC) = 1
             """,
-            codes + [trade_date, sample_at],
+            codes + [trade_date, _sample_text(sample_at)],
         )
         return {row["code"]: row for row in rows}
 

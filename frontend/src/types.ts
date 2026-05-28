@@ -287,6 +287,9 @@ export interface StrategyMigrationInfo {
 }
 
 export interface StrategyConfig {
+  strategy_name?: string;
+  name?: string;
+  preset_name?: string;
   min_price: number;
   min_amount: number;
   min_float_market_value: number | null;
@@ -747,6 +750,11 @@ export interface RuntimeHealth {
     remaining_count: number;
     latest_slot: RuntimeSlot | null;
     slots: RuntimeSlot[];
+  };
+  llm?: {
+    configured: boolean;
+    model: string;
+    url_host: string;
   };
 }
 

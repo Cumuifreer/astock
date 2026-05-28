@@ -50,7 +50,7 @@ export function ResultsPage() {
   const rerunMutation = useMutation({
     mutationFn: () => {
       const config = activeReport?.config || ((bootstrap.data as Record<string, unknown> | undefined)?.[defaultStrategyKey] as unknown);
-      return config ? runStrategy(config as StrategyConfig) : Promise.resolve(null);
+      return config ? runStrategy(withStrategyName(config as StrategyConfig, activeStrategyName)) : Promise.resolve(null);
     },
   });
   const batchAddMutation = useMutation({
@@ -178,6 +178,15 @@ function strategyLabel(summary: unknown, config: unknown): string {
   const summaryRecord = summary && typeof summary === 'object' ? (summary as Record<string, unknown>) : {};
   const configRecord = config && typeof config === 'object' ? (config as Record<string, unknown>) : {};
   return String(summaryRecord.strategy_name || configRecord.strategy_name || configRecord.name || configRecord.preset_name || '未命名策略');
+}
+
+function withStrategyName(config: StrategyConfig, strategy_name: string): StrategyConfig {
+  return {
+    ...config,
+    strategy_name,
+    name: strategy_name,
+    preset_name: strategy_name,
+  };
 }
 
 function candidateSortValue(candidate: Candidate, sortKey: SortKey): number {

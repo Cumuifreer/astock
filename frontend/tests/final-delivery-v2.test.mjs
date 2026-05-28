@@ -60,17 +60,22 @@ test('strategy page uses a default full indicator matrix instead of factor picke
   assert.match(matrix, /开关/);
   assert.match(matrix, /点击左侧开启/);
   assert.doesNotMatch(strategy, /RuleCanvas|UniversePanel|保存为默认|系统策略|默认策略/);
-  assert.doesNotMatch(matrix, /调整参数|高级参数|规则配置|怎么用|尚未启用|开启后填写/);
+  assert.doesNotMatch(matrix, /调整参数|高级参数|规则配置|怎么用|尚未启用|开启后填写|影响|仅展示|移除/);
+  assert.match(matrix, /indicator-card-grid/);
+  assert.match(matrix, /已启用指标/);
 });
 
 test('analysis results display strategy names and auto-load candidate explanation', () => {
   const results = read('pages/results/ResultsPage.tsx');
   assert.match(results, /activeStrategyName|strategyLabel/);
+  assert.match(results, /strategy_name/);
   assert.doesNotMatch(results, /slice\(0,\s*12\)/);
   assert.doesNotMatch(results, /analysis-/);
 
   const panel = read('pages/results/CandidateEvidencePanel.tsx');
   assert.match(panel, /AI 解读/);
+  assert.match(panel, /fallback_reason/);
+  assert.doesNotMatch(panel, /未配置模型，以下先按规则证据生成解释。/);
   assert.doesNotMatch(panel, /AI 解读 \/ 规则解释/);
   assert.match(panel, /useQuery/);
   assert.match(panel, /getCandidateAiSummary/);
@@ -84,7 +89,10 @@ test('watchlist uses dialogs and DataTable for management', () => {
   assert.match(watchlist, /ConfirmDialog/);
   assert.match(watchlist, /EditDialog/);
   assert.match(watchlist, /DataTable/);
-  assert.match(watchlist, /批量标记有效/);
+  assert.match(watchlist, /header:\s*'T\+10'/);
+  assert.match(watchlist, /header:\s*'备注'/);
+  assert.match(watchlist, /row\.original\.note/);
+  assert.doesNotMatch(watchlist, /批量标记有效|批量标记误报|Segmented|失效条件|review_status|观察中|误报|有效/);
   assert.match(watchlist, /批量删除/);
   assert.doesNotMatch(watchlist, /<table/);
   assert.doesNotMatch(watchlist, /value:\s*'归档'/);

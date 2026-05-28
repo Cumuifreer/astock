@@ -131,6 +131,8 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.match(read('pages/overview/OverviewPage.tsx'), /市场简报/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /AI 解读/);
   assert.doesNotMatch(read('pages/results/CandidateEvidencePanel.tsx'), /AI 解读 \/ 规则解释/);
+  assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /fallback_reason/);
+  assert.doesNotMatch(read('pages/results/CandidateEvidencePanel.tsx'), /未配置模型，以下先按规则证据生成解释。/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /入选理由/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /风险提示/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /可操作动作/);
@@ -140,6 +142,9 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.doesNotMatch(read('pages/watchlist/WatchlistPage.tsx'), /卡片视图|表格视图/);
   assert.match(read('pages/watchlist/WatchlistPage.tsx'), /DataTable/);
   assert.match(read('pages/watchlist/WatchlistPage.tsx'), /删除观察项/);
+  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /T\+10/);
+  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /备注/);
+  assert.doesNotMatch(read('pages/watchlist/WatchlistPage.tsx'), /Segmented|失效条件|review_status|观察中|误报|有效/);
   assert.match(read('pages/backtest/BacktestPage.tsx'), /信号评估/);
   assert.match(`${read('pages/backtest/BacktestPage.tsx')}\n${read('pages/backtest/PortfolioBacktest.tsx')}`, /组合回测|简化组合模拟/);
   assert.match(read('pages/backtest/SignalEvaluation.tsx'), /mutation\.data\?\.runId/);
@@ -186,15 +191,20 @@ test('scanner exposes a unified indicator matrix and panel-based combination bon
   for (const label of ['指标配置矩阵', '基础股票池', '流动性与成交', '相对强弱', '题材与板块', '资金流向', '开关', '点击左侧开启']) {
     assert.match(matrix, new RegExp(label));
   }
-  assert.doesNotMatch(matrix, /怎么用|尚未启用|开启后填写/);
+  assert.doesNotMatch(matrix, /怎么用|尚未启用|开启后填写|影响|仅展示|移除/);
+  assert.match(matrix, /indicator-card-grid/);
+  assert.match(matrix, /已启用指标/);
   assert.match(matrix, /indicatorParameterKeys/);
   assert.doesNotMatch(matrix, /调整参数|高级参数|规则配置/);
   assert.match(matrix, /Switch/);
 
   const combination = read('pages/scanner/CombinationBonusPanel.tsx');
   assert.match(combination, /选择组合指标/);
+  assert.match(combination, /添加组合加分/);
   assert.match(combination, /selectableResonanceRules/);
   assert.match(combination, /combo-choice-grid/);
+  assert.match(combination, /combo-selected-chip/);
+  assert.match(combination, /至少选择两个指标/);
 
   const strategyUtils = read('utils/strategy.ts');
   assert.match(strategyUtils, /includePaired/);

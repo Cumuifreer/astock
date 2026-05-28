@@ -27,7 +27,7 @@ const actionTone: Record<string, 'info' | 'good' | 'watch' | 'neutral'> = {
 
 const statusLabel: Record<string, string> = {
   executable: '可执行',
-  display_only: '仅展示',
+  display_only: '自动展示',
   planned: '待接入',
   partial: '部分可用',
 };
@@ -68,7 +68,7 @@ export function RuleCard({ rule, indicator, onPatch, onRemove }: RuleCardProps) 
     <article className="rule-card">
       <div className="rule-card-header">
         <strong>{name}</strong>
-        <Badge tone={actionTone[rule.action] || 'neutral'}>{ruleActionMeta[rule.action]?.label || '仅展示'}</Badge>
+        <Badge tone={actionTone[rule.action] || 'neutral'}>{ruleActionMeta[rule.action]?.label || '展示字段'}</Badge>
       </div>
       <p className="card-copy">
         {indicator ? ruleSummary(rule, indicator) : `${operator} ${rule.value ?? ''}`} · 缺失处理：{missingPolicyOptions.find((item) => item.id === rule.missing_policy)?.label || '缺失中性'} · 权重：{rule.weight ?? '未设置'}

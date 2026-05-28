@@ -10,7 +10,7 @@ from backend.app.services.analysis_service import (
     compute_rps_scores,
     compute_trend_resonance_metrics,
 )
-from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG
+from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG, LEGACY_SIGNAL_DEFAULTS
 
 
 def test_compute_amplitude_uses_previous_close():
@@ -349,6 +349,7 @@ def test_trend_resonance_filters_keep_multi_indicator_candidate():
     )
     config = {
         **DEFAULT_STRATEGY_CONFIG,
+        **LEGACY_SIGNAL_DEFAULTS,
         "signal_mode": "trend_resonance",
         "min_price": 4,
         "min_amount": 100_000_000,
@@ -442,6 +443,7 @@ def test_platform_breakout_filters_keep_matching_shape():
     )
     config = {
         **DEFAULT_STRATEGY_CONFIG,
+        **LEGACY_SIGNAL_DEFAULTS,
         "signal_mode": "platform_breakout",
         "min_price": 5,
         "min_amount": 100_000_000,
@@ -1577,6 +1579,7 @@ def test_platform_breakout_defaults_target_first_day_signal_without_trend_hard_f
     )
     config = {
         **DEFAULT_STRATEGY_CONFIG,
+        **LEGACY_SIGNAL_DEFAULTS,
         "signal_mode": "platform_breakout",
         "trend_filter": "none",
         "min_rps20": None,
@@ -1667,6 +1670,7 @@ def test_platform_breakout_score_thresholds_reward_cleaner_platform_quality():
     )
     config = {
         **DEFAULT_STRATEGY_CONFIG,
+        **LEGACY_SIGNAL_DEFAULTS,
         "signal_mode": "platform_breakout",
         "trend_filter": "none",
         "min_rps20": None,

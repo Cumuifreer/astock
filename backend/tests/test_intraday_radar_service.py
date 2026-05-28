@@ -454,7 +454,7 @@ def test_intraday_radar_queries_previous_snapshots_with_timestamp_param(tmp_path
     previous_snapshot_params = []
 
     def capture_query(sql, params=None):
-        if "sample_at < ?" in sql:
+        if "sample_at < CAST(? AS TIMESTAMP)" in sql:
             previous_snapshot_params.append(params[-1])
         return original_query(sql, params)
 
@@ -462,7 +462,7 @@ def test_intraday_radar_queries_previous_snapshots_with_timestamp_param(tmp_path
     service.run_radar(sample_at=second, config={"min_amount": 0, "candidate_limit": 10})
 
     assert previous_snapshot_params
-    assert isinstance(previous_snapshot_params[0], datetime)
+    assert previous_snapshot_params[0] == "2026-05-21T14:30:00"
 
 
 def test_intraday_radar_normalizes_amount_ratio_by_sample_time(tmp_path):
