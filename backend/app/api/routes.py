@@ -82,6 +82,19 @@ def data_capabilities() -> Dict[str, Any]:
     return {"rows": data_service.capabilities()}
 
 
+@router.get("/market/overview")
+def market_overview() -> Dict[str, Any]:
+    return data_service.market_overview()
+
+
+@router.get("/market/sector-heatmap")
+def market_sector_heatmap(
+    type: str = Query(default="concept"),
+    metric: str = Query(default="heat"),
+) -> Dict[str, Any]:
+    return {"rows": data_service.sector_heatmap(type, metric=metric)}
+
+
 @router.get("/indicators")
 def indicators() -> Dict[str, Any]:
     return indicator_library()
@@ -146,6 +159,27 @@ def start_update(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return {"task_id": task_id, "status": "queued"}
 
 
+@router.post("/tasks/sync-today")
+def sync_today(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    body = dict(payload or {})
+    body["mode"] = "daily_light"
+    try:
+        task_id = update_service.start_update(body)
+    except TaskBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"task_id": task_id, "status": "queued"}
+
+
+@router.get("/tasks/{task_id}/dag")
+def task_dag(task_id: str) -> Dict[str, Any]:
+    return data_service.task_dag(task_id)
+
+
+@router.get("/tasks/{task_id}/checkpoints")
+def task_checkpoints(task_id: str) -> Dict[str, Any]:
+    return {"rows": data_service.task_checkpoints(task_id)}
+
+
 @router.get("/status/update")
 def update_status() -> Dict[str, Any]:
     return {"task": data_service.latest_task("update")}
@@ -170,6 +204,13 @@ def intraday_latest(
     limit: int = Query(default=200, ge=1, le=500),
 ) -> Dict[str, Any]:
     return intraday_service.latest(limit=limit)
+
+
+@router.get("/intraday/boards")
+def intraday_boards(
+    limit: int = Query(default=80, ge=1, le=300),
+) -> Dict[str, Any]:
+    return intraday_service.boards(limit=limit)
 
 
 @router.get("/intraday/timeline/{code}")
@@ -340,6 +381,35 @@ def backtest_result(
     result = data_service.backtest_result(run_id=run_id, limit=limit)
     if not result.get("run"):
         raise HTTPException(status_code=404, detail="回测报告不存在。")
+    return result
+
+
+@router.post("/backtest/signal-evaluation")
+def run_signal_evaluation(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return backtest_service.run_signal_evaluation(payload or {})
+
+
+@router.get("/backtest/signal-evaluation/{run_id}")
+def signal_evaluation_result(
+    run_id: str,
+    limit: int = Query(default=500, ge=1, le=5000),
+) -> Dict[str, Any]:
+    result = data_service.backtest_result(run_id=run_id, limit=limit)
+    if not result.get("run"):
+        raise HTTPException(status_code=404, detail="信号评估报告不存在。")
+    return result
+
+
+@router.post("/backtest/portfolio")
+def run_portfolio_backtest(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return backtest_service.run_portfolio_backtest(payload or {})
+
+
+@router.get("/backtest/portfolio/{run_id}")
+def portfolio_backtest_result(run_id: str) -> Dict[str, Any]:
+    result = backtest_service.portfolio_result(run_id)
+    if not result.get("run"):
+        raise HTTPException(status_code=404, detail="组合回测报告不存在。")
     return result
 
 

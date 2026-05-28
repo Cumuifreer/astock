@@ -10,12 +10,24 @@
     "preview": "vite preview --host 0.0.0.0 --port 4173"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "latest",
+    "@radix-ui/react-popover": "latest",
+    "@radix-ui/react-select": "latest",
+    "@radix-ui/react-tabs": "latest",
+    "@radix-ui/react-tooltip": "latest",
+    "@tanstack/react-query": "latest",
+    "@tanstack/react-table": "latest",
+    "@tanstack/react-virtual": "latest",
     "@vitejs/plugin-react": "^4.3.4",
+    "clsx": "latest",
+    "echarts": "latest",
+    "echarts-for-react": "latest",
     "vite": "^6.0.7",
     "typescript": "^5.7.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "lucide-react": "^0.468.0"
+    "lucide-react": "^0.468.0",
+    "zustand": "latest"
   },
   "devDependencies": {
     "@types/react": "^18.3.18",

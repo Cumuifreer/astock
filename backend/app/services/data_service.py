@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 from backend.app.db import Database
 from backend.app.services.intraday_schedule import parse_intraday_schedule
+from backend.app.services.market_utils import safe_float
 
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
@@ -171,6 +172,12 @@ CAPABILITY_DEFINITIONS = {
         "participates_in_analysis": False,
         "coverage_kind": "stock",
     },
+    "板块热力": {
+        "fallback_sources": ["Tushare moneyflow_cnt_ths", "Tushare moneyflow_ind_ths", "Tushare ths_daily"],
+        "can_backfill": True,
+        "participates_in_analysis": False,
+        "coverage_kind": "dataset",
+    },
     "龙虎榜/游资": {
         "fallback_sources": ["Tushare top_list", "Tushare top_inst", "Tushare hm_detail"],
         "can_backfill": True,
@@ -178,6 +185,22 @@ CAPABILITY_DEFINITIONS = {
         "coverage_kind": "event",
     },
 }
+
+DATA_UPDATE_DAG: List[Dict[str, Any]] = [
+    {"id": "stock_basic", "label": "股票基础信息", "capability": "股票基础信息", "dependencies": [], "freshness_policy": "long_lived"},
+    {"id": "daily_snapshot", "label": "实时日线 / 当日快照", "capability": "当天行情快照", "dependencies": ["stock_basic"], "freshness_policy": "intraday"},
+    {"id": "history_qfq", "label": "历史前复权 K 线", "capability": "历史 K 线", "dependencies": ["daily_snapshot"], "freshness_policy": "daily"},
+    {"id": "daily_basic", "label": "每日指标", "capability": "每日指标", "dependencies": ["history_qfq"], "freshness_policy": "daily"},
+    {"id": "stk_factor", "label": "技术因子", "capability": "技术因子", "dependencies": ["history_qfq"], "freshness_policy": "daily"},
+    {"id": "moneyflow", "label": "资金流向", "capability": "资金流向", "dependencies": ["history_qfq"], "freshness_policy": "daily"},
+    {"id": "limit_list_d", "label": "涨跌停事件", "capability": "涨跌停", "dependencies": ["history_qfq"], "freshness_policy": "event"},
+    {"id": "cyq", "label": "筹码分布", "capability": "筹码分布", "dependencies": ["history_qfq"], "freshness_policy": "daily"},
+    {"id": "ths_member", "label": "题材成分", "capability": "概念/行业成分", "dependencies": ["stock_basic"], "freshness_policy": "long_lived"},
+    {"id": "board_moneyflow", "label": "板块热力 / 资金", "capability": "板块热力", "dependencies": ["ths_member", "history_qfq"], "freshness_policy": "daily"},
+    {"id": "top_events", "label": "龙虎榜 / 机构 / 游资", "capability": "龙虎榜/游资", "dependencies": ["history_qfq"], "freshness_policy": "event"},
+    {"id": "market_environment", "label": "市场环境", "capability": "市场环境", "dependencies": ["daily_basic", "moneyflow", "limit_list_d", "board_moneyflow"], "freshness_policy": "daily"},
+    {"id": "capability_refresh", "label": "能力口径刷新", "capability": "数据能力", "dependencies": ["market_environment"], "freshness_policy": "manual"},
+]
 
 
 def _slot_status(
@@ -267,6 +290,103 @@ class DataService:
                 "SELECT * FROM warnings ORDER BY created_at DESC LIMIT 8"
             ),
         }
+
+    def market_overview(self) -> Dict[str, Any]:
+        environment = self._latest_market_environment()
+        trade_date = environment.get("date") if environment else self.db.scalar("SELECT MAX(date) FROM historical_bars")
+        sector_nodes = self.sector_heatmap("concept", limit=40)
+        state = self._market_state(environment, sector_nodes)
+        pulse = {
+            "breadth_score": _round(environment.get("breadth_score") if environment else None),
+            "index_score": _round(environment.get("index_score") if environment else None),
+            "turnover_score": _round(environment.get("turnover_score") if environment else None),
+            "limit_score": _round(environment.get("limit_score") if environment else None),
+            "sector_heat_score": _round(_avg_value(sector_nodes[:10], "heat_score")),
+            "up_count": environment.get("up_count") if environment else 0,
+            "down_count": environment.get("down_count") if environment else 0,
+            "limit_up_count": environment.get("limit_up_count") if environment else 0,
+            "limit_down_count": environment.get("limit_down_count") if environment else 0,
+            "total_amount": environment.get("total_amount") if environment else None,
+        }
+        return {
+            "trade_date": trade_date,
+            "state": state,
+            "pulse": pulse,
+            "sector_heatmap": sector_nodes,
+            "action_items": self._daily_action_items(state, sector_nodes),
+            "data_freshness": self._data_freshness(),
+        }
+
+    def sector_heatmap(self, sector_type: str = "concept", metric: str = "heat", limit: int = 80) -> List[Dict[str, Any]]:
+        resolved_type = "industry" if str(sector_type).lower() == "industry" else "concept"
+        order_column = {
+            "pct_chg": "pct_chg",
+            "moneyflow": "net_amount",
+            "limit": "limit_up_count",
+            "heat": "heat_score",
+        }.get(str(metric).lower(), "heat_score")
+        rows = self.db.query(
+            f"""
+            SELECT sector_code AS code,
+                   sector_name AS name,
+                   sector_type AS type,
+                   trade_date,
+                   pct_chg,
+                   amount,
+                   net_amount,
+                   company_count,
+                   limit_up_count,
+                   strong_count,
+                   leader_code,
+                   leader_name,
+                   heat_score,
+                   source,
+                   updated_at
+            FROM market_sector_daily
+            WHERE sector_type = ?
+              AND trade_date = (
+                SELECT MAX(trade_date)
+                FROM market_sector_daily
+                WHERE sector_type = ?
+              )
+            ORDER BY {order_column} DESC NULLS LAST, sector_name
+            LIMIT ?
+            """,
+            [resolved_type, resolved_type, max(1, min(limit, 300))],
+        )
+        return rows
+
+    def task_checkpoints(self, task_id: str) -> List[Dict[str, Any]]:
+        rows = self.db.query(
+            """
+            SELECT *
+            FROM update_checkpoints
+            WHERE task_id = ?
+            ORDER BY started_at, job_id, batch_key
+            """,
+            [task_id],
+        )
+        for row in rows:
+            row["payload"] = json.loads(row.pop("payload_json") or "{}")
+        return rows
+
+    def task_dag(self, task_id: str) -> Dict[str, Any]:
+        checkpoints = self.task_checkpoints(task_id)
+        by_job = {row["job_id"]: row for row in checkpoints}
+        nodes = []
+        for node in DATA_UPDATE_DAG:
+            checkpoint = by_job.get(node["id"])
+            status = checkpoint.get("status") if checkpoint else "queued"
+            nodes.append(
+                {
+                    **node,
+                    "status": status,
+                    "target_date": checkpoint.get("target_date") if checkpoint else None,
+                    "rows_written": checkpoint.get("rows_written") if checkpoint else 0,
+                    "reason": (checkpoint.get("payload") or {}).get("reason") if checkpoint else None,
+                }
+            )
+        return {"task_id": task_id, "nodes": nodes}
 
     def runtime_health(
         self,
@@ -889,6 +1009,7 @@ class DataService:
             )
             """
         )
+        latest_sector_heat = self.db.scalar("SELECT MAX(trade_date) FROM market_sector_daily")
         latest_float_market_value = self.db.scalar(
             f"""
             SELECT MAX(date)
@@ -1087,6 +1208,7 @@ class DataService:
             )
             or 0,
             "龙虎榜/游资": latest_top_count,
+            "板块热力": self.db.scalar("SELECT COUNT(*) FROM market_sector_daily WHERE trade_date = ?", [latest_sector_heat]) or 0,
         }
         source_rows = self.db.query(
             """
@@ -1122,6 +1244,8 @@ class DataService:
                 latest_update = latest_tushare_ths
             elif capability == "龙虎榜/游资":
                 latest_update = latest_tushare_top
+            elif capability == "板块热力":
+                latest_update = latest_sector_heat
             rows.append(
                 {
                     "capability": capability,
@@ -1145,6 +1269,116 @@ class DataService:
         )
         self.db.upsert("data_capabilities", rows, ["capability"])
 
+    def _latest_market_environment(self) -> Optional[Dict[str, Any]]:
+        rows = self.db.query("SELECT * FROM market_environment ORDER BY date DESC LIMIT 1")
+        if not rows:
+            return None
+        row = rows[0]
+        row["summary"] = json.loads(row.pop("summary_json") or "{}")
+        return row
+
+    def _market_state(self, environment: Optional[Dict[str, Any]], sector_nodes: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if not environment:
+            score = 0.0
+        else:
+            sector_score = _avg_value(sector_nodes[:10], "heat_score")
+            score = (
+                (safe_float(environment.get("breadth_score")) or 50) * 0.25
+                + (safe_float(environment.get("index_score")) or 50) * 0.20
+                + (safe_float(environment.get("turnover_score")) or 50) * 0.15
+                + (safe_float(environment.get("limit_score")) or 50) * 0.15
+                + (sector_score if sector_score is not None else 50) * 0.15
+                + _risk_adjustment(environment) * 0.10
+            )
+        label = _market_label(score)
+        risk_level = "低" if score >= 70 else "中" if score >= 50 else "高" if score >= 35 else "极高"
+        suggested_position = _suggested_position(score)
+        top_sector = sector_nodes[0]["name"] if sector_nodes else None
+        return {
+            "trade_date": environment.get("date") if environment else None,
+            "label": label,
+            "score": round(score, 2),
+            "suggested_position": suggested_position,
+            "risk_level": risk_level,
+            "headline": f"市场{label}，建议仓位 {suggested_position}" + (f"，主线关注 {top_sector}" if top_sector else ""),
+            "key_risks": _market_risks(environment, score),
+            "key_opportunities": ([f"{top_sector} 资金和热度靠前"] if top_sector else ["等待板块热力数据补齐"]),
+        }
+
+    def _daily_action_items(self, state: Dict[str, Any], sector_nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        items = []
+        if state["risk_level"] in {"高", "极高"}:
+            items.append(
+                {
+                    "id": "market-risk",
+                    "priority": "high",
+                    "category": "risk",
+                    "title": "市场风险升高",
+                    "description": "先处理高位、放量滞涨和观察池弱势样本。",
+                    "target_type": "system",
+                    "action": "review",
+                }
+            )
+        if sector_nodes:
+            leader = sector_nodes[0]
+            items.append(
+                {
+                    "id": f"sector-{leader['code']}",
+                    "priority": "medium",
+                    "category": "opportunity",
+                    "title": f"主线候选：{leader['name']}",
+                    "description": f"热度 {leader.get('heat_score') or 0:.1f}，领涨股 {leader.get('leader_name') or '待确认'}。",
+                    "target_type": "sector",
+                    "target_code": leader["code"],
+                    "action": "review",
+                }
+            )
+        stale = [item for item in self._data_freshness() if item["status"] != "fresh"]
+        if stale:
+            items.append(
+                {
+                    "id": "data-stale",
+                    "priority": "medium",
+                    "category": "data",
+                    "title": "存在数据待同步",
+                    "description": "打开任务状态页检查同步 DAG 和失败原因。",
+                    "target_type": "system",
+                    "action": "sync_data",
+                }
+            )
+        return items or [
+            {
+                "id": "run-strategy",
+                "priority": "low",
+                "category": "strategy",
+                "title": "运行策略刷新候选",
+                "description": "市场状态已更新，可以运行 Scanner 查看今日候选。",
+                "target_type": "strategy",
+                "action": "run_strategy",
+            }
+        ]
+
+    def _data_freshness(self) -> List[Dict[str, Any]]:
+        rows = [
+            ("历史 K 线", self.db.scalar("SELECT MAX(date) FROM historical_bars")),
+            ("当日快照", self.db.scalar("SELECT MAX(date) FROM daily_snapshots")),
+            ("Tushare 增强", self.db.scalar("SELECT MAX(trade_date) FROM tushare_daily_basic")),
+            ("市场环境", self.db.scalar("SELECT MAX(date) FROM market_environment")),
+            ("板块热力", self.db.scalar("SELECT MAX(trade_date) FROM market_sector_daily")),
+        ]
+        latest = max([_date_value(value) for _, value in rows if _date_value(value)] or [None])
+        output = []
+        for label, value in rows:
+            item_date = _date_value(value)
+            output.append(
+                {
+                    "label": label,
+                    "latest_date": value,
+                    "status": "fresh" if item_date and latest and item_date >= latest else "stale" if item_date else "missing",
+                }
+            )
+        return output
+
     @staticmethod
     def _ratio(count: int, total: int) -> Dict[str, Any]:
         return {
@@ -1152,3 +1386,84 @@ class DataService:
             "total": total,
             "percent": round((count / total * 100) if total else 0, 2),
         }
+
+
+def _date_value(value: Any) -> Optional[date]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value)
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _round(value: Any) -> Optional[float]:
+    number = safe_float(value)
+    return round(number, 2) if number is not None else None
+
+
+def _avg_value(rows: List[Dict[str, Any]], key: str) -> Optional[float]:
+    values = [safe_float(row.get(key)) for row in rows]
+    clean = [value for value in values if value is not None]
+    if not clean:
+        return None
+    return round(sum(clean) / len(clean), 2)
+
+
+def _risk_adjustment(environment: Dict[str, Any]) -> float:
+    if not environment:
+        return 50
+    score = 50.0
+    limit_down = safe_float(environment.get("limit_down_count")) or 0
+    weak = safe_float(environment.get("weak_count")) or 0
+    up = safe_float(environment.get("up_count")) or 0
+    down = safe_float(environment.get("down_count")) or 0
+    score -= limit_down * 2.5
+    score -= weak * 0.15
+    if down > up:
+        score -= min(20, (down - up) / max(up + down, 1) * 40)
+    return max(0, min(100, score))
+
+
+def _market_label(score: float) -> str:
+    if score >= 80:
+        return "强势"
+    if score >= 65:
+        return "回暖"
+    if score >= 50:
+        return "震荡"
+    if score >= 35:
+        return "偏弱"
+    if score >= 20:
+        return "退潮"
+    return "极端风险"
+
+
+def _suggested_position(score: float) -> str:
+    if score >= 80:
+        return "80%-100%"
+    if score >= 65:
+        return "60%-80%"
+    if score >= 50:
+        return "40%-60%"
+    if score >= 35:
+        return "20%-40%"
+    return "0%-20%"
+
+
+def _market_risks(environment: Optional[Dict[str, Any]], score: float) -> List[str]:
+    risks = []
+    if not environment:
+        return ["市场环境数据缺失"]
+    if score < 50:
+        risks.append("市场分数低于中性区间")
+    if (safe_float(environment.get("limit_down_count")) or 0) > 0:
+        risks.append("跌停数量需要关注")
+    if (safe_float(environment.get("weak_count")) or 0) > (safe_float(environment.get("strong_count")) or 0):
+        risks.append("弱势股数量高于强势股")
+    return risks or ["暂未发现显著系统性风险"]

@@ -5,17 +5,23 @@ import { dirname, resolve } from 'node:path';
 import test from 'node:test';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const appSource = readFileSync(resolve(__dirname, '../src/App.tsx'), 'utf8');
+const scannerSource = readFileSync(resolve(__dirname, '../src/pages/scanner/StrategyPage.tsx'), 'utf8');
 
-test('strategy editor uses one unified rule workspace', () => {
-  assert.match(appSource, /<StrategyRuleWorkspace\b/);
-  assert.match(appSource, /function StrategyRuleWorkspace\b/);
-  assert.doesNotMatch(appSource, /<StrategyRuleBuilder\b/);
-  assert.doesNotMatch(appSource, /<StrategyResonanceBuilder\b/);
+test('scanner page is organized as a professional rule canvas', () => {
+  assert.match(scannerSource, /UniversePanel/);
+  assert.match(scannerSource, /RuleCanvas/);
+  assert.match(scannerSource, /StrategySummary/);
+  for (const label of ['Universe', 'Filters', 'Scores', 'Risks', 'Display', 'Resonance', 'Advanced']) {
+    assert.match(scannerSource, new RegExp(label));
+  }
+  assert.doesNotMatch(scannerSource, /StrategyRuleBuilder/);
+  assert.doesNotMatch(scannerSource, /StrategyResonanceBuilder/);
 });
 
-test('resonance draft is selected from existing rule chips', () => {
-  assert.match(appSource, /toggleDraftRuleId/);
-  assert.match(appSource, /rule-resonance-chip-grid/);
-  assert.doesNotMatch(appSource, /resonance-draft-selects/);
+test('resonance can only reference filter and score rule chips', () => {
+  assert.match(scannerSource, /selectableResonanceRules/);
+  assert.match(scannerSource, /rule\.action === 'filter' \|\| rule\.action === 'score'/);
+  assert.match(scannerSource, /resonance-chip-grid/);
+  assert.doesNotMatch(scannerSource, /risk.*resonance/i);
+  assert.doesNotMatch(scannerSource, /display.*resonance/i);
 });

@@ -11,7 +11,7 @@ from backend.app.db import Database
 from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
 
 
-REVIEW_STATUSES = {"观察中", "已验证", "已放弃", "已错过"}
+REVIEW_STATUSES = {"观察中", "有效", "误报", "已验证", "已放弃", "已错过", "归档"}
 BATCH_REVIEW_STATUSES = {"观察中", "有效", "一般", "误报", "已归档"}
 
 
@@ -56,6 +56,7 @@ class WatchlistService:
 
         stock_names = self._stock_names([item["code"] for item in items])
         rows = []
+        hypothesis_rows = []
         for item in items:
             code = str(item["code"])
             entry_price = _first_number(
@@ -84,7 +85,27 @@ class WatchlistService:
                     "updated_at": now,
                 }
             )
+            if any(item.get(key) for key in ["hypothesis", "invalidation_rule", "trigger_rules", "tags"]):
+                hypothesis_rows.append(
+                    {
+                        "id": f"{batch_id}:{code}",
+                        "batch_id": batch_id,
+                        "code": code,
+                        "source_type": source_type,
+                        "source_id": source_ref,
+                        "hypothesis": item.get("hypothesis") or "",
+                        "invalidation_rule": item.get("invalidation_rule") or "",
+                        "entry_date": _date_value(item.get("entry_date")) or batch_date,
+                        "entry_price": entry_price,
+                        "review_status": _review_status(item.get("review_status")),
+                        "trigger_rules_json": json.dumps(item.get("trigger_rules") or [], ensure_ascii=False),
+                        "tags_json": json.dumps(item.get("tags") or [], ensure_ascii=False),
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                )
         added = self.db.upsert("watchlist_items", rows, ["batch_id", "code"])
+        self.db.upsert("watchlist_hypotheses", hypothesis_rows, ["id"])
         return {"batch_id": batch_id, "added": added}
 
     def result(self, limit_batches: int = 20) -> Dict[str, Any]:
@@ -105,10 +126,17 @@ class WatchlistService:
         placeholders = ", ".join(["?"] * len(batch_ids))
         items = self.db.query(
             f"""
-            SELECT *
-            FROM watchlist_items
-            WHERE batch_id IN ({placeholders})
-            ORDER BY created_at, code
+            SELECT i.*,
+                   h.hypothesis,
+                   h.invalidation_rule,
+                   h.trigger_rules_json,
+                   h.tags_json
+            FROM watchlist_items i
+            LEFT JOIN watchlist_hypotheses h
+              ON h.batch_id = i.batch_id
+             AND h.code = i.code
+            WHERE i.batch_id IN ({placeholders})
+            ORDER BY i.created_at, i.code
             """,
             batch_ids,
         )
@@ -133,10 +161,16 @@ class WatchlistService:
         return {"batches": enriched_batches, "summary": self._summary(enriched_batches)}
 
     def delete_batch(self, batch_id: str) -> None:
+        self.db.execute("DELETE FROM watchlist_hypotheses WHERE batch_id = ?", [batch_id], write=True)
         self.db.execute("DELETE FROM watchlist_items WHERE batch_id = ?", [batch_id], write=True)
         self.db.execute("DELETE FROM watchlist_batches WHERE id = ?", [batch_id], write=True)
 
     def delete_item(self, batch_id: str, code: str) -> None:
+        self.db.execute(
+            "DELETE FROM watchlist_hypotheses WHERE batch_id = ? AND code = ?",
+            [batch_id, code],
+            write=True,
+        )
         self.db.execute(
             "DELETE FROM watchlist_items WHERE batch_id = ? AND code = ?",
             [batch_id, code],
@@ -189,11 +223,46 @@ class WatchlistService:
             [note, review_status, now, batch_id, code],
             write=True,
         )
+        if any(key in payload for key in ["hypothesis", "invalidation_rule", "trigger_rules", "tags"]):
+            current_h = self.db.query(
+                "SELECT * FROM watchlist_hypotheses WHERE batch_id = ? AND code = ? LIMIT 1",
+                [batch_id, code],
+            )
+            old = current_h[0] if current_h else {}
+            self.db.upsert(
+                "watchlist_hypotheses",
+                [
+                    {
+                        "id": f"{batch_id}:{code}",
+                        "batch_id": batch_id,
+                        "code": code,
+                        "source_type": existing[0].get("source_type"),
+                        "source_id": existing[0].get("source_ref"),
+                        "hypothesis": payload.get("hypothesis", old.get("hypothesis") or ""),
+                        "invalidation_rule": payload.get("invalidation_rule", old.get("invalidation_rule") or ""),
+                        "entry_date": existing[0].get("entry_date"),
+                        "entry_price": existing[0].get("entry_price"),
+                        "review_status": review_status,
+                        "trigger_rules_json": json.dumps(payload.get("trigger_rules", json.loads(old.get("trigger_rules_json") or "[]")), ensure_ascii=False),
+                        "tags_json": json.dumps(payload.get("tags", json.loads(old.get("tags_json") or "[]")), ensure_ascii=False),
+                        "created_at": old.get("created_at") or now,
+                        "updated_at": now,
+                    }
+                ],
+                ["id"],
+            )
         updated = self.db.query(
             """
-            SELECT *
-            FROM watchlist_items
-            WHERE batch_id = ? AND code = ?
+            SELECT i.*,
+                   h.hypothesis,
+                   h.invalidation_rule,
+                   h.trigger_rules_json,
+                   h.tags_json
+            FROM watchlist_items i
+            LEFT JOIN watchlist_hypotheses h
+              ON h.batch_id = i.batch_id
+             AND h.code = i.code
+            WHERE i.batch_id = ? AND i.code = ?
             LIMIT 1
             """,
             [batch_id, code],
@@ -217,6 +286,10 @@ class WatchlistService:
         decoded["review_status"] = _review_status(decoded.get("review_status"))
         decoded["reasons"] = json.loads(decoded.pop("reasons_json") or "[]")
         decoded["metrics"] = json.loads(decoded.pop("metrics_json") or "{}")
+        decoded["hypothesis"] = decoded.get("hypothesis") or ""
+        decoded["invalidation_rule"] = decoded.get("invalidation_rule") or ""
+        decoded["trigger_rules"] = json.loads(decoded.pop("trigger_rules_json", None) or "[]")
+        decoded["tags"] = json.loads(decoded.pop("tags_json", None) or "[]")
         return decoded
 
     def _with_performance(self, item: Dict[str, Any]) -> Dict[str, Any]:

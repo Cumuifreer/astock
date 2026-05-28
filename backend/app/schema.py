@@ -15,7 +15,7 @@ from backend.app.services.strategy_service import (
 )
 
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 MIGRATIONS = [
@@ -660,6 +660,124 @@ MIGRATIONS = [
         generated_at TIMESTAMP,
         error_message TEXT,
         payload_json TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS update_checkpoints (
+      id TEXT PRIMARY KEY,
+      task_id TEXT,
+      job_id TEXT,
+      capability TEXT,
+      target_date DATE,
+      batch_key TEXT,
+      status TEXT,
+      rows_written INTEGER,
+      started_at TIMESTAMP,
+      finished_at TIMESTAMP,
+      error_message TEXT,
+      payload_json TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS market_sector_daily (
+      sector_code TEXT,
+      sector_name TEXT,
+      sector_type TEXT,
+      trade_date DATE,
+      pct_chg DOUBLE,
+      amount DOUBLE,
+      net_amount DOUBLE,
+      company_count INTEGER,
+      limit_up_count INTEGER,
+      strong_count INTEGER,
+      leader_code TEXT,
+      leader_name TEXT,
+      heat_score DOUBLE,
+      source TEXT,
+      updated_at TIMESTAMP,
+      PRIMARY KEY (sector_code, sector_type, trade_date)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS factor_values (
+      code TEXT,
+      trade_date DATE,
+      factor_id TEXT,
+      value DOUBLE,
+      source TEXT,
+      updated_at TIMESTAMP,
+      PRIMARY KEY (code, trade_date, factor_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS factor_definitions (
+      factor_id TEXT PRIMARY KEY,
+      name TEXT,
+      category TEXT,
+      formula TEXT,
+      direction TEXT,
+      frequency TEXT,
+      enabled BOOLEAN,
+      created_at TIMESTAMP,
+      updated_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS watchlist_hypotheses (
+      id TEXT PRIMARY KEY,
+      batch_id TEXT,
+      code TEXT,
+      source_type TEXT,
+      source_id TEXT,
+      hypothesis TEXT,
+      invalidation_rule TEXT,
+      entry_date DATE,
+      entry_price DOUBLE,
+      review_status TEXT,
+      trigger_rules_json TEXT,
+      tags_json TEXT,
+      created_at TIMESTAMP,
+      updated_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS portfolio_backtest_runs (
+      id TEXT PRIMARY KEY,
+      status TEXT,
+      started_at TIMESTAMP,
+      finished_at TIMESTAMP,
+      config_json TEXT,
+      summary_json TEXT,
+      error_message TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS portfolio_backtest_trades (
+      run_id TEXT,
+      trade_id TEXT,
+      code TEXT,
+      name TEXT,
+      entry_date DATE,
+      entry_price DOUBLE,
+      exit_date DATE,
+      exit_price DOUBLE,
+      shares DOUBLE,
+      weight DOUBLE,
+      return_pct DOUBLE,
+      exit_reason TEXT,
+      payload_json TEXT,
+      PRIMARY KEY (run_id, trade_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS portfolio_backtest_equity (
+      run_id TEXT,
+      trade_date DATE,
+      equity DOUBLE,
+      cash DOUBLE,
+      position_value DOUBLE,
+      drawdown DOUBLE,
+      PRIMARY KEY (run_id, trade_date)
     )
     """,
 ]

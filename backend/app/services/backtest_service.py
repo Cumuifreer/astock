@@ -276,6 +276,158 @@ class BacktestService:
         }
         return strategy, sampled_dates, options
 
+    def run_signal_evaluation(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        run_id = f"signal-eval-{uuid.uuid4().hex[:12]}"
+        self.run(payload, run_id=run_id, task_id=None)
+        run = self.db.query("SELECT * FROM backtest_runs WHERE id = ?", [run_id])[0]
+        signals = self._signals_for_run(run_id, limit=5000)
+        summary = json.loads(run.get("summary_json") or "{}")
+        summary.update(_signal_diagnostics(signals))
+        self._update_run(
+            run_id,
+            status=run.get("status") or "completed_full",
+            finished_at=run.get("finished_at"),
+            config=json.loads(run.get("config_json") or "{}"),
+            summary=summary,
+            error_message=run.get("error_message"),
+        )
+        run = self.db.query("SELECT * FROM backtest_runs WHERE id = ?", [run_id])[0]
+        return {"run": self._decode_run_row(run), "signals": signals}
+
+    def run_portfolio_backtest(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        run_id = f"portfolio-{uuid.uuid4().hex[:12]}"
+        started_at = datetime.utcnow()
+        strategy, sampled_dates, options = self._resolve_options(payload)
+        hold_days = int(payload.get("hold_days") or 5)
+        max_positions = int(payload.get("max_positions") or payload.get("candidate_limit") or 5)
+        transaction_cost = (safe_float(payload.get("transaction_cost_bps")) or 0) / 10000
+        slippage = (safe_float(payload.get("slippage_bps")) or 0) / 10000
+        initial_equity = safe_float(payload.get("initial_equity")) or 1_000_000.0
+        equity = initial_equity
+        peak = initial_equity
+        trades: List[Dict[str, Any]] = []
+        equity_rows: List[Dict[str, Any]] = []
+        all_bars = pd.DataFrame(
+            self.db.query(
+                """
+                SELECT code, date, open, high, low, close, prev_close, pct_chg, is_st
+                FROM historical_bars
+                WHERE date >= ?
+                ORDER BY code, date
+                """,
+                [_date_value(options["start_date"])],
+            )
+        )
+        bars_by_code = {str(code): group.copy() for code, group in all_bars.groupby("code")} if not all_bars.empty else {}
+        for as_of in sampled_dates:
+            try:
+                frame = self.analysis_service._build_analysis_frame(strategy, as_of_date=as_of)
+                candidates, _, _ = apply_strategy_filters(frame, strategy)
+            except Exception:
+                candidates = []
+            for candidate in candidates[:max_positions]:
+                code = str(candidate.get("code"))
+                trade = _simulate_trade(
+                    bars_by_code.get(code, pd.DataFrame()),
+                    code,
+                    candidate.get("name") or code,
+                    as_of,
+                    hold_days,
+                    transaction_cost,
+                    slippage,
+                )
+                if trade:
+                    trade["run_id"] = run_id
+                    trade["trade_id"] = f"{as_of.isoformat()}:{code}"
+                    trade["weight"] = 1 / max(1, max_positions)
+                    trade["payload_json"] = json.dumps({"signal_score": candidate.get("signal_score")}, ensure_ascii=False)
+                    trades.append(trade)
+            period_returns = [safe_float(trade.get("return_pct")) for trade in trades if trade.get("entry_signal_date") == as_of]
+            clean_returns = [value for value in period_returns if value is not None]
+            if clean_returns:
+                equity *= 1 + sum(clean_returns) / len(clean_returns)
+            peak = max(peak, equity)
+            equity_rows.append(
+                {
+                    "run_id": run_id,
+                    "trade_date": as_of,
+                    "equity": round(equity, 4),
+                    "cash": round(equity, 4),
+                    "position_value": 0.0,
+                    "drawdown": round(equity / peak - 1, 6) if peak else 0,
+                }
+            )
+        summary = _portfolio_summary(initial_equity, equity, trades, equity_rows, options)
+        now = datetime.utcnow()
+        self.db.upsert(
+            "portfolio_backtest_runs",
+            [
+                {
+                    "id": run_id,
+                    "status": "completed_full",
+                    "started_at": started_at,
+                    "finished_at": now,
+                    "config_json": json.dumps({**payload, "config": strategy}, ensure_ascii=False),
+                    "summary_json": json.dumps(summary, ensure_ascii=False),
+                    "error_message": None,
+                }
+            ],
+            ["id"],
+        )
+        self.db.upsert("portfolio_backtest_trades", [_trade_row(trade) for trade in trades], ["run_id", "trade_id"])
+        self.db.upsert("portfolio_backtest_equity", equity_rows, ["run_id", "trade_date"])
+        return {
+            "run": {
+                "id": run_id,
+                "status": "completed_full",
+                "started_at": started_at,
+                "finished_at": now,
+                "summary": summary,
+                "config": {**payload, "config": strategy},
+                "error_message": None,
+            },
+            "trades": [_jsonable(trade) for trade in trades],
+            "equity_curve": equity_rows,
+        }
+
+    def portfolio_result(self, run_id: str) -> Dict[str, Any]:
+        rows = self.db.query("SELECT * FROM portfolio_backtest_runs WHERE id = ?", [run_id])
+        if not rows:
+            return {"run": None, "trades": [], "equity_curve": []}
+        run = rows[0]
+        return {
+            "run": {
+                **run,
+                "summary": json.loads(run.pop("summary_json") or "{}"),
+                "config": json.loads(run.pop("config_json") or "{}"),
+            },
+            "trades": self.db.query("SELECT * FROM portfolio_backtest_trades WHERE run_id = ? ORDER BY entry_date, code", [run_id]),
+            "equity_curve": self.db.query("SELECT * FROM portfolio_backtest_equity WHERE run_id = ? ORDER BY trade_date", [run_id]),
+        }
+
+    def _signals_for_run(self, run_id: str, limit: int = 5000) -> List[Dict[str, Any]]:
+        rows = self.db.query(
+            """
+            SELECT *
+            FROM backtest_signals
+            WHERE run_id = ?
+            ORDER BY as_of_date, rank
+            LIMIT ?
+            """,
+            [run_id, limit],
+        )
+        for row in rows:
+            row["reasons"] = json.loads(row.pop("reasons_json") or "[]")
+            row["metrics"] = json.loads(row.pop("metrics_json") or "{}")
+        return rows
+
+    @staticmethod
+    def _decode_run_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        decoded = dict(row)
+        decoded["summary"] = json.loads(decoded.pop("summary_json") or "{}")
+        decoded["config"] = json.loads(decoded.pop("config_json") or "{}")
+        return decoded
+
     def _update_run(
         self,
         run_id: str,
@@ -429,6 +581,193 @@ def summarize_backtest(
         "hit_stop_5pct_10d_rate": _rate(signal_rows, "hit_stop_5pct_10d"),
         "label_20d_coverage": _coverage(signal_rows, "return_20d"),
     }
+
+
+def _signal_diagnostics(signals: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not signals:
+        return {
+            "rank_ic": None,
+            "ic": None,
+            "top_n_avg_return_10d": None,
+            "bucket_monotonicity": None,
+            "resonance_hit_avg_return_10d": None,
+        }
+    returns = [safe_float(row.get("return_10d")) for row in signals]
+    scores = [safe_float(row.get("signal_score")) for row in signals]
+    pairs = [(score, ret) for score, ret in zip(scores, returns) if score is not None and ret is not None]
+    rank_ic = _correlation([_rank(score, [p[0] for p in pairs]) for score, _ in pairs], [_rank(ret, [p[1] for p in pairs]) for _, ret in pairs]) if len(pairs) >= 3 else None
+    ic = _correlation([score for score, _ in pairs], [ret for _, ret in pairs]) if len(pairs) >= 3 else None
+    top = sorted(pairs, key=lambda item: item[0], reverse=True)[: min(20, len(pairs))]
+    top_avg = round(sum(ret for _, ret in top) / len(top), 6) if top else None
+    buckets = _score_buckets(pairs)
+    monotonic = None
+    if len(buckets) >= 2:
+        bucket_returns = [bucket["avg_return_10d"] for bucket in buckets if bucket["avg_return_10d"] is not None]
+        monotonic = all(bucket_returns[index] <= bucket_returns[index + 1] for index in range(len(bucket_returns) - 1))
+    resonance_rows = [
+        row
+        for row in signals
+        if (row.get("metrics") or {}).get("score_breakdown", {}).get("resonance_bonus")
+    ]
+    return {
+        "rank_ic": rank_ic,
+        "ic": ic,
+        "top_n_avg_return_10d": top_avg,
+        "score_buckets": buckets,
+        "bucket_monotonicity": monotonic,
+        "resonance_hit_count": len(resonance_rows),
+        "resonance_hit_avg_return_10d": _avg(resonance_rows, "return_10d"),
+    }
+
+
+def _simulate_trade(
+    bars: pd.DataFrame,
+    code: str,
+    name: str,
+    as_of: date,
+    hold_days: int,
+    transaction_cost: float,
+    slippage: float,
+) -> Optional[Dict[str, Any]]:
+    if bars.empty:
+        return None
+    frame = bars.copy()
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.date
+    frame = frame.dropna(subset=["date"]).sort_values("date")
+    future = frame[frame["date"] > as_of].copy()
+    if len(future) < 2:
+        return None
+    entry = future.iloc[0]
+    entry_open = safe_float(entry.get("open")) or safe_float(entry.get("close"))
+    entry_prev = safe_float(entry.get("close"))
+    if entry_open is None or entry_open <= 0:
+        return None
+    if _likely_limit_up(entry):
+        return None
+    exit_index = min(max(1, hold_days), len(future) - 1)
+    exit_row = future.iloc[exit_index]
+    exit_price = safe_float(exit_row.get("close")) or safe_float(exit_row.get("open"))
+    exit_date = _date_value(exit_row.get("date"))
+    while exit_price is not None and _likely_limit_down(exit_row) and exit_index + 1 < len(future):
+        exit_index += 1
+        exit_row = future.iloc[exit_index]
+        exit_price = safe_float(exit_row.get("close")) or safe_float(exit_row.get("open"))
+        exit_date = _date_value(exit_row.get("date"))
+    if exit_price is None or exit_price <= 0 or exit_date is None:
+        return None
+    adjusted_entry = entry_open * (1 + slippage)
+    adjusted_exit = exit_price * (1 - slippage)
+    return_pct = adjusted_exit / adjusted_entry - 1 - transaction_cost * 2
+    return {
+        "entry_signal_date": as_of,
+        "code": code,
+        "name": name,
+        "entry_date": _date_value(entry.get("date")),
+        "entry_price": round(adjusted_entry, 6),
+        "exit_date": exit_date,
+        "exit_price": round(adjusted_exit, 6),
+        "shares": 0,
+        "return_pct": round(return_pct, 6),
+        "exit_reason": "hold_days",
+    }
+
+
+def _portfolio_summary(
+    initial_equity: float,
+    ending_equity: float,
+    trades: List[Dict[str, Any]],
+    equity_rows: List[Dict[str, Any]],
+    options: Dict[str, Any],
+) -> Dict[str, Any]:
+    returns = [safe_float(trade.get("return_pct")) for trade in trades]
+    clean = [value for value in returns if value is not None]
+    max_drawdown = min([safe_float(row.get("drawdown")) or 0 for row in equity_rows] or [0])
+    total_return = ending_equity / initial_equity - 1 if initial_equity else 0
+    return {
+        **options,
+        "initial_equity": initial_equity,
+        "ending_equity": round(ending_equity, 4),
+        "total_return": round(total_return, 6),
+        "max_drawdown": round(max_drawdown, 6),
+        "trade_count": len(trades),
+        "win_rate": round(sum(1 for value in clean if value > 0) / len(clean), 6) if clean else None,
+        "avg_trade_return": round(sum(clean) / len(clean), 6) if clean else None,
+        "turnover_rate": len(trades) / max(1, len(equity_rows)),
+    }
+
+
+def _trade_row(trade: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "run_id": trade["run_id"],
+        "trade_id": trade["trade_id"],
+        "code": trade["code"],
+        "name": trade["name"],
+        "entry_date": trade["entry_date"],
+        "entry_price": trade["entry_price"],
+        "exit_date": trade["exit_date"],
+        "exit_price": trade["exit_price"],
+        "shares": trade.get("shares"),
+        "weight": trade.get("weight"),
+        "return_pct": trade.get("return_pct"),
+        "exit_reason": trade.get("exit_reason"),
+        "payload_json": trade.get("payload_json") or "{}",
+    }
+
+
+def _likely_limit_up(row: pd.Series) -> bool:
+    open_price = safe_float(row.get("open"))
+    prev_close = safe_float(row.get("prev_close"))
+    low = safe_float(row.get("low"))
+    if open_price is None or prev_close is None or prev_close <= 0:
+        return False
+    return open_price / prev_close - 1 >= 0.095 and low >= open_price * 0.999
+
+
+def _likely_limit_down(row: pd.Series) -> bool:
+    open_price = safe_float(row.get("open"))
+    prev_close = safe_float(row.get("prev_close"))
+    high = safe_float(row.get("high"))
+    if open_price is None or prev_close is None or prev_close <= 0:
+        return False
+    return open_price / prev_close - 1 <= -0.095 and high <= open_price * 1.001
+
+
+def _correlation(xs: List[float], ys: List[float]) -> Optional[float]:
+    if len(xs) != len(ys) or len(xs) < 3:
+        return None
+    x_avg = sum(xs) / len(xs)
+    y_avg = sum(ys) / len(ys)
+    numerator = sum((x - x_avg) * (y - y_avg) for x, y in zip(xs, ys))
+    x_den = sum((x - x_avg) ** 2 for x in xs) ** 0.5
+    y_den = sum((y - y_avg) ** 2 for y in ys) ** 0.5
+    if not x_den or not y_den:
+        return None
+    return round(numerator / (x_den * y_den), 6)
+
+
+def _rank(value: float, values: List[float]) -> float:
+    ordered = sorted(values)
+    return (ordered.index(value) + 1) / len(ordered)
+
+
+def _score_buckets(pairs: List[Tuple[float, float]]) -> List[Dict[str, Any]]:
+    if not pairs:
+        return []
+    ordered = sorted(pairs, key=lambda item: item[0])
+    bucket_count = min(5, len(ordered))
+    buckets = []
+    for index in range(bucket_count):
+        chunk = ordered[index::bucket_count]
+        returns = [ret for _, ret in chunk]
+        buckets.append(
+            {
+                "bucket": index + 1,
+                "count": len(chunk),
+                "avg_score": round(sum(score for score, _ in chunk) / len(chunk), 6),
+                "avg_return_10d": round(sum(returns) / len(returns), 6) if returns else None,
+            }
+        )
+    return buckets
 
 
 def _avg(rows: List[Dict[str, Any]], key: str) -> Optional[float]:

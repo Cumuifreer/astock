@@ -28,6 +28,134 @@ CHINA_TZ = ZoneInfo("Asia/Shanghai")
 HISTORY_CLOSE_HOUR = 16
 logger = logging.getLogger(__name__)
 TUSHARE_RATE_LIMIT_RETRY_DELAYS = (1.5, 3.0, 6.0)
+TUSHARE_RATE_LIMITS_PER_MINUTE = {
+    "realtime": 500,
+    "daily_basic": 500,
+    "stk_factor": 500,
+    "moneyflow": 500,
+    "cyq": 200,
+    "top": 200,
+    "ths": 200,
+}
+DEFAULT_DATA_DAG: List[Dict[str, Any]] = [
+    {
+        "id": "stock_basic",
+        "label": "股票基础信息",
+        "capability": "股票基础信息",
+        "dependencies": [],
+        "freshness_policy": "long_lived",
+        "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.98},
+        "request_policy": {"source": "baostock", "rate_limit_group": "baostock"},
+    },
+    {
+        "id": "daily_snapshot",
+        "label": "实时日线 / 当日快照",
+        "capability": "当天行情快照",
+        "dependencies": ["stock_basic"],
+        "freshness_policy": "intraday",
+        "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.95},
+        "request_policy": {"source": "tushare", "rate_limit_group": "realtime"},
+    },
+    {
+        "id": "history_qfq",
+        "label": "历史前复权 K 线",
+        "capability": "历史 K 线",
+        "dependencies": ["daily_snapshot"],
+        "freshness_policy": "daily",
+        "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.95},
+        "request_policy": {"source": "tushare", "rate_limit_group": "daily"},
+    },
+    {
+        "id": "daily_basic",
+        "label": "每日指标",
+        "capability": "每日指标",
+        "dependencies": ["history_qfq"],
+        "freshness_policy": "daily",
+        "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.95},
+        "request_policy": {"source": "tushare", "rate_limit_group": "daily_basic"},
+    },
+    {
+        "id": "stk_factor",
+        "label": "技术因子",
+        "capability": "技术因子",
+        "dependencies": ["history_qfq"],
+        "freshness_policy": "daily",
+        "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.95},
+        "request_policy": {"source": "tushare", "rate_limit_group": "stk_factor"},
+    },
+    {
+        "id": "moneyflow",
+        "label": "资金流向",
+        "capability": "资金流向",
+        "dependencies": ["history_qfq"],
+        "freshness_policy": "daily",
+        "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.9},
+        "request_policy": {"source": "tushare", "rate_limit_group": "moneyflow"},
+    },
+    {
+        "id": "limit_list_d",
+        "label": "涨跌停事件",
+        "capability": "涨跌停",
+        "dependencies": ["history_qfq"],
+        "freshness_policy": "event",
+        "coverage_policy": {"denominator": "event", "min_rows": 1},
+        "request_policy": {"source": "tushare", "rate_limit_group": "top"},
+    },
+    {
+        "id": "cyq",
+        "label": "筹码分布",
+        "capability": "筹码分布",
+        "dependencies": ["history_qfq"],
+        "freshness_policy": "daily",
+        "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.8},
+        "request_policy": {"source": "tushare", "rate_limit_group": "cyq", "batch_size": 200},
+    },
+    {
+        "id": "ths_member",
+        "label": "题材成分",
+        "capability": "概念/行业成分",
+        "dependencies": ["stock_basic"],
+        "freshness_policy": "long_lived",
+        "coverage_policy": {"denominator": "board", "min_rows": 1},
+        "request_policy": {"source": "tushare", "rate_limit_group": "ths"},
+    },
+    {
+        "id": "board_moneyflow",
+        "label": "板块热力 / 资金",
+        "capability": "板块热力",
+        "dependencies": ["ths_member", "history_qfq"],
+        "freshness_policy": "daily",
+        "coverage_policy": {"denominator": "board", "min_rows": 1},
+        "request_policy": {"source": "tushare", "rate_limit_group": "ths"},
+    },
+    {
+        "id": "top_events",
+        "label": "龙虎榜 / 机构 / 游资",
+        "capability": "龙虎榜/游资",
+        "dependencies": ["history_qfq"],
+        "freshness_policy": "event",
+        "coverage_policy": {"denominator": "event", "min_rows": 1},
+        "request_policy": {"source": "tushare", "rate_limit_group": "top"},
+    },
+    {
+        "id": "market_environment",
+        "label": "市场环境",
+        "capability": "市场环境",
+        "dependencies": ["daily_basic", "moneyflow", "limit_list_d", "board_moneyflow"],
+        "freshness_policy": "daily",
+        "coverage_policy": {"denominator": "dataset", "min_rows": 1},
+        "request_policy": {"source": "local", "rate_limit_group": "local"},
+    },
+    {
+        "id": "capability_refresh",
+        "label": "能力口径刷新",
+        "capability": "数据能力",
+        "dependencies": ["market_environment"],
+        "freshness_policy": "manual",
+        "coverage_policy": {"denominator": "dataset", "min_rows": 1},
+        "request_policy": {"source": "local", "rate_limit_group": "local"},
+    },
+]
 HISTORY_BACKFILL_CAPABILITIES = {
     "历史 K 线",
     "RPS",
@@ -230,6 +358,24 @@ class TaskBusy(RuntimeError):
     pass
 
 
+class TushareRateLimiter:
+    def __init__(self, limits: Optional[Dict[str, int]] = None):
+        self.limits = limits or TUSHARE_RATE_LIMITS_PER_MINUTE
+        self._lock = threading.Lock()
+        self._next_at: Dict[str, float] = {}
+
+    def acquire(self, group: str, cost: int = 1) -> None:
+        limit = max(1, int(self.limits.get(group, 200)))
+        interval = 60.0 / limit * max(1, cost)
+        with self._lock:
+            now = time.monotonic()
+            next_at = self._next_at.get(group, now)
+            wait = max(0.0, next_at - now)
+            self._next_at[group] = max(now, next_at) + interval
+        if wait > 0:
+            threading.Event().wait(wait)
+
+
 class UpdateService:
     def __init__(self, db: Database):
         self.db = db
@@ -251,6 +397,7 @@ class UpdateService:
             min_delay=settings.baostock_min_delay,
             max_delay=settings.baostock_max_delay,
         )
+        self.tushare_rate_limiter = TushareRateLimiter()
 
     def configure_runners(self, analysis_runner: Any = None, backtest_runner: Any = None) -> None:
         if analysis_runner is not None:
@@ -725,6 +872,7 @@ class UpdateService:
                     include_bj=include_bj,
                     exclude_star=exclude_star,
                     warnings=warnings,
+                    task_id=task_id,
                 )
                 if sum(tushare_counts.values()):
                     success_sources += 1
@@ -1377,41 +1525,73 @@ class UpdateService:
         include_bj: bool,
         exclude_star: bool,
         warnings: List[str],
+        task_id: Optional[str] = None,
     ) -> Dict[str, int]:
         source = TushareEnrichmentSource()
         limit = max(0, int(settings.tushare_enrichment_code_limit or 0))
         counts: Dict[str, int] = {}
 
-        counts["daily_basic"] = self._update_tushare_daily_basic(trade_date, source, warnings)
-        counts["stk_factor"] = self._persist_tushare_frame(
+        counts["daily_basic"] = self._maybe_update_stock_capability(
+            task_id,
+            "daily_basic",
+            "每日指标",
+            "tushare_daily_basic",
+            trade_date,
+            0.95,
+            lambda: self._update_tushare_daily_basic(trade_date, source, warnings),
+        )
+        counts["stk_factor"] = self._maybe_update_stock_capability(
+            task_id,
+            "stk_factor",
+            "技术因子",
             "tushare_stk_factor",
-            self._fetch_tushare_optional(
-                "Tushare stk_factor",
-                "技术因子",
-                lambda: source.fetch_stk_factor(trade_date),
-                warnings,
+            trade_date,
+            0.95,
+            lambda: self._persist_tushare_frame(
+                "tushare_stk_factor",
+                self._fetch_tushare_optional(
+                    "Tushare stk_factor",
+                    "技术因子",
+                    lambda: source.fetch_stk_factor(trade_date),
+                    warnings,
+                ),
+                ["code", "trade_date"],
             ),
-            ["code", "trade_date"],
         )
-        counts["moneyflow"] = self._persist_tushare_frame(
+        counts["moneyflow"] = self._maybe_update_stock_capability(
+            task_id,
+            "moneyflow",
+            "资金流向",
             "tushare_moneyflow",
-            self._fetch_tushare_optional(
-                "Tushare moneyflow",
-                "资金流向",
-                lambda: source.fetch_moneyflow(trade_date),
-                warnings,
+            trade_date,
+            0.90,
+            lambda: self._persist_tushare_frame(
+                "tushare_moneyflow",
+                self._fetch_tushare_optional(
+                    "Tushare moneyflow",
+                    "资金流向",
+                    lambda: source.fetch_moneyflow(trade_date),
+                    warnings,
+                ),
+                ["code", "trade_date"],
             ),
-            ["code", "trade_date"],
         )
-        counts["limit_list_d"] = self._persist_tushare_frame(
+        counts["limit_list_d"] = self._maybe_update_event_capability(
+            task_id,
+            "limit_list_d",
+            "涨跌停",
             "tushare_limit_list_d",
-            self._fetch_tushare_optional(
-                "Tushare limit_list_d",
-                "涨跌停",
-                lambda: source.fetch_limit_list_d(trade_date),
-                warnings,
+            trade_date,
+            lambda: self._persist_tushare_frame(
+                "tushare_limit_list_d",
+                self._fetch_tushare_optional(
+                    "Tushare limit_list_d",
+                    "涨跌停",
+                    lambda: source.fetch_limit_list_d(trade_date),
+                    warnings,
+                ),
+                ["code", "trade_date"],
             ),
-            ["code", "trade_date"],
         )
         cyq_perf_codes = self._tushare_codes_missing_for_date(
             "tushare_cyq_perf",
@@ -1463,37 +1643,239 @@ class UpdateService:
             exclude_star=exclude_star,
         )
         counts["ths_member"] = int(ths_result.get("success", 0))
-        counts["top_list"] = self._persist_tushare_frame(
+        counts["board_moneyflow"] = self._update_market_sector_daily(trade_date, source, warnings, task_id=task_id)
+        counts["top_list"] = self._maybe_update_event_capability(
+            task_id,
+            "top_list",
+            "龙虎榜/游资",
             "tushare_top_list",
-            self._fetch_tushare_optional(
-                "Tushare top_list",
-                "龙虎榜/游资",
-                lambda: source.fetch_top_list(trade_date),
-                warnings,
+            trade_date,
+            lambda: self._persist_tushare_frame(
+                "tushare_top_list",
+                self._fetch_tushare_optional(
+                    "Tushare top_list",
+                    "龙虎榜/游资",
+                    lambda: source.fetch_top_list(trade_date),
+                    warnings,
+                ),
+                ["code", "trade_date", "reason"],
             ),
-            ["code", "trade_date", "reason"],
         )
-        counts["top_inst"] = self._persist_tushare_frame(
+        counts["top_inst"] = self._maybe_update_event_capability(
+            task_id,
+            "top_inst",
+            "龙虎榜/游资",
             "tushare_top_inst",
-            self._fetch_tushare_optional(
-                "Tushare top_inst",
-                "龙虎榜/游资",
-                lambda: source.fetch_top_inst(trade_date),
-                warnings,
+            trade_date,
+            lambda: self._persist_tushare_frame(
+                "tushare_top_inst",
+                self._fetch_tushare_optional(
+                    "Tushare top_inst",
+                    "龙虎榜/游资",
+                    lambda: source.fetch_top_inst(trade_date),
+                    warnings,
+                ),
+                ["code", "trade_date", "exalter"],
             ),
-            ["code", "trade_date", "exalter"],
         )
-        counts["hm_detail"] = self._persist_tushare_frame(
+        counts["hm_detail"] = self._maybe_update_event_capability(
+            task_id,
+            "hm_detail",
+            "龙虎榜/游资",
             "tushare_hm_detail",
-            self._fetch_tushare_optional(
-                "Tushare hm_detail",
-                "龙虎榜/游资",
-                lambda: source.fetch_hm_detail(trade_date),
-                warnings,
+            trade_date,
+            lambda: self._persist_tushare_frame(
+                "tushare_hm_detail",
+                self._fetch_tushare_optional(
+                    "Tushare hm_detail",
+                    "龙虎榜/游资",
+                    lambda: source.fetch_hm_detail(trade_date),
+                    warnings,
+                ),
+                ["code", "trade_date", "hm_name"],
             ),
-            ["code", "trade_date", "hm_name"],
         )
         return counts
+
+    def record_checkpoint(
+        self,
+        task_id: str,
+        job_id: str,
+        capability: str,
+        target_date: Optional[date],
+        batch_key: str,
+        status: str,
+        rows_written: int = 0,
+        error_message: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
+        started_at: Optional[datetime] = None,
+        finished_at: Optional[datetime] = None,
+    ) -> None:
+        now = datetime.utcnow()
+        self.db.upsert(
+            "update_checkpoints",
+            [
+                {
+                    "id": f"{task_id}:{job_id}:{batch_key}",
+                    "task_id": task_id,
+                    "job_id": job_id,
+                    "capability": capability,
+                    "target_date": target_date,
+                    "batch_key": batch_key,
+                    "status": status,
+                    "rows_written": rows_written,
+                    "started_at": started_at or now,
+                    "finished_at": finished_at if finished_at is not None else (now if status in {"completed", "skipped", "partial", "failed"} else None),
+                    "error_message": error_message,
+                    "payload_json": payload or {},
+                }
+            ],
+            ["id"],
+        )
+
+    def _maybe_update_stock_capability(
+        self,
+        task_id: Optional[str],
+        job_id: str,
+        capability: str,
+        table: str,
+        trade_date: date,
+        min_ratio: float,
+        updater: Any,
+    ) -> int:
+        active_count = max(1, self.data_service.active_stock_count())
+        existing = int(
+            self.db.scalar(
+                f"""
+                SELECT COUNT(DISTINCT t.code)
+                FROM {table} t
+                JOIN stock_basic b ON b.code = t.code
+                WHERE t.trade_date = ?
+                  AND b.suspended IS DISTINCT FROM TRUE
+                """,
+                [trade_date],
+            )
+            or 0
+        )
+        if existing / active_count >= min_ratio:
+            if task_id:
+                self.record_checkpoint(
+                    task_id,
+                    job_id,
+                    capability,
+                    trade_date,
+                    "all",
+                    "skipped",
+                    rows_written=0,
+                    payload={"reason": "coverage_complete", "coverage_count": existing, "denominator": active_count},
+                )
+            return existing
+        if task_id:
+            self.record_checkpoint(task_id, job_id, capability, trade_date, "all", "running", rows_written=0)
+        try:
+            written = int(updater() or 0)
+            if task_id:
+                self.record_checkpoint(task_id, job_id, capability, trade_date, "all", "completed", rows_written=written)
+            return written
+        except Exception as exc:
+            if task_id:
+                self.record_checkpoint(task_id, job_id, capability, trade_date, "all", "failed", error_message=str(exc))
+            raise
+
+    def _maybe_update_event_capability(
+        self,
+        task_id: Optional[str],
+        job_id: str,
+        capability: str,
+        table: str,
+        trade_date: date,
+        updater: Any,
+    ) -> int:
+        existing = int(self.db.scalar(f"SELECT COUNT(*) FROM {table} WHERE trade_date = ?", [trade_date]) or 0)
+        if existing:
+            if task_id:
+                self.record_checkpoint(
+                    task_id,
+                    job_id,
+                    capability,
+                    trade_date,
+                    "all",
+                    "skipped",
+                    payload={"reason": "event_date_already_loaded", "rows": existing},
+                )
+            return existing
+        if task_id:
+            self.record_checkpoint(task_id, job_id, capability, trade_date, "all", "running")
+        try:
+            written = int(updater() or 0)
+            if task_id:
+                self.record_checkpoint(task_id, job_id, capability, trade_date, "all", "completed", rows_written=written)
+            return written
+        except Exception as exc:
+            if task_id:
+                self.record_checkpoint(task_id, job_id, capability, trade_date, "all", "failed", error_message=str(exc))
+            raise
+
+    def _update_market_sector_daily(
+        self,
+        trade_date: date,
+        source: TushareEnrichmentSource,
+        warnings: List[str],
+        task_id: Optional[str] = None,
+    ) -> int:
+        if self.db.scalar("SELECT COUNT(*) FROM market_sector_daily WHERE trade_date = ?", [trade_date]):
+            existing = int(self.db.scalar("SELECT COUNT(*) FROM market_sector_daily WHERE trade_date = ?", [trade_date]) or 0)
+            if task_id:
+                self.record_checkpoint(
+                    task_id,
+                    "board_moneyflow",
+                    "板块热力",
+                    trade_date,
+                    "all",
+                    "skipped",
+                    payload={"reason": "sector_date_already_loaded", "rows": existing},
+                )
+            return existing
+        if task_id:
+            self.record_checkpoint(task_id, "board_moneyflow", "板块热力", trade_date, "all", "running")
+        if not hasattr(source, "fetch_concept_moneyflow") or not hasattr(source, "fetch_industry_moneyflow"):
+            if task_id:
+                self.record_checkpoint(
+                    task_id,
+                    "board_moneyflow",
+                    "板块热力",
+                    trade_date,
+                    "all",
+                    "skipped",
+                    payload={"reason": "sector_moneyflow_source_unavailable"},
+                )
+            return 0
+        concept = self._fetch_tushare_optional(
+            "Tushare moneyflow_cnt_ths",
+            "板块热力",
+            lambda: source.fetch_concept_moneyflow(trade_date),
+            warnings,
+        )
+        industry = self._fetch_tushare_optional(
+            "Tushare moneyflow_ind_ths",
+            "板块热力",
+            lambda: source.fetch_industry_moneyflow(trade_date),
+            warnings,
+        )
+        count = self._persist_sector_frames([concept, industry])
+        if task_id:
+            self.record_checkpoint(task_id, "board_moneyflow", "板块热力", trade_date, "all", "completed", rows_written=count)
+        return count
+
+    def _persist_sector_frames(self, frames: List[pd.DataFrame]) -> int:
+        rows: List[Dict[str, Any]] = []
+        for frame in frames:
+            if frame is None or frame.empty:
+                continue
+            rows.extend(frame.to_dict("records"))
+        if not rows:
+            return 0
+        return self.db.upsert("market_sector_daily", rows, ["sector_code", "sector_type", "trade_date"])
 
     def _update_tushare_daily_basic(
         self,
@@ -1656,6 +2038,7 @@ class UpdateService:
         try:
             while True:
                 try:
+                    self.tushare_rate_limiter.acquire(_tushare_rate_group(source_label))
                     frame = SourceGuard._call_with_timeout(fetcher, settings.tushare_enrichment_timeout_seconds)
                     if frame is None:
                         frame = pd.DataFrame()
@@ -2660,3 +3043,22 @@ def _is_tushare_rate_limit_error(message: str) -> bool:
             "429",
         ]
     )
+
+
+def _tushare_rate_group(source_label: str) -> str:
+    text = (source_label or "").lower()
+    if "realtime" in text or "实时" in source_label:
+        return "realtime"
+    if "daily_basic" in text:
+        return "daily_basic"
+    if "stk_factor" in text:
+        return "stk_factor"
+    if "moneyflow" in text:
+        return "moneyflow"
+    if "cyq" in text:
+        return "cyq"
+    if "top" in text or "hm_detail" in text or "龙虎" in source_label:
+        return "top"
+    if "ths" in text or "板块" in source_label or "概念" in source_label:
+        return "ths"
+    return "daily_basic"

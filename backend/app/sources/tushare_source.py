@@ -196,6 +196,15 @@ class TushareEnrichmentSource:
     TOP_INST_FIELDS = "trade_date,ts_code,exalter,buy,buy_rate,sell,sell_rate,net_buy"
     HM_DETAIL_FIELDS = "trade_date,ts_code,ts_name,name,hm_name,buy_amount,sell_amount,net_amount"
     INDEX_DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
+    THS_DAILY_FIELDS = "ts_code,trade_date,close,open,high,low,pre_close,avg_price,change,pct_change,vol,turnover_rate,total_mv,float_mv"
+    MONEYFLOW_CNT_THS_FIELDS = (
+        "trade_date,ts_code,name,lead_stock,close_price,pct_change,industry_index,"
+        "company_num,pct_change_stock,net_buy_amount,net_sell_amount,net_amount"
+    )
+    MONEYFLOW_IND_THS_FIELDS = (
+        "trade_date,ts_code,industry,lead_stock,close,pct_change,company_num,"
+        "pct_change_stock,close_price,net_buy_amount,net_sell_amount,net_amount"
+    )
     LOOP_API_TARGET_RPM = {
         "ths_member": 190.0,
         "cyq_chips": 190.0,
@@ -737,6 +746,82 @@ class TushareEnrichmentSource:
             raise SourceUnavailable(errors[0])
         return _clean_frame(rows, required=["index_code", "trade_date"])
 
+    def fetch_ths_daily(self, trade_date: Any) -> pd.DataFrame:
+        frame = self._call_api("ths_daily", trade_date=_trade_date_arg(trade_date), fields=self.THS_DAILY_FIELDS)
+        self._sleep_between_codes("ths_daily")
+        rows = []
+        for item in _records(frame):
+            code = first_present(item, ["ts_code", "TS_CODE"])
+            day = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
+            if not code or not day:
+                continue
+            rows.append(
+                {
+                    "sector_code": str(code),
+                    "trade_date": day,
+                    "pct_chg": safe_float(first_present(item, ["pct_change", "PCT_CHANGE", "pct_chg", "PCT_CHG"])),
+                    "amount": _ten_thousand_unit(first_present(item, ["amount", "AMOUNT"])),
+                    "source": "Tushare ths_daily",
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+        return _clean_frame(rows, required=["sector_code", "trade_date"])
+
+    def fetch_concept_moneyflow(self, trade_date: Any) -> pd.DataFrame:
+        frame = self._call_api(
+            "moneyflow_cnt_ths",
+            trade_date=_trade_date_arg(trade_date),
+            fields=self.MONEYFLOW_CNT_THS_FIELDS,
+        )
+        self._sleep_between_codes("moneyflow_cnt_ths")
+        return self._normalize_sector_moneyflow_frame(frame, sector_type="concept", name_field="name")
+
+    def fetch_industry_moneyflow(self, trade_date: Any) -> pd.DataFrame:
+        frame = self._call_api(
+            "moneyflow_ind_ths",
+            trade_date=_trade_date_arg(trade_date),
+            fields=self.MONEYFLOW_IND_THS_FIELDS,
+        )
+        self._sleep_between_codes("moneyflow_ind_ths")
+        return self._normalize_sector_moneyflow_frame(frame, sector_type="industry", name_field="industry")
+
+    def _normalize_sector_moneyflow_frame(
+        self,
+        frame: pd.DataFrame,
+        sector_type: str,
+        name_field: str,
+    ) -> pd.DataFrame:
+        rows = []
+        for item in _records(frame):
+            code = first_present(item, ["ts_code", "TS_CODE"])
+            day = _normalize_trade_date(first_present(item, ["trade_date", "TRADE_DATE"]))
+            if not code or not day:
+                continue
+            net_amount = _yi_unit(first_present(item, ["net_amount", "NET_AMOUNT"]))
+            pct_chg = safe_float(first_present(item, ["pct_change", "PCT_CHANGE", "pct_chg", "PCT_CHG"]))
+            company_count = _safe_int(first_present(item, ["company_num", "COMPANY_NUM"]))
+            leader_name = first_present(item, ["lead_stock", "LEAD_STOCK"])
+            rows.append(
+                {
+                    "sector_code": str(code),
+                    "sector_name": first_present(item, [name_field, name_field.upper(), "name", "NAME"]) or str(code),
+                    "sector_type": sector_type,
+                    "trade_date": day,
+                    "pct_chg": pct_chg,
+                    "amount": None,
+                    "net_amount": net_amount,
+                    "company_count": company_count,
+                    "limit_up_count": None,
+                    "strong_count": None,
+                    "leader_code": None,
+                    "leader_name": leader_name,
+                    "heat_score": _sector_heat_score(pct_chg, net_amount, company_count),
+                    "source": "Tushare moneyflow_cnt_ths" if sector_type == "concept" else "Tushare moneyflow_ind_ths",
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+        return _clean_frame(rows, required=["sector_code", "trade_date"])
+
     def _normalize_ths_member_frame(
         self,
         frame: pd.DataFrame,
@@ -868,6 +953,20 @@ def _ten_thousand_unit(value: Any) -> Optional[float]:
     if number is None:
         return None
     return number * 10000
+
+
+def _yi_unit(value: Any) -> Optional[float]:
+    number = safe_float(value)
+    if number is None:
+        return None
+    return number * 100_000_000
+
+
+def _sector_heat_score(pct_chg: Optional[float], net_amount: Optional[float], company_count: Optional[int]) -> float:
+    pct_component = min(max((pct_chg or 0) * 8 + 50, 0), 100)
+    money_component = min(max(((net_amount or 0) / 100_000_000) * 3 + 50, 0), 100)
+    breadth_component = min(max((company_count or 0) / 120 * 100, 0), 100)
+    return round(pct_component * 0.5 + money_component * 0.35 + breadth_component * 0.15, 2)
 
 
 def _sum_optional(*values: Optional[float]) -> Optional[float]:

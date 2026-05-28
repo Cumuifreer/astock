@@ -246,6 +246,154 @@ class IntradayRadarService:
             "score_rows": score_rows,
         }
 
+    def boards(self, sample_at: Optional[datetime | str] = None, limit: int = 80) -> Dict[str, Any]:
+        target_sample = _sample_value(sample_at) or self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots")
+        if not target_sample:
+            return {"sample_at": None, "sample_count": 0, "anomaly": [], "pullback": [], "risk": [], "theme_pulse": []}
+        target_sample_time = _sample_value(target_sample)
+        target_sample_text = _sample_text(target_sample_time)
+        snapshots = self.db.query(
+            """
+            SELECT s.*, b.is_st, b.suspended
+            FROM intraday_snapshots s
+            LEFT JOIN stock_basic b ON b.code = s.code
+            WHERE s.sample_at = ?
+              AND s.latest_price IS NOT NULL
+              AND (b.suspended IS DISTINCT FROM TRUE OR b.suspended IS NULL)
+              AND (b.is_st IS DISTINCT FROM TRUE OR b.is_st IS NULL)
+            """,
+            [target_sample_text],
+        )
+        if not snapshots:
+            return {"sample_at": target_sample, "sample_count": 0, "anomaly": [], "pullback": [], "risk": [], "theme_pulse": self._theme_pulse()}
+        trade_date = _date_value(snapshots[0].get("trade_date")) or target_sample_time.date()
+        codes = [row["code"] for row in snapshots]
+        previous = self._previous_snapshots(codes, target_sample_time, trade_date)
+        history = self._history_for_snapshot(codes, trade_date)
+        pct_values = sorted([safe_float(row.get("pct_chg")) for row in snapshots if safe_float(row.get("pct_chg")) is not None])
+        amount_speed_values: List[float] = []
+        scored = []
+        for row in snapshots:
+            amount = safe_float(row.get("amount")) or 0
+            hist_amount = _avg_number(history.get(row["code"], [])[-20:], "amount")
+            progress = max(_intraday_time_progress(row.get("sample_at")), 0.08)
+            amount_speed = amount / (hist_amount * progress) if hist_amount and hist_amount > 0 else None
+            if amount_speed is not None:
+                amount_speed_values.append(amount_speed)
+            prev = previous.get(row["code"]) or {}
+            latest = safe_float(row.get("latest_price"))
+            prev_price = safe_float(prev.get("latest_price"))
+            prev_amount = safe_float(prev.get("amount"))
+            high = safe_float(row.get("high"))
+            low = safe_float(row.get("low"))
+            amount_delta = amount - prev_amount if prev_amount is not None else None
+            price_delta = latest / prev_price - 1 if latest and prev_price and prev_price > 0 else None
+            drawdown = latest / high - 1 if latest and high and high > 0 else None
+            open_strength = latest / low - 1 if latest and low and low > 0 else None
+            pct_chg = safe_float(row.get("pct_chg"))
+            pct_rank = _percentile_rank(pct_values, pct_chg)
+            trend_gain = _recent_gain(history.get(row["code"], []), 20)
+            risk_pullback = abs(drawdown or 0) * 100 + max(0, (safe_float(row.get("high")) or 0) - (latest or 0))
+            metrics = {
+                "intraday_amount_speed": _round_optional(amount_speed, 4),
+                "amount_delta": _round_optional(amount_delta, 2),
+                "price_delta": _round_optional(price_delta, 6),
+                "near_day_high": _round_optional(drawdown, 6),
+                "intraday_drawdown": _round_optional(drawdown, 6),
+                "open_strength": _round_optional(open_strength, 6),
+                "market_rank_pct_chg": _round_optional(pct_rank, 4),
+                "theme_sync_score": None,
+                "risk_pullback_score": _round_optional(risk_pullback, 4),
+                "trend_gain_20d": _round_optional(trend_gain, 6),
+            }
+            scored.append({**row, "metrics": metrics, "amount_speed": amount_speed, "amount_delta_value": amount_delta, "pct_rank": pct_rank})
+        speed_values = sorted(amount_speed_values)
+        anomaly: List[Dict[str, Any]] = []
+        pullback: List[Dict[str, Any]] = []
+        risk: List[Dict[str, Any]] = []
+        for row in scored:
+            metrics = row["metrics"]
+            amount_speed = row.get("amount_speed")
+            speed_rank = _percentile_rank(speed_values, amount_speed)
+            pct_chg = safe_float(row.get("pct_chg")) or 0
+            amount_delta = safe_float(row.get("amount_delta_value")) or 0
+            drawdown = safe_float(metrics.get("intraday_drawdown")) or 0
+            trend_gain = safe_float(metrics.get("trend_gain_20d")) or 0
+            latest = safe_float(row.get("latest_price"))
+            high = safe_float(row.get("high"))
+            anomaly_score = (speed_rank or 0) * 45 + (row.get("pct_rank") or 0) * 35 + (20 if drawdown > -0.02 else 0)
+            pullback_score = max(0, trend_gain * 260) + (25 if 0 <= pct_chg <= 2.5 else 0) + (20 if -0.06 <= drawdown <= -0.005 else 0)
+            risk_score = max(0, -drawdown * 450) + (25 if amount_delta > 20_000_000 and pct_chg < 3 else 0) + (25 if high and latest and high > latest * 1.05 else 0)
+            if amount_speed and amount_speed >= 1.5 and anomaly_score > 50:
+                anomaly.append(self._board_candidate(row, "异动", anomaly_score, ["成交额速度显著放大", "涨幅排名靠前"], metrics))
+            if pullback_score >= 25:
+                pullback.append(self._board_candidate(row, "低吸", pullback_score, ["趋势保持", "日内涨幅不过热"], metrics))
+            if risk_score >= 25:
+                risk.append(self._board_candidate(row, "风险", risk_score, ["冲高回落或放量滞涨"], metrics))
+        anomaly.sort(key=lambda item: item["radar_score"], reverse=True)
+        pullback.sort(key=lambda item: item["radar_score"], reverse=True)
+        risk.sort(key=lambda item: item["radar_score"], reverse=True)
+        for rows in [anomaly, pullback, risk]:
+            for index, item in enumerate(rows[:limit], start=1):
+                item["rank"] = index
+        return {
+            "sample_at": target_sample,
+            "sample_count": self._sample_count(target_sample),
+            "anomaly": anomaly[:limit],
+            "pullback": pullback[:limit],
+            "risk": risk[:limit],
+            "theme_pulse": self._theme_pulse(),
+        }
+
+    def _board_candidate(
+        self,
+        row: Dict[str, Any],
+        status: str,
+        score: float,
+        reasons: List[str],
+        metrics: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        code = str(row.get("code"))
+        return {
+            "sample_at": row.get("sample_at"),
+            "trade_date": row.get("trade_date"),
+            "rank": 0,
+            "radar_mode": status,
+            "code": code,
+            "name": row.get("name") or code,
+            "status": status,
+            "radar_score": round(score, 2),
+            "latest_price": safe_float(row.get("latest_price")),
+            "pct_chg": safe_float(row.get("pct_chg")),
+            "amount": safe_float(row.get("amount")),
+            "volume": safe_float(row.get("volume")),
+            "source": row.get("source"),
+            "reasons": reasons,
+            "metrics": metrics,
+            "chart_url": f"https://finance.sina.com.cn/realstock/company/{to_sina_chart_symbol(code)}/nc.shtml",
+        }
+
+    def _theme_pulse(self) -> List[Dict[str, Any]]:
+        rows = self.db.query(
+            """
+            SELECT sector_code AS code,
+                   sector_name AS name,
+                   sector_type AS type,
+                   pct_chg,
+                   net_amount,
+                   company_count,
+                   limit_up_count,
+                   strong_count,
+                   leader_name,
+                   heat_score
+            FROM market_sector_daily
+            WHERE trade_date = (SELECT MAX(trade_date) FROM market_sector_daily)
+            ORDER BY heat_score DESC NULLS LAST
+            LIMIT 12
+            """
+        )
+        return rows
+
     def timeline(self, code: str, trade_date: Optional[str | date] = None, limit: int = 50) -> Dict[str, Any]:
         target_date = _date_value(trade_date) or self.db.scalar(
             """
@@ -896,3 +1044,13 @@ def _round_optional(value: Optional[float], digits: int) -> Optional[float]:
     if value is None or not math.isfinite(value):
         return value
     return round(value, digits)
+
+
+def _percentile_rank(values: List[float], value: Optional[float]) -> Optional[float]:
+    if value is None or not values:
+        return None
+    ordered = [item for item in values if item is not None and math.isfinite(item)]
+    if not ordered:
+        return None
+    below_or_equal = sum(1 for item in ordered if item <= value)
+    return below_or_equal / len(ordered)
