@@ -36,6 +36,7 @@ export type CandidateAiSummary = {
   risks?: string[];
   watch_plan?: string[];
   generated_at?: string | null;
+  prompt_version?: string | null;
 };
 
 export function getCandidateAiSummary(runId: string, code: string, payload: Record<string, unknown>): Promise<CandidateAiSummary> {

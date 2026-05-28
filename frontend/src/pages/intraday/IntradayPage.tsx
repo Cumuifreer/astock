@@ -138,8 +138,8 @@ function TimelineDetail({ data }: { data: import('../../types').IntradayTimeline
       { header: '最新价', accessorKey: 'latest_price', cell: ({ row }) => formatRatioStatus(row.original.latest_price) },
       { header: '涨跌幅', accessorKey: 'pct_chg', cell: ({ row }) => formatPercentStatus(row.original.pct_chg) },
       { header: '成交额', accessorKey: 'amount', cell: ({ row }) => formatMoneyStatus(row.original.amount) },
-      { header: '成交增量', accessorKey: 'amount_delta', cell: ({ row }) => formatMoneyStatus(row.original.amount_delta, '等待确认') },
-      { header: '成交放大', accessorKey: 'amount_ratio', cell: ({ row }) => formatRatioStatus(row.original.amount_ratio, '等待确认') },
+      { header: '成交增量', accessorKey: 'amount_delta', cell: ({ row }) => formatMoneyStatus(row.original.amount_delta, amountDeltaFallback(row.original.amount_delta_status)) },
+      { header: '成交放大', accessorKey: 'amount_ratio', cell: ({ row }) => formatRatioStatus(row.original.amount_ratio, amountRatioFallback(row.original.amount_ratio_status)) },
       { header: '触发原因', accessorKey: 'reasons', cell: ({ row }) => (row.original.reasons || []).join('；') || '等待确认' },
     ],
     [],
@@ -150,7 +150,7 @@ function TimelineDetail({ data }: { data: import('../../types').IntradayTimeline
       <div className="grid-3">
         <Metric label="采样次数" value={String(data.rows.length)} />
         <Metric label="最新涨跌幅" value={formatPercentStatus(data.rows[data.rows.length - 1]?.pct_chg)} />
-        <Metric label="成交额变化" value={formatMoneyStatus(data.rows[data.rows.length - 1]?.amount_delta, '等待确认')} />
+        <Metric label="成交额变化" value={formatMoneyStatus(data.rows[data.rows.length - 1]?.amount_delta, amountDeltaFallback(data.rows[data.rows.length - 1]?.amount_delta_status))} />
       </div>
       <DataTable data={data.rows} columns={columns} estimateRowHeight={64} />
     </div>
@@ -167,6 +167,14 @@ function formatPercentStatus(value: unknown, fallback = '暂无数据') {
 
 function formatRatioStatus(value: unknown, fallback = '暂无数据') {
   return toNumber(value) === null ? fallback : formatRatio(value);
+}
+
+function amountDeltaFallback(status?: string | null) {
+  return status === 'insufficient_samples' ? '等待第二次采样' : '暂无数据';
+}
+
+function amountRatioFallback(status?: string | null) {
+  return status === 'missing_history_amount' ? '缺历史均量' : '暂无数据';
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

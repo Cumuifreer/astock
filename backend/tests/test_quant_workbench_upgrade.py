@@ -485,6 +485,9 @@ def test_existing_sector_rows_refresh_not_computed_counts_with_recent_available_
     assert row["strong_count_status"] == "computed"
     assert row["strong_count"] == 2
     assert row["leader_code"] == "000001.SZ"
+    assert row["member_count"] == 2
+    assert row["limit_data_date"] == quote_date
+    assert row["quote_data_date"] == quote_date
 
 
 def test_sector_breadth_reports_missing_members_instead_of_zero_counts(tmp_path):
@@ -525,6 +528,69 @@ def test_sector_breadth_reports_missing_members_instead_of_zero_counts(tmp_path)
     assert row["limit_up_count_status"] == "missing_members"
     assert row["strong_count"] is None
     assert row["strong_count_status"] == "missing_members"
+    assert row["member_count"] == 0
+
+
+def test_sector_breadth_reports_missing_limit_and_quote_dates(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    sector_date = date(2026, 5, 28)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert(
+        "tushare_ths_member",
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "con_code": "885800.TI",
+                "con_name": "半导体设备",
+                "weight": None,
+                "in_date": "2020-01-01",
+                "out_date": None,
+                "is_new": "Y",
+                "source": "test",
+                "updated_at": "2026-05-28T09:00:00",
+            }
+        ],
+        ["code", "con_code"],
+    )
+    db.upsert(
+        "market_sector_daily",
+        [
+            {
+                "sector_code": "885800.TI",
+                "sector_name": "半导体设备",
+                "sector_type": "concept",
+                "trade_date": sector_date,
+                "pct_chg": 1.5,
+                "amount": None,
+                "net_amount": 80_000_000.0,
+                "company_count": 1,
+                "limit_up_count": None,
+                "limit_up_count_status": "not_computed",
+                "strong_count": None,
+                "strong_count_status": "not_computed",
+                "leader_code": None,
+                "leader_name": None,
+                "leader_pct_chg": None,
+                "heat_score": 70.0,
+                "source": "test",
+                "updated_at": "2026-05-28T15:00:00",
+            }
+        ],
+        ["sector_code", "sector_type", "trade_date"],
+    )
+
+    UpdateService(db)._update_market_sector_daily(sector_date, object(), [])
+    row = DataService(db).sector_heatmap("concept")[0]
+
+    assert row["member_count"] == 1
+    assert row["limit_up_count"] is None
+    assert row["limit_up_count_status"] == "missing_limit_data"
+    assert row["strong_count"] is None
+    assert row["strong_count_status"] == "missing_quote"
+    assert row["limit_data_date"] is None
+    assert row["quote_data_date"] is None
 
 
 def test_update_checkpoints_and_dag_are_queryable(tmp_path):

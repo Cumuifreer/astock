@@ -2,7 +2,20 @@ import json
 
 from backend.app.db import Database
 from backend.app.schema import migrate
-from backend.app.services.strategy_service import StrategyService, normalize_strategy_config
+from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG, StrategyService, normalize_strategy_config
+
+
+def test_default_strategy_keeps_optional_indicators_off_by_default():
+    normalized = normalize_strategy_config(DEFAULT_STRATEGY_CONFIG)
+
+    assert normalized["trend_filter"] == "none"
+    assert normalized["min_rps20"] is None
+    assert normalized["volume_ratio_min"] is None
+    assert normalized["max_turnover"] is None
+    assert normalized["platform_breakout_clearance_mode"] == "off"
+    assert normalized["platform_breakout_volume_ratio"] is None
+    assert normalized["trend_macd_mode"] == "off"
+    assert normalized["strategy_rules"] == []
 
 
 def test_list_presets_normalizes_missing_new_fields(tmp_path):

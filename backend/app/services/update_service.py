@@ -2161,30 +2161,9 @@ class UpdateService:
         task_id: Optional[str] = None,
     ) -> int:
         if self.db.scalar("SELECT COUNT(*) FROM market_sector_daily WHERE trade_date = ?", [trade_date]):
-            existing = int(self.db.scalar("SELECT COUNT(*) FROM market_sector_daily WHERE trade_date = ?", [trade_date]) or 0)
-            needs_breadth_refresh = int(
-                self.db.scalar(
-                    """
-                    SELECT COUNT(*)
-                    FROM market_sector_daily
-                    WHERE trade_date = ?
-                      AND (
-                        limit_up_count_status IS NULL
-                        OR limit_up_count_status IN ('not_computed', 'missing', 'missing_limit_data', 'missing_members', 'missing_quote')
-                        OR strong_count_status IS NULL
-                        OR strong_count_status IN ('not_computed', 'missing', 'missing_members', 'missing_quote')
-                        OR limit_up_count IS NULL
-                        OR strong_count IS NULL
-                      )
-                    """,
-                    [trade_date],
-                )
-                or 0
-            )
-            if needs_breadth_refresh:
-                rows = self.db.query("SELECT * FROM market_sector_daily WHERE trade_date = ?", [trade_date])
-                self._attach_sector_breadth_counts(rows)
-                existing = self.db.upsert("market_sector_daily", rows, ["sector_code", "sector_type", "trade_date"])
+            rows = self.db.query("SELECT * FROM market_sector_daily WHERE trade_date = ?", [trade_date])
+            self._attach_sector_breadth_counts(rows)
+            existing = self.db.upsert("market_sector_daily", rows, ["sector_code", "sector_type", "trade_date"])
             if task_id:
                 self.record_checkpoint(
                     task_id,
@@ -2262,6 +2241,7 @@ class UpdateService:
             snapshot_join_date = snapshot_date or trade_date
             history_join_date = history_date or trade_date
             quote_available = bool(snapshot_date or history_date)
+            quote_data_date = snapshot_date or history_date
             params: List[Any] = [limit_join_date, snapshot_join_date, history_join_date, *sector_codes]
             count_rows = self.db.query(
                 f"""
@@ -2315,10 +2295,13 @@ class UpdateService:
                 else:
                     limit_status = "computed" if limit_date else "missing_limit_data"
                     strong_status = "computed" if quote_available else "missing_quote"
+                row["member_count"] = member_count
                 row["limit_up_count_status"] = limit_status
                 row["strong_count_status"] = strong_status
                 row["limit_up_count"] = int(count.get("limit_up_count") or 0) if limit_status == "computed" else None
                 row["strong_count"] = int(count.get("strong_count") or 0) if strong_status == "computed" else None
+                row["limit_data_date"] = limit_date if limit_status == "computed" else None
+                row["quote_data_date"] = quote_data_date if strong_status == "computed" else None
                 row["leader_code"] = row.get("leader_code") or leader.get("code")
                 row["leader_name"] = row.get("leader_name") or leader.get("name")
                 row["leader_pct_chg"] = leader.get("pct_chg")

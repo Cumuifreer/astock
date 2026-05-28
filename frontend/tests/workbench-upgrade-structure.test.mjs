@@ -129,7 +129,8 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.match(read('pages/overview/OverviewPage.tsx'), /SectorHeatmap/);
   assert.doesNotMatch(read('pages/overview/OverviewPage.tsx'), /DailyActionList/);
   assert.match(read('pages/overview/OverviewPage.tsx'), /市场简报/);
-  assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /AI 解读 \/ 规则解释/);
+  assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /AI 解读/);
+  assert.doesNotMatch(read('pages/results/CandidateEvidencePanel.tsx'), /AI 解读 \/ 规则解释/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /入选理由/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /风险提示/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /可操作动作/);
@@ -182,9 +183,10 @@ test('task progress and topbar popover avoid false running states', () => {
 
 test('scanner exposes a unified indicator matrix and panel-based combination bonus', () => {
   const matrix = read('pages/scanner/IndicatorMatrix.tsx');
-  for (const label of ['指标配置矩阵', '基础股票池', '流动性与成交', '相对强弱', '题材与板块', '资金流向', '开关']) {
+  for (const label of ['指标配置矩阵', '基础股票池', '流动性与成交', '相对强弱', '题材与板块', '资金流向', '开关', '点击左侧开启']) {
     assert.match(matrix, new RegExp(label));
   }
+  assert.doesNotMatch(matrix, /怎么用|尚未启用|开启后填写/);
   assert.match(matrix, /indicatorParameterKeys/);
   assert.doesNotMatch(matrix, /调整参数|高级参数|规则配置/);
   assert.match(matrix, /Switch/);

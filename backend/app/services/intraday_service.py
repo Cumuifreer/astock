@@ -478,34 +478,54 @@ class IntradayRadarService:
         ranking_by_sample: Dict[str, Dict[str, Dict[str, Any]]] = {}
         for row in decoded_rankings:
             ranking_by_sample.setdefault(_sample_text(row.get("sample_at")), {})[row["radar_mode"]] = row
+        history = self._history_for_snapshot([code], _date_value(target_date) or date.today()).get(code, [])
+        platform_avg_amount = _avg_number(history[-20:], "amount")
         rows: List[Dict[str, Any]] = []
+        previous_snapshot: Optional[Dict[str, Any]] = None
         for snapshot in snapshots:
             sample_key = _sample_text(snapshot.get("sample_at"))
             strict = ranking_by_sample.get(sample_key, {}).get(RADAR_MODE_STRICT)
             score = ranking_by_sample.get(sample_key, {}).get(RADAR_MODE_SCORE)
             chosen = strict or score or {}
             metrics = chosen.get("metrics") or {}
+            amount = safe_float(snapshot.get("amount"))
+            volume = safe_float(snapshot.get("volume"))
+            previous_amount = safe_float((previous_snapshot or {}).get("amount"))
+            previous_volume = safe_float((previous_snapshot or {}).get("volume"))
+            computed_amount_delta = amount - previous_amount if amount is not None and previous_amount is not None else None
+            computed_volume_delta = volume - previous_volume if volume is not None and previous_volume is not None else None
+            expected_amount = (
+                platform_avg_amount * _intraday_time_progress(snapshot.get("sample_at"))
+                if platform_avg_amount and platform_avg_amount > 0
+                else None
+            )
+            computed_amount_ratio = amount / expected_amount if amount and expected_amount and expected_amount > 0 else None
+            chosen_amount_ratio = safe_float(chosen.get("amount_ratio"))
             rows.append(
                 {
                     "sample_at": snapshot.get("sample_at"),
                     "trade_date": snapshot.get("trade_date"),
                     "latest_price": safe_float(snapshot.get("latest_price")),
                     "pct_chg": safe_float(snapshot.get("pct_chg")),
-                    "amount": safe_float(snapshot.get("amount")),
-                    "volume": safe_float(snapshot.get("volume")),
+                    "amount": amount,
+                    "volume": volume,
                     "strict_status": strict.get("status") if strict else None,
                     "strict_score": strict.get("radar_score") if strict else None,
                     "score_status": score.get("status") if score else None,
                     "score_score": score.get("radar_score") if score else None,
                     "distance_to_upper": chosen.get("distance_to_upper"),
                     "breakout_clearance": chosen.get("breakout_clearance"),
-                    "amount_ratio": chosen.get("amount_ratio"),
-                    "amount_delta": chosen.get("amount_delta"),
+                    "amount_ratio": _round_optional(chosen_amount_ratio if chosen_amount_ratio is not None else computed_amount_ratio, 6),
+                    "amount_ratio_status": "computed" if chosen_amount_ratio is not None or computed_amount_ratio is not None else "missing_history_amount",
+                    "amount_delta": _round_optional(computed_amount_delta if computed_amount_delta is not None else chosen.get("amount_delta"), 2),
+                    "amount_delta_status": "computed" if computed_amount_delta is not None or chosen.get("amount_delta") is not None else "insufficient_samples",
+                    "volume_delta": _round_optional(computed_volume_delta if computed_volume_delta is not None else chosen.get("volume_delta"), 2),
                     "platform_upper": metrics.get("platform_upper"),
                     "platform_range": metrics.get("platform_range"),
                     "reasons": chosen.get("reasons") or [],
                 }
             )
+            previous_snapshot = snapshot
         name = snapshots[-1].get("name") if snapshots else code
         return {"code": code, "name": name or code, "trade_date": target_date, "rows": rows}
 

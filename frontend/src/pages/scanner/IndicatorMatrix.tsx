@@ -37,7 +37,7 @@ const sectionOrder = [
   '待接入',
 ];
 
-const defaultExpanded = new Set(['基础股票池', '流动性与成交', '相对强弱', '平台与突破']);
+const defaultExpanded = new Set(['基础股票池', '流动性与成交']);
 const alwaysOnKeys = new Set(['candidate_limit', 'sort_by', 'analysis_mode', 'signal_mode', 'rps_window']);
 
 export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchRule, onRemoveRule, onPatchConfig }: IndicatorMatrixProps) {
@@ -87,7 +87,6 @@ export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchR
                   <div className="indicator-row indicator-row-head" role="row">
                     <span>开关</span>
                     <span>指标</span>
-                    <span>怎么用</span>
                     <span>填写规则</span>
                     <span>影响</span>
                     <span>说明</span>
@@ -98,12 +97,14 @@ export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchR
                     const isParameter = parameterKeys.length > 0;
                     const enabled = isParameter ? parameterEnabled(config, parameterKeys, parameterByKey) : Boolean(rule?.enabled);
                     const disabled = indicator.status === 'planned' || indicator.data_status === 'planned';
+                    const alwaysOn = parameterKeys.length > 0 && parameterKeys.every((key) => alwaysOnKeys.has(key));
+                    const booleanOnly = isSingleBooleanParameter(parameterKeys, parameterByKey);
                     return (
                       <div className="indicator-row" role="row" key={indicator.id}>
                         <span>
                           <Switch
                             checked={enabled}
-                            disabled={disabled || parameterKeys.every((key) => alwaysOnKeys.has(key))}
+                            disabled={disabled || alwaysOn}
                             label={enabled ? '开' : '关'}
                             onCheckedChange={(checked) => {
                               if (isParameter) {
@@ -120,12 +121,17 @@ export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchR
                           <strong>{indicator.name}</strong>
                           <small>{sectionForIndicator(indicator)}</small>
                         </span>
-                        <span>{howToText(indicator, rule)}</span>
                         <span>
-                          {isParameter ? (
+                          {isParameter && booleanOnly ? (
+                            <span className="field-readonly muted">左侧开关控制</span>
+                          ) : isParameter && (enabled || alwaysOn) ? (
                             <ParameterControls config={config} indicator={indicator} keys={parameterKeys} onPatchConfig={onPatchConfig} parameterByKey={parameterByKey} />
+                          ) : isParameter ? (
+                            <span className="field-readonly muted">点击左侧开启</span>
+                          ) : enabled ? (
+                            <RuleControls indicator={indicator} onPatchRule={onPatchRule} onRemoveRule={onRemoveRule} rule={rule} />
                           ) : (
-                            <RuleControls indicator={indicator} onAddRule={onAddRule} onPatchRule={onPatchRule} onRemoveRule={onRemoveRule} rule={rule} />
+                            <span className="field-readonly muted">点击左侧开启</span>
                           )}
                         </span>
                         <span>{effectText(indicator, rule, isParameter)}</span>
@@ -220,22 +226,16 @@ function ParameterInput({
 function RuleControls({
   indicator,
   rule,
-  onAddRule,
   onPatchRule,
   onRemoveRule,
 }: {
   indicator: IndicatorDefinition;
   rule?: StrategyRule;
-  onAddRule: (indicator: IndicatorDefinition) => void;
   onPatchRule: (ruleId: string, patch: Partial<StrategyRule>) => void;
   onRemoveRule: (ruleId: string) => void;
 }) {
   if (!rule) {
-    return (
-      <button className="chip-button" type="button" onClick={() => onAddRule(indicator)}>
-        开启后填写
-      </button>
-    );
+    return <span className="field-readonly muted">点击左侧开启</span>;
   }
   const actions = supportedRuleActions(indicator);
   const operators = supportedRuleOperators(indicator, rule.action);
@@ -296,6 +296,11 @@ function buildParameterMap(indicators: IndicatorDefinition[]) {
     });
   });
   return map;
+}
+
+function isSingleBooleanParameter(keys: string[], parameterByKey: Map<string, IndicatorDefinition>) {
+  if (keys.length !== 1) return false;
+  return parameterByKey.get(keys[0])?.control?.type === 'boolean';
 }
 
 function dedupeIndicators(indicators: IndicatorDefinition[]) {
@@ -392,13 +397,22 @@ function indicatorRank(indicator: IndicatorDefinition) {
 }
 
 function parameterEnabled(config: StrategyConfig, keys: string[], parameterByKey: Map<string, IndicatorDefinition>) {
+  if (keys.every((key) => alwaysOnKeys.has(key))) return true;
+  const selectKeys = keys.filter((key) => parameterByKey.get(key)?.control?.type === 'select');
+  if (selectKeys.length && selectKeys.every((key) => isOffValue((config as unknown as Record<string, unknown>)[key]))) {
+    return false;
+  }
   return keys.some((key) => {
-    if (alwaysOnKeys.has(key)) return true;
+    if (alwaysOnKeys.has(key)) return false;
     const value = (config as unknown as Record<string, unknown>)[key];
     const control = parameterByKey.get(key)?.control;
-    if (control?.type === 'select') return value !== null && value !== undefined && !['', 'off', 'none'].includes(String(value));
+    if (control?.type === 'select') return value !== null && value !== undefined && !isOffValue(value);
     return value !== null && value !== undefined && value !== false && value !== 0 && value !== '';
   });
+}
+
+function isOffValue(value: unknown) {
+  return ['', 'off', 'none'].includes(String(value ?? ''));
 }
 
 function parameterPatch(indicator: IndicatorDefinition, config: StrategyConfig, checked: boolean, parameterByKey: Map<string, IndicatorDefinition>): Partial<StrategyConfig> {
@@ -437,20 +451,6 @@ function coerceSelectValue(raw: string, previous: unknown) {
   return raw;
 }
 
-function howToText(indicator: IndicatorDefinition, rule?: StrategyRule) {
-  if (indicatorParameterKeys(indicator).length) return parameterHelp(indicator);
-  if (rule) return actionLabel(rule.action);
-  return supportedRuleActions(indicator).map(actionLabel).join(' / ');
-}
-
-function parameterHelp(indicator: IndicatorDefinition) {
-  const usage = new Set(indicator.usage || []);
-  if (usage.has('score')) return '达到条件后提高排序';
-  if (usage.has('sort')) return '决定候选排序方式';
-  if (usage.has('switch')) return '控制是否纳入范围';
-  return '不符合就不进入候选';
-}
-
 function actionLabel(action: RuleAction) {
   if (action === 'filter') return '硬性筛选';
   if (action === 'score') return '加分排序';
@@ -464,7 +464,7 @@ function effectText(indicator: IndicatorDefinition, rule: StrategyRule | undefin
     if ((indicator.usage || []).includes('score')) return '影响分数';
     return '影响入选范围';
   }
-  if (!rule) return '尚未启用';
+  if (!rule) return '点击开启';
   if (rule.action === 'score') return `命中 +${rule.weight ?? 5} 分`;
   if (rule.action === 'risk') return `命中降低 ${rule.weight ?? 5} 分`;
   if (rule.action === 'filter') return '不满足会剔除';

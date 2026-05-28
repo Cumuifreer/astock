@@ -380,6 +380,47 @@ def test_intraday_timeline_tracks_candidate_across_samples(tmp_path):
     assert timeline["rows"][0]["strict_status"] == "接近平台"
     assert timeline["rows"][1]["strict_status"] == "刚突破"
     assert timeline["rows"][1]["score_score"] >= timeline["rows"][0]["score_score"]
+    assert timeline["rows"][1]["amount_delta"] == 22_000_000.0
+    assert timeline["rows"][1]["amount_delta_status"] == "computed"
+
+
+def test_intraday_timeline_computes_amount_delta_without_rankings(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert("historical_bars", [{**_bar("000001.SZ", day), "amount": 20_000_000.0} for day in range(1, 22)], ["code", "date"])
+
+    service = IntradayRadarService(db)
+    first = datetime(2026, 5, 21, 9, 35)
+    second = datetime(2026, 5, 21, 10, 0)
+    for sample_at, amount in [(first, 10_000_000.0), (second, 32_000_000.0)]:
+        service.record_snapshots(
+            pd.DataFrame(
+                [
+                    {
+                        "code": "000001.SZ",
+                        "name": "平安银行",
+                        "latest_price": 10.0,
+                        "pct_chg": 1.0,
+                        "high": 10.2,
+                        "low": 9.8,
+                        "volume": amount / 10,
+                        "amount": amount,
+                        "source": "test",
+                    }
+                ]
+            ),
+            sample_at=sample_at,
+            trade_date="2026-05-21",
+        )
+
+    timeline = service.timeline("000001.SZ", trade_date="2026-05-21")
+
+    assert timeline["rows"][0]["amount_delta"] is None
+    assert timeline["rows"][0]["amount_delta_status"] == "insufficient_samples"
+    assert timeline["rows"][1]["amount_delta"] == 22_000_000.0
+    assert timeline["rows"][1]["amount_delta_status"] == "computed"
+    assert timeline["rows"][1]["amount_ratio"] is not None
 
 
 def test_intraday_radar_queries_previous_snapshots_with_timestamp_param(tmp_path, monkeypatch):

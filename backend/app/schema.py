@@ -698,10 +698,13 @@ MIGRATIONS = [
       amount DOUBLE,
       net_amount DOUBLE,
       company_count INTEGER,
+      member_count INTEGER,
       limit_up_count INTEGER,
       limit_up_count_status TEXT,
       strong_count INTEGER,
       strong_count_status TEXT,
+      limit_data_date DATE,
+      quote_data_date DATE,
       leader_code TEXT,
       leader_name TEXT,
       leader_pct_chg DOUBLE,
@@ -719,6 +722,15 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE market_sector_daily ADD COLUMN IF NOT EXISTS leader_pct_chg DOUBLE
+    """,
+    """
+    ALTER TABLE market_sector_daily ADD COLUMN IF NOT EXISTS member_count INTEGER
+    """,
+    """
+    ALTER TABLE market_sector_daily ADD COLUMN IF NOT EXISTS limit_data_date DATE
+    """,
+    """
+    ALTER TABLE market_sector_daily ADD COLUMN IF NOT EXISTS quote_data_date DATE
     """,
     """
     CREATE TABLE IF NOT EXISTS factor_values (

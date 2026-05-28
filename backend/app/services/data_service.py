@@ -366,10 +366,19 @@ class DataService:
 
     def sector_heatmap(self, sector_type: str = "concept", metric: str = "heat", limit: int = 80) -> List[Dict[str, Any]]:
         resolved_type = "industry" if str(sector_type).lower() == "industry" else "concept"
-        order_column = {
+        order_expression = {
             "pct_chg": "pct_chg",
             "moneyflow": "net_amount",
-            "limit": "limit_up_count",
+            "limit": """
+                CASE
+                    WHEN COALESCE(limit_up_count_status, '') = 'computed'
+                      OR COALESCE(strong_count_status, '') = 'computed'
+                    THEN 0 ELSE 1
+                END,
+                COALESCE(limit_up_count, 0) DESC,
+                COALESCE(strong_count, 0) DESC,
+                heat_score
+            """,
             "heat": "heat_score",
         }.get(str(metric).lower(), "heat_score")
         rows = self.db.query(
@@ -382,10 +391,13 @@ class DataService:
                    amount,
                    net_amount,
                    company_count,
+                   member_count,
                    limit_up_count,
                    COALESCE(limit_up_count_status, CASE WHEN limit_up_count IS NULL THEN 'not_computed' ELSE 'computed' END) AS limit_up_count_status,
                    strong_count,
                    COALESCE(strong_count_status, CASE WHEN strong_count IS NULL THEN 'not_computed' ELSE 'computed' END) AS strong_count_status,
+                   limit_data_date,
+                   quote_data_date,
                    leader_code,
                    leader_name,
                    leader_pct_chg,
@@ -399,7 +411,7 @@ class DataService:
                 FROM market_sector_daily
                 WHERE sector_type = ?
               )
-            ORDER BY {order_column} DESC NULLS LAST, sector_name
+            ORDER BY {order_expression} DESC NULLS LAST, sector_name
             LIMIT ?
             """,
             [resolved_type, resolved_type, max(1, min(limit, 300))],

@@ -33,6 +33,7 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
             `<strong>${raw.name || raw.sector_name || '板块'}</strong>`,
             `涨跌幅：${formatPercent(raw.pct_chg)}`,
             `主力净流入：${formatMoney(raw.net_amount)}`,
+            `成分覆盖：${raw.member_count ?? raw.company_count ?? '待同步'}`,
             `涨停家数：${limitText(raw)}`,
             `强势家数：${strongText(raw)}`,
             `领涨股：${raw.leader_name || raw.leader_code || '待同步'}`,
@@ -114,16 +115,16 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
 }
 
 function limitText(sector: SectorHeatNode) {
-  if (sector.limit_up_count_status === 'missing_members') return '缺少成分';
-  if (sector.limit_up_count_status === 'missing_limit_data' || sector.limit_up_count_status === 'missing') return '待同步';
-  if (!statusComputed(sector.limit_up_count_status) || sector.limit_up_count === null || sector.limit_up_count === undefined) return '待计算';
+  if (sector.limit_up_count_status === 'missing_members') return '缺成分';
+  if (sector.limit_up_count_status === 'missing_limit_data' || sector.limit_up_count_status === 'missing') return '缺涨跌停数据';
+  if (!statusComputed(sector.limit_up_count_status) || sector.limit_up_count === null || sector.limit_up_count === undefined) return '未补算';
   return String(sector.limit_up_count);
 }
 
 function strongText(sector: SectorHeatNode) {
-  if (sector.strong_count_status === 'missing_members') return '缺少成分';
-  if (sector.strong_count_status === 'missing_quote' || sector.strong_count_status === 'missing') return '行情不足';
-  if (!statusComputed(sector.strong_count_status) || sector.strong_count === null || sector.strong_count === undefined) return '待计算';
+  if (sector.strong_count_status === 'missing_members') return '缺成分';
+  if (sector.strong_count_status === 'missing_quote' || sector.strong_count_status === 'missing') return '缺行情数据';
+  if (!statusComputed(sector.strong_count_status) || sector.strong_count === null || sector.strong_count === undefined) return '未补算';
   return String(sector.strong_count);
 }
 

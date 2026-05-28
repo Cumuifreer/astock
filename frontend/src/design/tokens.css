@@ -964,9 +964,9 @@ button {
 
 .indicator-row {
   display: grid;
-  grid-template-columns: 74px minmax(150px, 1fr) minmax(140px, 0.9fr) minmax(260px, 1.7fr) minmax(120px, 0.8fr) minmax(180px, 1.1fr);
+  grid-template-columns: 74px minmax(170px, 1fr) minmax(280px, 1.55fr) minmax(120px, 0.7fr) minmax(190px, 1fr);
   gap: var(--space-3);
-  min-width: 1040px;
+  min-width: 940px;
   align-items: center;
   padding: 11px var(--space-4);
   border-top: 1px solid var(--border-subtle);
@@ -1048,6 +1048,11 @@ button {
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.field-readonly.muted {
+  background: var(--bg-soft);
+  color: var(--text-muted);
 }
 
 .text-button {

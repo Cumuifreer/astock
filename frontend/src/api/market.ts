@@ -24,10 +24,13 @@ export type SectorHeatNode = {
   amount?: number | null;
   net_amount?: number | null;
   company_count?: number | null;
+  member_count?: number | null;
   limit_up_count?: number | null;
   limit_up_count_status?: 'computed' | 'not_computed' | 'missing_limit_data' | 'missing_members' | 'missing_quote' | 'missing' | string | null;
   strong_count?: number | null;
   strong_count_status?: 'computed' | 'not_computed' | 'missing_members' | 'missing_quote' | 'missing' | string | null;
+  limit_data_date?: string | null;
+  quote_data_date?: string | null;
   leader_code?: string | null;
   leader_name?: string | null;
   leader_pct_chg?: number | null;

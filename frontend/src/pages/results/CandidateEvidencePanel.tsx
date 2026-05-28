@@ -33,6 +33,12 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName }: Candi
               code: candidate.code,
               name: candidate.name,
               signal_score: candidate.signal_score,
+              signal_type: candidate.signal_type,
+              latest_price: candidate.latest_price,
+              pct_chg: candidate.pct_chg,
+              amount: candidate.amount,
+              turnover_rate: candidate.turnover_rate,
+              float_market_value: candidate.float_market_value,
               reasons: candidate.reasons || [],
               metrics: candidate.metrics || {},
             },
@@ -41,7 +47,7 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName }: Candi
           })
         : Promise.resolve({
             enabled: false,
-            summary: '当前使用规则解释，配置模型后可生成更完整的自然语言分析。',
+            summary: '未配置模型，以下先按规则证据生成解释。',
             opportunities: [],
             risks: [],
             watch_plan: [],
@@ -90,8 +96,8 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName }: Candi
   const aiData = aiSummary.data;
   const primaryExplanation = aiSummary.isLoading
     ? ['正在生成候选解释...']
-    : [aiData?.summary || '当前使用规则解释，配置模型后可生成更完整的自然语言分析。'];
-  const opportunityItems = candidate.reasons?.length ? candidate.reasons : aiData?.opportunities?.length ? aiData.opportunities : matchedRules;
+    : [aiData?.summary || '未配置模型，以下先按规则证据生成解释。'];
+  const opportunityItems = aiData?.opportunities?.length ? aiData.opportunities : candidate.reasons?.length ? candidate.reasons : matchedRules;
   const riskItems = aiData?.risks?.length
     ? aiData.risks
     : riskRules.length
@@ -113,7 +119,7 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName }: Candi
         <Badge tone={aiData?.enabled === false ? 'watch' : 'info'}>{aiData?.enabled === false ? '规则解释' : '自然语言解释'}</Badge>
       </div>
       <div className="grid-2 evidence-grid">
-        <EvidenceBlock title="AI 解读 / 规则解释" items={primaryExplanation} />
+        <EvidenceBlock title="AI 解读" items={primaryExplanation} />
         <EvidenceBlock title="入选理由" items={opportunityItems.length ? opportunityItems : matchedRules} />
         <EvidenceBlock title="风险提示" items={riskItems} />
         <EvidenceBlock title="后续观察" items={watchPlan} />

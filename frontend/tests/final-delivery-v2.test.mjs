@@ -58,8 +58,9 @@ test('strategy page uses a default full indicator matrix instead of factor picke
   }
   assert.match(matrix, /Switch/);
   assert.match(matrix, /开关/);
+  assert.match(matrix, /点击左侧开启/);
   assert.doesNotMatch(strategy, /RuleCanvas|UniversePanel|保存为默认|系统策略|默认策略/);
-  assert.doesNotMatch(matrix, /调整参数|高级参数|规则配置/);
+  assert.doesNotMatch(matrix, /调整参数|高级参数|规则配置|怎么用|尚未启用|开启后填写/);
 });
 
 test('analysis results display strategy names and auto-load candidate explanation', () => {
@@ -70,6 +71,7 @@ test('analysis results display strategy names and auto-load candidate explanatio
 
   const panel = read('pages/results/CandidateEvidencePanel.tsx');
   assert.match(panel, /AI 解读/);
+  assert.doesNotMatch(panel, /AI 解读 \/ 规则解释/);
   assert.match(panel, /useQuery/);
   assert.match(panel, /getCandidateAiSummary/);
   assert.doesNotMatch(panel, /技术明细|Dialog|AI 解读暂未启用/);

@@ -25,7 +25,8 @@ test('scanner page is organized as one indicator matrix plus combination panel',
   for (const label of ['基础股票池', '流动性与成交', '相对强弱', '平台与突破', '组合加分']) {
     assert.match(combined, new RegExp(label));
   }
-  assert.doesNotMatch(combined, /高级参数|规则配置|调整参数/);
+  assert.match(indicatorMatrixSource, /点击左侧开启/);
+  assert.doesNotMatch(combined, /高级参数|规则配置|调整参数|怎么用|尚未启用|开启后填写/);
   assert.doesNotMatch(scannerSource, /StrategyRuleBuilder/);
   assert.doesNotMatch(scannerSource, /StrategyResonanceBuilder/);
 });
