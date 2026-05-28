@@ -303,6 +303,181 @@ def test_capabilities_use_active_stocks_as_denominator(tmp_path):
     assert capabilities["当天行情快照"]["missing_count"] == 3
 
 
+def test_capabilities_hide_stale_fallback_failures_when_current_source_is_healthy(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    seed_stock_basics(db)
+    active_codes = ["000001.SZ", "300750.SZ", "688981.SH", "600519.SH"]
+    snapshot_rows = []
+    history_rows = []
+    for code in active_codes:
+        snapshot_rows.append(
+            {
+                "code": code,
+                "date": date(2026, 5, 28),
+                "name": code,
+                "latest_price": 10.0,
+                "pct_chg": 0.0,
+                "high": 10.2,
+                "low": 9.8,
+                "volume": 100,
+                "amount": 100000000,
+                "turnover_rate": 1.2,
+                "float_market_value": 1000000000,
+                "source": "Tushare 实时日线",
+                "updated_at": datetime(2026, 5, 28, 15, 0),
+            }
+        )
+        history_rows.append(
+            {
+                "code": code,
+                "date": date(2026, 5, 27),
+                "open": 9.8,
+                "high": 10.2,
+                "low": 9.7,
+                "close": 10.0,
+                "prev_close": 9.9,
+                "volume": 1000000,
+                "amount": 100000000,
+                "turn": 1.2,
+                "pct_chg": 1.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Tushare daily 前复权",
+                "updated_at": datetime(2026, 5, 28, 1, 49),
+            }
+        )
+    db.upsert("daily_snapshots", snapshot_rows, ["code", "date"])
+    db.upsert("historical_bars", history_rows, ["code", "date"])
+    db.upsert(
+        "market_sector_daily",
+        [
+            {
+                "sector_code": "885800.TI",
+                "sector_name": "半导体设备",
+                "sector_type": "concept",
+                "trade_date": date(2026, 5, 27),
+                "pct_chg": 1.2,
+                "amount": 100000000,
+                "net_amount": 1000000,
+                "company_count": 10,
+                "limit_up_count": 1,
+                "strong_count": 3,
+                "leader_code": "000001.SZ",
+                "leader_name": "平安银行",
+                "heat_score": 66.0,
+                "source": "Tushare moneyflow_cnt_ths",
+                "updated_at": datetime(2026, 5, 28, 2, 1),
+            }
+        ],
+        ["sector_code", "sector_type", "trade_date"],
+    )
+    db.upsert(
+        "source_status",
+        [
+            {
+                "source": "AData",
+                "capability": "当天行情快照",
+                "status": "available",
+                "last_checked": datetime(2026, 5, 20, 3, 9),
+                "last_success": datetime(2026, 5, 20, 3, 9),
+                "last_failure": None,
+                "failure_reason": None,
+                "ttl_until": datetime(2026, 5, 20, 4, 9),
+                "payload_json": {},
+            },
+            {
+                "source": "AkShare 新浪",
+                "capability": "当天行情快照",
+                "status": "failed",
+                "last_checked": datetime(2026, 5, 28, 1, 19),
+                "last_success": None,
+                "last_failure": datetime(2026, 5, 28, 1, 19),
+                "failure_reason": "Can not decode value starting with character '<'",
+                "ttl_until": datetime(2026, 5, 28, 2, 19),
+                "payload_json": {},
+            },
+            {
+                "source": "Tushare 实时日线",
+                "capability": "当天行情快照",
+                "status": "available",
+                "last_checked": datetime(2026, 5, 28, 1, 28),
+                "last_success": datetime(2026, 5, 28, 1, 28),
+                "last_failure": None,
+                "failure_reason": None,
+                "ttl_until": datetime(2026, 5, 28, 2, 28),
+                "payload_json": {"rows": 4},
+            },
+            {
+                "source": "Baostock",
+                "capability": "历史 K 线",
+                "status": "failed",
+                "last_checked": datetime(2026, 5, 25, 7, 35),
+                "last_success": None,
+                "last_failure": datetime(2026, 5, 25, 7, 35),
+                "failure_reason": "002402.SZ: 当前 AData 2.9.5 历史行情接口内部使用 EM 源，已按项目约束跳过。",
+                "ttl_until": datetime(2026, 5, 25, 8, 35),
+                "payload_json": {},
+            },
+            {
+                "source": "Tushare daily 前复权",
+                "capability": "历史 K 线",
+                "status": "available",
+                "last_checked": datetime(2026, 5, 28, 1, 49),
+                "last_success": datetime(2026, 5, 28, 1, 49),
+                "last_failure": None,
+                "failure_reason": None,
+                "ttl_until": datetime(2026, 5, 28, 2, 49),
+                "payload_json": {"rows": 4},
+            },
+            {
+                "source": "Legacy board source",
+                "capability": "板块热力",
+                "status": "available",
+                "last_checked": datetime(2026, 5, 20, 1, 0),
+                "last_success": datetime(2026, 5, 20, 1, 0),
+                "last_failure": None,
+                "failure_reason": None,
+                "ttl_until": datetime(2026, 5, 20, 2, 0),
+                "payload_json": {"rows": 1},
+            },
+            {
+                "source": "Tushare moneyflow_cnt_ths",
+                "capability": "板块热力",
+                "status": "available",
+                "last_checked": datetime(2026, 5, 28, 2, 1, 11),
+                "last_success": datetime(2026, 5, 28, 2, 1, 11),
+                "last_failure": None,
+                "failure_reason": None,
+                "ttl_until": datetime(2026, 5, 28, 3, 1, 11),
+                "payload_json": {"rows": 386},
+            },
+            {
+                "source": "Tushare moneyflow_ind_ths",
+                "capability": "板块热力",
+                "status": "available",
+                "last_checked": datetime(2026, 5, 28, 2, 1, 12),
+                "last_success": datetime(2026, 5, 28, 2, 1, 12),
+                "last_failure": None,
+                "failure_reason": None,
+                "ttl_until": datetime(2026, 5, 28, 3, 1, 12),
+                "payload_json": {"rows": 90},
+            },
+        ],
+        ["source", "capability"],
+    )
+
+    capabilities = {row["capability"]: row for row in DataService(db).capabilities()}
+
+    assert capabilities["当天行情快照"]["missing_count"] == 0
+    assert capabilities["当天行情快照"]["last_failure_reason"] is None
+    assert capabilities["当天行情快照"]["actual_sources"] == ["Tushare 实时日线"]
+    assert capabilities["历史 K 线"]["missing_count"] == 0
+    assert capabilities["历史 K 线"]["last_failure_reason"] is None
+    assert capabilities["历史 K 线"]["actual_sources"] == ["Tushare daily 前复权"]
+    assert set(capabilities["板块热力"]["actual_sources"]) == {"Tushare moneyflow_cnt_ths", "Tushare moneyflow_ind_ths"}
+
+
 def test_capabilities_ignore_inactive_old_data_in_stock_coverage(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

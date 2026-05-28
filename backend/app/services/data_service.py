@@ -268,6 +268,17 @@ def _latest_scheduled_task_slot(tasks_by_id: Dict[str, Dict[str, Any]]) -> Optio
     return max(slots) if slots else None
 
 
+def _coerce_datetime(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        return None
+
+
 class DataService:
     def __init__(self, db: Database):
         self.db = db
@@ -1044,9 +1055,9 @@ class DataService:
         return decoded
 
     def capabilities(self) -> List[Dict[str, Any]]:
+        self.refresh_capabilities()
         rows = self.db.query("SELECT * FROM data_capabilities ORDER BY capability")
-        if not rows or {row["capability"] for row in rows} != set(CAPABILITY_DEFINITIONS):
-            self.refresh_capabilities()
+        if {row["capability"] for row in rows} != set(CAPABILITY_DEFINITIONS):
             rows = self.db.query("SELECT * FROM data_capabilities ORDER BY capability")
         for row in rows:
             row["actual_sources"] = json.loads(row.get("actual_sources") or "[]")
@@ -1172,13 +1183,13 @@ class DataService:
             )
         status_failures = self.db.query(
             """
-            SELECT capability, failure_reason
+            SELECT capability, failure_reason, COALESCE(last_failure, last_checked) AS failure_at
             FROM source_status
             WHERE failure_reason IS NOT NULL
             QUALIFY ROW_NUMBER() OVER (PARTITION BY capability ORDER BY last_checked DESC) = 1
             """
         )
-        failure_by_cap = {row["capability"]: row["failure_reason"] for row in status_failures}
+        failure_by_cap = {row["capability"]: row for row in status_failures}
 
         def latest_code_count(table: str, latest: Any) -> int:
             if not latest:
@@ -1330,19 +1341,42 @@ class DataService:
         }
         source_rows = self.db.query(
             """
-            SELECT capability, source
+            SELECT capability, source, COALESCE(last_success, last_checked) AS success_at
             FROM source_status
             WHERE status IN ('available', 'completed_full', 'completed_partial')
             """
         )
-        sources_by_cap: Dict[str, List[str]] = {}
+        success_candidates_by_cap: Dict[str, List[Dict[str, Any]]] = {}
+        latest_success_by_cap: Dict[str, datetime] = {}
         for row in source_rows:
-            sources_by_cap.setdefault(row["capability"], []).append(row["source"])
+            capability = row["capability"]
+            success_at = _coerce_datetime(row.get("success_at"))
+            latest_success = latest_success_by_cap.get(capability)
+            if latest_success is None or (success_at and success_at > latest_success):
+                if success_at:
+                    latest_success_by_cap[capability] = success_at
+            success_candidates_by_cap.setdefault(capability, []).append(row)
+        sources_by_cap: Dict[str, List[str]] = {}
+        for capability, rows_for_capability in success_candidates_by_cap.items():
+            latest_success = latest_success_by_cap.get(capability)
+            sources: List[str] = []
+            for row in rows_for_capability:
+                source = row["source"]
+                success_at = _coerce_datetime(row.get("success_at"))
+                if latest_success and success_at and latest_success - success_at <= timedelta(minutes=30) and source not in sources:
+                    sources.append(source)
+            sources_by_cap[capability] = sources
 
         for capability, definition in CAPABILITY_DEFINITIONS.items():
             coverage = int(counts.get(capability, 0))
             coverage_kind = definition.get("coverage_kind", "stock")
             denominator = coverage if coverage_kind in {"event", "dataset"} else active_stocks if active_stocks else coverage
+            missing_count = max(0, int(denominator) - coverage)
+            failure = failure_by_cap.get(capability)
+            failure_at = _coerce_datetime((failure or {}).get("failure_at"))
+            latest_success = latest_success_by_cap.get(capability)
+            failure_is_current = bool(failure) and (latest_success is None or failure_at is None or failure_at > latest_success)
+            last_failure_reason = failure.get("failure_reason") if failure_is_current and (coverage <= 0 or missing_count > 0) else None
             latest_update = latest_snapshot if capability == "当天行情快照" else latest_history
             if capability == "流通市值":
                 latest_update = latest_float_market_value
@@ -1370,9 +1404,9 @@ class DataService:
                     "actual_sources": sources_by_cap.get(capability, []),
                     "fallback_sources": definition["fallback_sources"],
                     "coverage_count": coverage,
-                    "missing_count": max(0, int(denominator) - coverage),
+                    "missing_count": missing_count,
                     "latest_update": latest_update,
-                    "last_failure_reason": failure_by_cap.get(capability),
+                    "last_failure_reason": last_failure_reason,
                     "uses_cache": True,
                     "can_backfill": definition["can_backfill"],
                     "participates_in_analysis": definition["participates_in_analysis"],
