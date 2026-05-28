@@ -1,33 +1,80 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Activity, Play } from 'lucide-react';
-import { runSignalEvaluation } from '../../api/backtest';
+import { getSignalEvaluation, runSignalEvaluation } from '../../api/backtest';
 import { Button } from '../../design/Button';
 import { Badge } from '../../design/Badge';
+import { useBootstrap } from '../../hooks/useBootstrap';
+import { useStrategyDraft } from '../../hooks/useStrategyDraft';
+import { composeStrategyConfig, strategySummary } from '../../utils/strategy';
 import { formatRatio } from '../../utils/format';
 import { todayISO } from '../../utils/date';
 
 export function SignalEvaluation() {
+  const bootstrap = useBootstrap();
+  const draft = useStrategyDraft();
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState(todayISO());
+  const [step, setStep] = useState('5');
+  const [candidateLimit, setCandidateLimit] = useState('');
+  const baseConfig = draft.config || bootstrap.data?.default_strategy || null;
+  const config = useMemo(() => (baseConfig ? composeStrategyConfig(baseConfig, draft.rules, draft.resonances) : null), [baseConfig, draft.rules, draft.resonances]);
   const mutation = useMutation({
     mutationFn: () =>
       runSignalEvaluation({
-        start_date: '2024-01-01',
-        end_date: todayISO(),
-        sample_frequency: 'daily',
-        candidate_limit: 80,
+        config,
+        start_date: startDate || undefined,
+        end_date: endDate || undefined,
+        step: Number(step) || 5,
+        candidate_limit: Number(candidateLimit) || config?.candidate_limit || 80,
       }),
   });
-  const summary = (mutation.data?.summary || {}) as Record<string, unknown>;
+  const result = useQuery({
+    queryKey: ['signal-evaluation', mutation.data?.run_id],
+    queryFn: () => getSignalEvaluation(mutation.data?.run_id || ''),
+    enabled: Boolean(mutation.data?.run_id),
+    refetchInterval: (query) => {
+      const status = query.state.data?.run?.status;
+      return status === 'queued' || status === 'running' ? 2600 : false;
+    },
+  });
+  const summary = (result.data?.run?.summary || {}) as Record<string, unknown>;
+  const queued = mutation.data && !result.data?.run?.summary;
   return (
     <section className="surface pad">
       <div className="section-heading">
         <div>
           <h2>信号评估</h2>
-          <p>评估信号数量、收益、IC / Rank IC、Top N、分桶单调性和共振命中。</p>
+          <p>{strategySummary(config)}</p>
         </div>
-        <Button disabled={mutation.isPending} icon={<Play size={16} />} onClick={() => mutation.mutate()} variant="primary">
+        <Button disabled={mutation.isPending || !config} icon={<Play size={16} />} onClick={() => mutation.mutate()} variant="primary">
           运行评估
         </Button>
       </div>
+      <div className="backtest-form">
+        <label>
+          <span>开始日期</span>
+          <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+        </label>
+        <label>
+          <span>结束日期</span>
+          <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+        </label>
+        <label>
+          <span>采样间隔</span>
+          <input inputMode="numeric" value={step} onChange={(event) => setStep(event.target.value)} />
+        </label>
+        <label>
+          <span>候选上限</span>
+          <input inputMode="numeric" placeholder={String(config?.candidate_limit || 80)} value={candidateLimit} onChange={(event) => setCandidateLimit(event.target.value)} />
+        </label>
+      </div>
+      {mutation.data ? (
+        <div className="backtest-runline">
+          <strong>{queued ? '已进入任务队列' : result.data?.run?.status || mutation.data.status}</strong>
+          <small>{mutation.data.task_id} · {mutation.data.run_id}</small>
+        </div>
+      ) : null}
       <div className="metric-row">
         <Metric label="Rank IC" value={formatRatio(summary.rank_ic)} />
         <Metric label="IC" value={formatRatio(summary.ic)} />

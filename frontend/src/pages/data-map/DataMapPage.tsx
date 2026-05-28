@@ -1,8 +1,17 @@
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getCapabilities } from '../../api/data';
-import type { Capability } from '../../types';
+import { Database, Search } from 'lucide-react';
+import { getCapabilities, getSourceDiagnostics, getStockDetail, getStocks } from '../../api/data';
+import type { Capability, SourceDiagnostics, StockDetail, StockRow } from '../../types';
+import { Badge } from '../../design/Badge';
+import { Button } from '../../design/Button';
+import { Drawer } from '../../design/Drawer';
 import { EmptyState } from '../../design/EmptyState';
 import { LoadingState } from '../../design/LoadingState';
+import { Select } from '../../design/Select';
+import { Tabs } from '../../design/Tabs';
+import { formatDate } from '../../utils/date';
+import { formatMoney, formatNumber, formatPercent, formatRatio, shortText } from '../../utils/format';
 import { normalizeRows } from '../../utils/metrics';
 import { CapabilityCard } from './CapabilityCard';
 
@@ -13,16 +22,249 @@ const groups: Array<{ title: string; names: string[] }> = [
   { title: '市场上下文', names: ['市场环境', '板块热力', '资讯简报'] },
 ];
 
+const limit = 40;
+
 export function DataMapPage() {
+  const [tab, setTab] = useState('warehouse');
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState('active');
+  const [exchange, setExchange] = useState('');
+  const [offset, setOffset] = useState(0);
+  const [selectedCode, setSelectedCode] = useState<string | null>(null);
   const capabilities = useQuery({ queryKey: ['capabilities'], queryFn: getCapabilities });
-  if (capabilities.isLoading) return <LoadingState label="读取数据中心" />;
-  const rows = normalizeRows<Capability>(capabilities.data);
-  if (!rows.length) return <EmptyState title="数据能力为空" description="刷新数据能力后会按核心、增强、事件、市场上下文分组展示。" />;
+  const diagnostics = useQuery({ queryKey: ['source-diagnostics'], queryFn: getSourceDiagnostics });
+  const stocks = useQuery({
+    queryKey: ['stocks', query, status, exchange, offset],
+    queryFn: () => getStocks({ limit, offset, search: query, status, exchange }),
+  });
+  const detail = useQuery({
+    queryKey: ['stock-detail', selectedCode],
+    queryFn: () => getStockDetail(selectedCode || ''),
+    enabled: Boolean(selectedCode),
+  });
+  const capabilityRows = normalizeRows<Capability>(capabilities.data);
+  const stockRows = stocks.data?.rows || [];
+  const total = stocks.data?.total || 0;
 
   return (
     <div className="page-grid">
+      <Tabs
+        value={tab}
+        onValueChange={setTab}
+        items={[
+          {
+            value: 'warehouse',
+            label: '数据仓库',
+            content: (
+              <StockWarehouse
+                exchange={exchange}
+                loading={stocks.isLoading}
+                offset={offset}
+                query={query}
+                rows={stockRows}
+                selectedCode={selectedCode}
+                setExchange={setExchange}
+                setOffset={setOffset}
+                setQuery={setQuery}
+                setSelectedCode={setSelectedCode}
+                setStatus={setStatus}
+                status={status}
+                total={total}
+              />
+            ),
+          },
+          {
+            value: 'health',
+            label: '数据健康',
+            content: (
+              <DataHealth capabilities={capabilityRows} diagnostics={diagnostics.data} loading={capabilities.isLoading || diagnostics.isLoading} />
+            ),
+          },
+        ]}
+      />
+      <Drawer open={Boolean(selectedCode)} onOpenChange={(open) => !open && setSelectedCode(null)} title={selectedCode || '个股档案'}>
+        {detail.isLoading ? <LoadingState label="读取个股档案" /> : <StockProfile detail={detail.data || null} />}
+      </Drawer>
+    </div>
+  );
+}
+
+function StockWarehouse({
+  rows,
+  total,
+  query,
+  setQuery,
+  status,
+  setStatus,
+  exchange,
+  setExchange,
+  offset,
+  setOffset,
+  selectedCode,
+  setSelectedCode,
+  loading,
+}: {
+  rows: StockRow[];
+  total: number;
+  query: string;
+  setQuery: (value: string) => void;
+  status: string;
+  setStatus: (value: string) => void;
+  exchange: string;
+  setExchange: (value: string) => void;
+  offset: number;
+  setOffset: (value: number) => void;
+  selectedCode: string | null;
+  setSelectedCode: (value: string) => void;
+  loading: boolean;
+}) {
+  return (
+    <section className="surface pad">
+      <div className="section-heading">
+        <div>
+          <h2>本地股票仓</h2>
+          <p>股票列表、活跃口径、搜索和个股档案保留在数据中心主视图。</p>
+        </div>
+        <Badge tone="info">{formatNumber(total)} 只</Badge>
+      </div>
+      <div className="data-toolbar">
+        <label className="search-box">
+          <Search size={15} />
+          <input
+            placeholder="代码 / 名称"
+            value={query}
+            onChange={(event) => {
+              setOffset(0);
+              setQuery(event.target.value);
+            }}
+          />
+        </label>
+        <Select
+          label="股票状态"
+          value={status}
+          onChange={(value) => {
+            setOffset(0);
+            setStatus(value);
+          }}
+          options={[
+            { value: 'active', label: '活跃' },
+            { value: 'inactive', label: '非活跃' },
+            { value: 'all', label: '全部' },
+          ]}
+        />
+        <Select
+          label="交易所"
+          value={exchange || 'all'}
+          onChange={(value) => {
+            setOffset(0);
+            setExchange(value === 'all' ? '' : value);
+          }}
+          options={[
+            { value: 'all', label: '全部市场' },
+            { value: 'SH', label: '上交所' },
+            { value: 'SZ', label: '深交所' },
+            { value: 'BJ', label: '北交所' },
+          ]}
+        />
+      </div>
+      {loading ? (
+        <LoadingState label="读取股票仓" />
+      ) : rows.length ? (
+        <>
+          <div className="table-wrap warehouse-table-wrap">
+            <table className="warehouse-table">
+              <thead>
+                <tr>
+                  <th>股票</th>
+                  <th>最新价</th>
+                  <th>涨跌幅</th>
+                  <th>成交额</th>
+                  <th>换手率</th>
+                  <th>流通市值</th>
+                  <th>题材</th>
+                  <th>档案</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr className={selectedCode === row.code ? 'selected-row' : ''} key={row.code} onClick={() => setSelectedCode(row.code)}>
+                    <td>
+                      <div className="warehouse-stock-cell">
+                        <Database size={15} />
+                        <div>
+                          <strong>
+                            {row.name}
+                            {row.status_label === '非活跃' ? <span className="stock-status-badge inactive">非活跃</span> : null}
+                          </strong>
+                          <span className="mono">{row.code} · {row.exchange} · {boardLabel(row.board)}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td>{formatNumber(row.latest_price, 2)}</td>
+                    <td className={Number(row.pct_chg || 0) >= 0 ? 'text-good' : 'text-risk'}>{formatPercent(row.pct_chg)}</td>
+                    <td>{formatMoney(row.amount)}</td>
+                    <td>{formatPercent(row.turnover_rate)}</td>
+                    <td>{formatMoney(row.float_market_value)}</td>
+                    <td>{formatNumber(row.concept_count)}</td>
+                    <td>
+                      <Button onClick={() => setSelectedCode(row.code)} variant="ghost">
+                        打开
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="pager">
+            <span>{formatNumber(offset + 1)} - {formatNumber(Math.min(offset + limit, total))} / {formatNumber(total)}</span>
+            <Button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))} variant="ghost">
+              上一页
+            </Button>
+            <Button disabled={offset + limit >= total} onClick={() => setOffset(offset + limit)} variant="ghost">
+              下一页
+            </Button>
+          </div>
+        </>
+      ) : (
+        <EmptyState title="暂无股票数据" description="同步今日数据或刷新股票池后，这里会显示本地仓库。" />
+      )}
+    </section>
+  );
+}
+
+function DataHealth({ capabilities, diagnostics, loading }: { capabilities: Capability[]; diagnostics?: SourceDiagnostics; loading: boolean }) {
+  const healthCards = useMemo(
+    () => [
+      ['Tushare', diagnostics?.tushare_token_configured ? '已配置' : '未配置', diagnostics?.last_tushare_error],
+      ['实时日线', statusLabel(diagnostics?.realtime_status), diagnostics?.last_snapshot_source],
+      ['历史日线', statusLabel(diagnostics?.history_status), diagnostics?.last_history_source],
+      ['增强数据', statusLabel(diagnostics?.enrichment_status), diagnostics?.tushare_http_url_configured ? diagnostics?.tushare_http_url : '缺少中转地址'],
+    ],
+    [diagnostics],
+  );
+  if (loading) return <LoadingState label="读取数据健康" />;
+  return (
+    <div className="page-grid">
+      <section className="surface pad">
+        <div className="section-heading">
+          <div>
+            <h2>Tushare 诊断</h2>
+            <p>显示配置、最近失败和当前快照/历史数据是否已回退。</p>
+          </div>
+        </div>
+        <div className="grid-4">
+          {healthCards.map(([label, value, detail]) => (
+            <div className="metric-pill" key={String(label)}>
+              <span className="metric-label">{String(label)}</span>
+              <div className="metric-value" style={{ fontSize: 16 }}>{String(value || '--')}</div>
+              <small>{String(detail || '')}</small>
+            </div>
+          ))}
+        </div>
+      </section>
       {groups.map((group) => {
-        const items = rows.filter((row) => group.names.includes(row.capability));
+        const items = capabilities.filter((row) => group.names.includes(row.capability));
         if (!items.length) return null;
         return (
           <section className="surface pad" key={group.title}>
@@ -42,4 +284,79 @@ export function DataMapPage() {
       })}
     </div>
   );
+}
+
+function StockProfile({ detail }: { detail: StockDetail | null }) {
+  if (!detail?.basic) return <EmptyState title="暂无个股档案" description="本地仓库还没有这只股票的详情。" />;
+  const basic = detail.basic;
+  const daily = detail.daily_basic || {};
+  const factor = detail.factor || {};
+  const moneyflow = detail.moneyflow || {};
+  const concepts = detail.concepts || [];
+  const limitEvents = detail.limit_events || [];
+  const topEvents = detail.top_events || [];
+  return (
+    <div className="list-stack">
+      <section className="profile-metrics">
+        <Metric label="最新价" value={formatNumber(basic.latest_price, 2)} detail={formatPercent(basic.pct_chg)} />
+        <Metric label="量比" value={formatRatio(daily.volume_ratio ?? basic.volume_ratio)} detail={`换手 ${formatPercent(daily.turnover_rate ?? basic.turnover_rate)}`} />
+        <Metric label="主力净额" value={formatMoney(moneyflow.main_net_amount)} detail={`净流 ${formatMoney(moneyflow.net_mf_amount)}`} />
+        <Metric label="流通市值" value={formatMoney(daily.circ_mv ?? basic.float_market_value)} detail={formatDate(basic.latest_history_date)} />
+      </section>
+      <ProfileBlock title="技术因子" rows={[['MACD', factor.macd], ['KDJ', `${shortValue(factor.kdj_k)} / ${shortValue(factor.kdj_d)} / ${shortValue(factor.kdj_j)}`], ['RSI6', factor.rsi_6], ['BOLL', `${shortValue(factor.boll_upper)} / ${shortValue(factor.boll_mid)} / ${shortValue(factor.boll_lower)}`]]} />
+      <ProfileBlock title="题材成分" rows={concepts.slice(0, 8).map((item) => [formatDate(item.updated_at), `${shortText(item.con_name || item.name)} · ${shortText(item.con_code || item.code)}`])} />
+      <ProfileBlock title="涨跌停 / 炸板" rows={limitEvents.slice(0, 6).map((item) => [formatDate(item.trade_date), `${shortText(item.limit_type)} · 开板 ${formatNumber(item.open_times)} 次`])} />
+      <ProfileBlock title="龙虎榜 / 游资" rows={topEvents.slice(0, 6).map((item) => [formatDate(item.trade_date), `${formatMoney(item.net_amount)} · ${shortText(item.reason || item.hm_name)}`])} />
+    </div>
+  );
+}
+
+function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="metric-pill">
+      <span className="metric-label">{label}</span>
+      <div className="metric-value" style={{ fontSize: 16 }}>{value}</div>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function ProfileBlock({ title, rows }: { title: string; rows: Array<[unknown, unknown]> }) {
+  return (
+    <section className="surface-subtle">
+      <h3>{title}</h3>
+      {rows.length ? (
+        <div className="profile-row-list">
+          {rows.map(([label, value], index) => (
+            <div className="split-row" key={`${title}-${index}`}>
+              <span>{String(label || '--')}</span>
+              <strong>{String(value || '--')}</strong>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="card-copy">暂无记录</p>
+      )}
+    </section>
+  );
+}
+
+function boardLabel(value: unknown) {
+  const labels: Record<string, string> = { main: '主板', gem: '创业板', star: '科创板', bj: '北交所' };
+  return labels[String(value || '')] || String(value || '--');
+}
+
+function shortValue(value: unknown) {
+  return value === null || value === undefined || value === '' ? '--' : String(value);
+}
+
+function statusLabel(value: unknown) {
+  const labels: Record<string, string> = {
+    normal: '正常',
+    failed: '失败',
+    fallback: '回退',
+    partial: '部分失败',
+    unknown: '未知',
+  };
+  return labels[String(value || '')] || String(value || '--');
 }

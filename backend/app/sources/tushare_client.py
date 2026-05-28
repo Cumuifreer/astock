@@ -19,7 +19,11 @@ def create_tushare_pro(
     resolved_token = token if token is not None else settings.tushare_token
     resolved_http_url = http_url if http_url is not None else settings.tushare_http_url
     if not resolved_token:
-        raise SourceUnavailable("未配置 Tushare token，跳过实时日线。")
+        raise SourceUnavailable(
+            "未配置 Tushare token；请在项目根目录 .env 或环境变量 "
+            "ASHARE_TUSHARE_TOKEN/TUSHARE_TOKEN 中配置，并保留 "
+            "ASHARE_TUSHARE_HTTP_URL=http://101.35.233.113:8020/。"
+        )
     try:
         import tushare as ts  # type: ignore
     except ImportError as exc:

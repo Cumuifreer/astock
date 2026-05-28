@@ -194,10 +194,13 @@ DATA_UPDATE_DAG: List[Dict[str, Any]] = [
     {"id": "stk_factor", "label": "技术因子", "capability": "技术因子", "dependencies": ["history_qfq"], "freshness_policy": "daily"},
     {"id": "moneyflow", "label": "资金流向", "capability": "资金流向", "dependencies": ["history_qfq"], "freshness_policy": "daily"},
     {"id": "limit_list_d", "label": "涨跌停事件", "capability": "涨跌停", "dependencies": ["history_qfq"], "freshness_policy": "event"},
-    {"id": "cyq", "label": "筹码分布", "capability": "筹码分布", "dependencies": ["history_qfq"], "freshness_policy": "daily"},
+    {"id": "cyq_perf", "label": "筹码表现", "capability": "筹码分布", "dependencies": ["history_qfq"], "freshness_policy": "daily"},
+    {"id": "cyq_chips", "label": "筹码价格分布", "capability": "筹码分布", "dependencies": ["history_qfq"], "freshness_policy": "daily"},
     {"id": "ths_member", "label": "题材成分", "capability": "概念/行业成分", "dependencies": ["stock_basic"], "freshness_policy": "long_lived"},
     {"id": "board_moneyflow", "label": "板块热力 / 资金", "capability": "板块热力", "dependencies": ["ths_member", "history_qfq"], "freshness_policy": "daily"},
-    {"id": "top_events", "label": "龙虎榜 / 机构 / 游资", "capability": "龙虎榜/游资", "dependencies": ["history_qfq"], "freshness_policy": "event"},
+    {"id": "top_list", "label": "龙虎榜", "capability": "龙虎榜/游资", "dependencies": ["history_qfq"], "freshness_policy": "event"},
+    {"id": "top_inst", "label": "机构席位", "capability": "龙虎榜/游资", "dependencies": ["history_qfq"], "freshness_policy": "event"},
+    {"id": "hm_detail", "label": "游资明细", "capability": "龙虎榜/游资", "dependencies": ["history_qfq"], "freshness_policy": "event"},
     {"id": "market_environment", "label": "市场环境", "capability": "市场环境", "dependencies": ["daily_basic", "moneyflow", "limit_list_d", "board_moneyflow"], "freshness_policy": "daily"},
     {"id": "capability_refresh", "label": "能力口径刷新", "capability": "数据能力", "dependencies": ["market_environment"], "freshness_policy": "manual"},
 ]
@@ -221,6 +224,34 @@ def _slot_status(
     if slot <= current < slot + timedelta(minutes=catchup_minutes):
         return "due"
     return "missed"
+
+
+def _diagnostic_status(
+    row: Dict[str, Any],
+    fallback_source: Optional[str],
+    expected_source: str,
+) -> str:
+    status = str(row.get("status") or "")
+    if status in {"available", "completed_full", "completed_partial"}:
+        return "normal"
+    if status in {"failed", "unavailable"}:
+        return "failed"
+    if fallback_source and expected_source not in str(fallback_source):
+        return "fallback"
+    return "unknown"
+
+
+def _aggregate_diagnostic_status(rows: List[Dict[str, Any]]) -> str:
+    if not rows:
+        return "unknown"
+    statuses = {str(row.get("status") or "") for row in rows}
+    if statuses <= {"available", "completed_full", "completed_partial"}:
+        return "normal"
+    if statuses & {"available", "completed_full", "completed_partial"}:
+        return "partial"
+    if statuses & {"failed", "unavailable"}:
+        return "failed"
+    return "unknown"
 
 
 def _latest_scheduled_task_slot(tasks_by_id: Dict[str, Dict[str, Any]]) -> Optional[datetime]:
@@ -387,6 +418,78 @@ class DataService:
                 }
             )
         return {"task_id": task_id, "nodes": nodes}
+
+    def source_diagnostics(self) -> Dict[str, Any]:
+        from backend.app.config import settings
+
+        status_rows = self.db.query(
+            """
+            SELECT source, capability, status, last_checked, last_success, last_failure, failure_reason, payload_json
+            FROM source_status
+            ORDER BY last_checked DESC NULLS LAST
+            """
+        )
+        latest_by_source_cap: Dict[str, Dict[str, Any]] = {}
+        for row in status_rows:
+            key = f"{row.get('source')}::{row.get('capability')}"
+            if key not in latest_by_source_cap:
+                decoded = dict(row)
+                decoded["payload"] = json.loads(decoded.pop("payload_json") or "{}")
+                latest_by_source_cap[key] = decoded
+
+        tushare_rows = [
+            row
+            for row in latest_by_source_cap.values()
+            if "tushare" in str(row.get("source") or "").lower()
+        ]
+        tushare_failures = [
+            row
+            for row in tushare_rows
+            if row.get("failure_reason") or row.get("status") in {"failed", "unavailable"}
+        ]
+        snapshot_source = self.db.scalar(
+            """
+            SELECT source
+            FROM daily_snapshots
+            ORDER BY updated_at DESC NULLS LAST, date DESC NULLS LAST
+            LIMIT 1
+            """
+        )
+        history_source = self.db.scalar(
+            """
+            SELECT source
+            FROM historical_bars
+            ORDER BY updated_at DESC NULLS LAST, date DESC NULLS LAST
+            LIMIT 1
+            """
+        )
+
+        def status_for(source: str, capability: str) -> Dict[str, Any]:
+            return latest_by_source_cap.get(f"{source}::{capability}", {})
+
+        realtime_status = status_for("Tushare 实时日线", "当天行情快照") or status_for("Tushare 实时日线", "盘中行情快照")
+        history_status = status_for("Tushare daily 前复权", "历史 K 线")
+        enrichment_statuses = [
+            row
+            for row in tushare_rows
+            if row.get("capability") in {"每日指标", "技术因子", "资金流向", "涨跌停", "筹码分布", "概念/行业成分", "龙虎榜/游资", "板块热力"}
+        ]
+
+        return {
+            "tushare_token_configured": bool(settings.tushare_token),
+            "tushare_realtime_enabled": bool(settings.tushare_realtime_enabled),
+            "tushare_history_enabled": bool(settings.tushare_history_enabled),
+            "tushare_enrichment_enabled": bool(settings.tushare_enrichment_enabled),
+            "tushare_http_url_configured": bool(settings.tushare_http_url),
+            "tushare_http_url": settings.tushare_http_url,
+            "last_tushare_error": (tushare_failures[0].get("failure_reason") if tushare_failures else None),
+            "last_snapshot_source": snapshot_source,
+            "last_history_source": history_source,
+            "realtime_status": _diagnostic_status(realtime_status, fallback_source=snapshot_source, expected_source="Tushare 实时日线"),
+            "history_status": _diagnostic_status(history_status, fallback_source=history_source, expected_source="Tushare daily 前复权"),
+            "enrichment_status": _aggregate_diagnostic_status(enrichment_statuses),
+            "rows": list(latest_by_source_cap.values()),
+        }
 
     def runtime_health(
         self,

@@ -102,8 +102,17 @@ DEFAULT_DATA_DAG: List[Dict[str, Any]] = [
         "request_policy": {"source": "tushare", "rate_limit_group": "top"},
     },
     {
-        "id": "cyq",
-        "label": "筹码分布",
+        "id": "cyq_perf",
+        "label": "筹码表现",
+        "capability": "筹码分布",
+        "dependencies": ["history_qfq"],
+        "freshness_policy": "daily",
+        "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.8},
+        "request_policy": {"source": "tushare", "rate_limit_group": "cyq", "batch_size": 200},
+    },
+    {
+        "id": "cyq_chips",
+        "label": "筹码价格分布",
         "capability": "筹码分布",
         "dependencies": ["history_qfq"],
         "freshness_policy": "daily",
@@ -129,8 +138,26 @@ DEFAULT_DATA_DAG: List[Dict[str, Any]] = [
         "request_policy": {"source": "tushare", "rate_limit_group": "ths"},
     },
     {
-        "id": "top_events",
-        "label": "龙虎榜 / 机构 / 游资",
+        "id": "top_list",
+        "label": "龙虎榜",
+        "capability": "龙虎榜/游资",
+        "dependencies": ["history_qfq"],
+        "freshness_policy": "event",
+        "coverage_policy": {"denominator": "event", "min_rows": 1},
+        "request_policy": {"source": "tushare", "rate_limit_group": "top"},
+    },
+    {
+        "id": "top_inst",
+        "label": "机构席位",
+        "capability": "龙虎榜/游资",
+        "dependencies": ["history_qfq"],
+        "freshness_policy": "event",
+        "coverage_policy": {"denominator": "event", "min_rows": 1},
+        "request_policy": {"source": "tushare", "rate_limit_group": "top"},
+    },
+    {
+        "id": "hm_detail",
+        "label": "游资明细",
         "capability": "龙虎榜/游资",
         "dependencies": ["history_qfq"],
         "freshness_policy": "event",
@@ -485,6 +512,69 @@ class UpdateService:
         )
         return task_id, run_id
 
+    def start_signal_evaluation(self, payload: Dict[str, Any], backtest_runner: Any) -> tuple[str, str]:
+        return self._start_backtest_job(
+            payload,
+            backtest_runner,
+            mode="signal_evaluation",
+            task_stage="准备信号评估",
+            run_prefix="signal-eval",
+            run_table="backtest_runs",
+        )
+
+    def start_portfolio_backtest(self, payload: Dict[str, Any], backtest_runner: Any) -> tuple[str, str]:
+        return self._start_backtest_job(
+            payload,
+            backtest_runner,
+            mode="portfolio",
+            task_stage="准备组合回测",
+            run_prefix="portfolio",
+            run_table="portfolio_backtest_runs",
+        )
+
+    def _start_backtest_job(
+        self,
+        payload: Dict[str, Any],
+        backtest_runner: Any,
+        mode: str,
+        task_stage: str,
+        run_prefix: str,
+        run_table: str,
+    ) -> tuple[str, str]:
+        self.backtest_runner = backtest_runner
+        task_id = f"backtest-{uuid.uuid4().hex[:12]}"
+        run_id = f"{run_prefix}-{uuid.uuid4().hex[:12]}"
+        now = datetime.utcnow()
+        frozen_payload = json.loads(json.dumps(payload or {}, ensure_ascii=False))
+        frozen_payload["config"] = normalize_strategy_config(frozen_payload.get("config") or {})
+        frozen_payload["run_id"] = run_id
+        frozen_payload["backtest_mode"] = mode
+        self._enqueue_task(
+            task_id,
+            kind="backtest",
+            stage=task_stage,
+            source="本地仓库",
+            summary={"backtest_run_id": run_id, "backtest_mode": mode},
+            payload=frozen_payload,
+            started_at=now,
+        )
+        self.db.upsert(
+            run_table,
+            [
+                {
+                    "id": run_id,
+                    "status": "queued",
+                    "started_at": now,
+                    "finished_at": None,
+                    "config_json": json.dumps(frozen_payload, ensure_ascii=False),
+                    "summary_json": "{}",
+                    "error_message": None,
+                }
+            ],
+            ["id"],
+        )
+        return task_id, run_id
+
     def start_intraday_sample(self, options: Optional[Dict[str, Any]] = None) -> str:
         existing = self.db.scalar(
             """
@@ -690,7 +780,13 @@ class UpdateService:
         if kind == "backtest":
             if self.backtest_runner is None:
                 raise RuntimeError("回测服务尚未就绪。")
-            self.backtest_runner.run(payload, run_id=payload.get("run_id"), task_id=task_id)
+            backtest_mode = payload.get("backtest_mode")
+            if backtest_mode == "signal_evaluation":
+                self.backtest_runner.run_signal_evaluation(payload, run_id=payload.get("run_id"), task_id=task_id)
+            elif backtest_mode == "portfolio":
+                self.backtest_runner.run_portfolio_backtest(payload, run_id=payload.get("run_id"), task_id=task_id)
+            else:
+                self.backtest_runner.run(payload, run_id=payload.get("run_id"), task_id=task_id)
             return
         if kind == "brief":
             self._run_daily_brief(task_id, payload)
@@ -823,7 +919,21 @@ class UpdateService:
         end = target_history_date
         try:
             self._patch_task(task_id, stage="刷新股票池", source="Baostock")
-            stock_count = self._update_basics(force, include_bj, exclude_star, warnings)
+            self.record_checkpoint(task_id, "stock_basic", "股票基础信息", target_history_date, "all", "running")
+            try:
+                stock_count = self._update_basics(force, include_bj, exclude_star, warnings)
+                self.record_checkpoint(
+                    task_id,
+                    "stock_basic",
+                    "股票基础信息",
+                    target_history_date,
+                    "all",
+                    "completed" if stock_count else "partial",
+                    rows_written=stock_count,
+                )
+            except Exception as exc:
+                self.record_checkpoint(task_id, "stock_basic", "股票基础信息", target_history_date, "all", "failed", error_message=str(exc))
+                raise
             success_sources += 1 if stock_count else 0
 
             self._patch_task(
@@ -831,7 +941,25 @@ class UpdateService:
                 stage="刷新快照",
                 source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
             )
-            snapshot_count = self._update_snapshots(force or light, include_bj, exclude_star, warnings)
+            self.record_checkpoint(task_id, "daily_snapshot", "当天行情快照", target_history_date, "all", "running")
+            try:
+                snapshot_count = self._update_snapshots(force or light, include_bj, exclude_star, warnings)
+                self.record_checkpoint(
+                    task_id,
+                    "daily_snapshot",
+                    "当天行情快照",
+                    target_history_date,
+                    "all",
+                    "completed" if snapshot_count else "partial",
+                    rows_written=snapshot_count,
+                    payload={
+                        "source": "Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
+                        "warnings": warnings[-2:],
+                    },
+                )
+            except Exception as exc:
+                self.record_checkpoint(task_id, "daily_snapshot", "当天行情快照", target_history_date, "all", "failed", error_message=str(exc))
+                raise
             if snapshot_count:
                 success_sources += 1
             else:
@@ -850,15 +978,38 @@ class UpdateService:
                 source="Tushare daily 前复权" if _tushare_history_configured() else "Baostock",
                 total=total,
             )
-            history_success, history_failed, history_skipped = self._update_history(
-                stocks,
-                start,
-                end,
-                force,
+            self.record_checkpoint(
                 task_id,
-                incremental=incremental_history,
-                target_history_date=target_history_date,
+                "history_qfq",
+                "历史 K 线",
+                target_history_date,
+                "all",
+                "running",
+                payload={"stock_count": total, "source": "Tushare daily 前复权" if _tushare_history_configured() else "Baostock"},
             )
+            try:
+                history_success, history_failed, history_skipped = self._update_history(
+                    stocks,
+                    start,
+                    end,
+                    force,
+                    task_id,
+                    incremental=incremental_history,
+                    target_history_date=target_history_date,
+                )
+                self.record_checkpoint(
+                    task_id,
+                    "history_qfq",
+                    "历史 K 线",
+                    target_history_date,
+                    "all",
+                    "completed" if history_failed == 0 else "partial",
+                    rows_written=history_success,
+                    payload={"failed": history_failed, "skipped": history_skipped},
+                )
+            except Exception as exc:
+                self.record_checkpoint(task_id, "history_qfq", "历史 K 线", target_history_date, "all", "failed", error_message=str(exc))
+                raise
             if history_success:
                 success_sources += 1
             if history_failed:
@@ -876,15 +1027,33 @@ class UpdateService:
                 )
                 if sum(tushare_counts.values()):
                     success_sources += 1
+            else:
+                self._record_tushare_enrichment_skips(task_id, target_history_date, "tushare_not_configured")
 
             self._patch_task(task_id, stage="刷新市场环境", source="Tushare 指数 / 本地宽度")
-            market_environment_count = self._update_market_environment(target_history_date)
+            self.record_checkpoint(task_id, "market_environment", "市场环境", target_history_date, "all", "running")
+            try:
+                market_environment_count = self._update_market_environment(target_history_date)
+                self.record_checkpoint(
+                    task_id,
+                    "market_environment",
+                    "市场环境",
+                    target_history_date,
+                    "all",
+                    "completed" if market_environment_count else "partial",
+                    rows_written=market_environment_count,
+                )
+            except Exception as exc:
+                self.record_checkpoint(task_id, "market_environment", "市场环境", target_history_date, "all", "failed", error_message=str(exc))
+                raise
 
             self._patch_task(task_id, stage="刷新流通市值", source="Tushare daily_basic / 本地缓存")
             float_count = self._update_float_values_from_snapshots()
             cleanup_counts = self.cleanup_intraday_history()
 
+            self.record_checkpoint(task_id, "capability_refresh", "数据能力", target_history_date, "all", "running")
             self.data_service.refresh_capabilities()
+            self.record_checkpoint(task_id, "capability_refresh", "数据能力", target_history_date, "all", "completed", rows_written=len(self.data_service.capabilities()))
             status = "completed_full" if failed_sources == 0 and not warnings else "completed_partial"
             self._patch_task(
                 task_id,
@@ -1601,18 +1770,29 @@ class UpdateService:
             exclude_star=exclude_star,
         )
         if cyq_perf_codes:
-            counts["cyq_perf"] = self._persist_tushare_frame(
-                "tushare_cyq_perf",
-                self._fetch_tushare_optional(
-                    "Tushare cyq_perf",
-                    "筹码分布",
-                    lambda: source.fetch_cyq_perf_for_codes(cyq_perf_codes, trade_date, limit=limit),
-                    warnings,
-                ),
-                ["code", "trade_date"],
-            )
+            if task_id:
+                self.record_checkpoint(task_id, "cyq_perf", "筹码分布", trade_date, "all", "running", payload={"codes": len(cyq_perf_codes)})
+            try:
+                counts["cyq_perf"] = self._persist_tushare_frame(
+                    "tushare_cyq_perf",
+                    self._fetch_tushare_optional(
+                        "Tushare cyq_perf",
+                        "筹码分布",
+                        lambda: source.fetch_cyq_perf_for_codes(cyq_perf_codes, trade_date, limit=limit),
+                        warnings,
+                    ),
+                    ["code", "trade_date"],
+                )
+                if task_id:
+                    self.record_checkpoint(task_id, "cyq_perf", "筹码分布", trade_date, "all", "completed", rows_written=counts["cyq_perf"])
+            except Exception as exc:
+                if task_id:
+                    self.record_checkpoint(task_id, "cyq_perf", "筹码分布", trade_date, "all", "failed", error_message=str(exc))
+                raise
         else:
             counts["cyq_perf"] = 0
+            if task_id:
+                self.record_checkpoint(task_id, "cyq_perf", "筹码分布", trade_date, "all", "skipped", payload={"reason": "coverage_complete"})
         cyq_chip_codes = self._tushare_codes_missing_for_date(
             "tushare_cyq_chips",
             trade_date,
@@ -1621,27 +1801,56 @@ class UpdateService:
             exclude_star=exclude_star,
         )
         if cyq_chip_codes:
-            counts["cyq_chips"] = self._persist_tushare_frame(
-                "tushare_cyq_chips",
-                self._fetch_tushare_optional(
-                    "Tushare cyq_chips",
-                    "筹码分布",
-                    lambda: source.fetch_cyq_chips_for_codes(cyq_chip_codes, trade_date, limit=limit),
-                    warnings,
-                ),
-                ["code", "trade_date", "price"],
-            )
+            if task_id:
+                self.record_checkpoint(task_id, "cyq_chips", "筹码分布", trade_date, "all", "running", payload={"codes": len(cyq_chip_codes)})
+            try:
+                counts["cyq_chips"] = self._persist_tushare_frame(
+                    "tushare_cyq_chips",
+                    self._fetch_tushare_optional(
+                        "Tushare cyq_chips",
+                        "筹码分布",
+                        lambda: source.fetch_cyq_chips_for_codes(cyq_chip_codes, trade_date, limit=limit),
+                        warnings,
+                    ),
+                    ["code", "trade_date", "price"],
+                )
+                if task_id:
+                    self.record_checkpoint(task_id, "cyq_chips", "筹码分布", trade_date, "all", "completed", rows_written=counts["cyq_chips"])
+            except Exception as exc:
+                if task_id:
+                    self.record_checkpoint(task_id, "cyq_chips", "筹码分布", trade_date, "all", "failed", error_message=str(exc))
+                raise
         else:
             counts["cyq_chips"] = 0
-        ths_result = self._update_ths_members_from_boards(
-            source,
-            warnings,
-            limit=limit,
-            target_date=None,
-            missing_only=True,
-            include_bj=include_bj,
-            exclude_star=exclude_star,
-        )
+            if task_id:
+                self.record_checkpoint(task_id, "cyq_chips", "筹码分布", trade_date, "all", "skipped", payload={"reason": "coverage_complete"})
+        if task_id:
+            self.record_checkpoint(task_id, "ths_member", "概念/行业成分", trade_date, "all", "running")
+        try:
+            ths_result = self._update_ths_members_from_boards(
+                source,
+                warnings,
+                limit=limit,
+                target_date=None,
+                missing_only=True,
+                include_bj=include_bj,
+                exclude_star=exclude_star,
+            )
+            if task_id:
+                self.record_checkpoint(
+                    task_id,
+                    "ths_member",
+                    "概念/行业成分",
+                    trade_date,
+                    "all",
+                    "completed" if int(ths_result.get("success", 0)) else "skipped",
+                    rows_written=int(ths_result.get("success", 0)),
+                    payload={"skipped": ths_result.get("skipped", 0), "reason": "coverage_complete" if not int(ths_result.get("success", 0)) else None},
+                )
+        except Exception as exc:
+            if task_id:
+                self.record_checkpoint(task_id, "ths_member", "概念/行业成分", trade_date, "all", "failed", error_message=str(exc))
+            raise
         counts["ths_member"] = int(ths_result.get("success", 0))
         counts["board_moneyflow"] = self._update_market_sector_daily(trade_date, source, warnings, task_id=task_id)
         counts["top_list"] = self._maybe_update_event_capability(
@@ -1732,6 +1941,31 @@ class UpdateService:
             ],
             ["id"],
         )
+
+    def _record_tushare_enrichment_skips(self, task_id: str, target_date: date, reason: str) -> None:
+        for job_id, capability in [
+            ("daily_basic", "每日指标"),
+            ("stk_factor", "技术因子"),
+            ("moneyflow", "资金流向"),
+            ("limit_list_d", "涨跌停"),
+            ("cyq_perf", "筹码分布"),
+            ("cyq_chips", "筹码分布"),
+            ("ths_member", "概念/行业成分"),
+            ("board_moneyflow", "板块热力"),
+            ("top_list", "龙虎榜/游资"),
+            ("top_inst", "龙虎榜/游资"),
+            ("hm_detail", "龙虎榜/游资"),
+        ]:
+            self.record_checkpoint(
+                task_id,
+                job_id,
+                capability,
+                target_date,
+                "all",
+                "skipped",
+                rows_written=0,
+                payload={"reason": reason},
+            )
 
     def _maybe_update_stock_capability(
         self,

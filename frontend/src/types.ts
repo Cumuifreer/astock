@@ -33,6 +33,60 @@ export interface Capability {
   participates_in_analysis: boolean;
 }
 
+export interface StockRow {
+  code: string;
+  name: string;
+  exchange: string;
+  board: string;
+  status_label: string;
+  latest_price: number | null;
+  pct_chg: number | null;
+  amount: number | null;
+  turnover_rate: number | null;
+  float_market_value: number | null;
+  volume_ratio: number | null;
+  main_net_amount?: number | null;
+  net_mf_amount?: number | null;
+  latest_top_net_amount?: number | null;
+  concept_count?: number | null;
+  winner_rate?: number | null;
+  history_days?: number | null;
+  latest_history_date?: string | null;
+  latest_limit_type?: string | null;
+}
+
+export interface StockListResponse {
+  rows: StockRow[];
+  total: number;
+}
+
+export interface StockDetail {
+  basic: Record<string, unknown> | null;
+  daily_basic?: Record<string, unknown> | null;
+  factor?: Record<string, unknown> | null;
+  moneyflow?: Record<string, unknown> | null;
+  cyq_perf?: Record<string, unknown> | null;
+  concepts?: Array<Record<string, unknown>>;
+  limit_events?: Array<Record<string, unknown>>;
+  top_events?: Array<Record<string, unknown>>;
+}
+
+export interface SourceDiagnostics {
+  tushare_token_configured: boolean;
+  tushare_realtime_enabled: boolean;
+  tushare_history_enabled: boolean;
+  tushare_enrichment_enabled: boolean;
+  tushare_http_url_configured: boolean;
+  tushare_http_url: string;
+  last_tushare_error: string | null;
+  last_snapshot_source: string | null;
+  last_history_source: string | null;
+  realtime_status: string;
+  history_status: string;
+  enrichment_status: string;
+  rows: Array<Record<string, unknown>>;
+}
+
 export interface IndicatorCategory {
   id: string;
   label: string;

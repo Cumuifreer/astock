@@ -1,4 +1,5 @@
 import json
+import sys
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -166,10 +167,41 @@ def test_update_checkpoints_and_dag_are_queryable(tmp_path):
     assert checkpoints[0]["capability"] == "每日指标"
     assert checkpoints[0]["rows_written"] == 2
     assert any(node["id"] == "daily_basic" for node in dag["nodes"])
+    assert {
+        "stock_basic",
+        "daily_snapshot",
+        "history_qfq",
+        "daily_basic",
+        "stk_factor",
+        "moneyflow",
+        "limit_list_d",
+        "cyq_perf",
+        "cyq_chips",
+        "ths_member",
+        "board_moneyflow",
+        "top_list",
+        "top_inst",
+        "hm_detail",
+        "market_environment",
+        "capability_refresh",
+    }.issubset({node["id"] for node in dag["nodes"]})
 
 
-def test_sync_today_route_maps_to_daily_light(monkeypatch):
+def _import_routes_with_temp_db(tmp_path, monkeypatch):
+    from backend.app import db as db_module
+    import backend.app.api as api_package
+
+    sys.modules.pop("backend.app.api.routes", None)
+    if hasattr(api_package, "routes"):
+        delattr(api_package, "routes")
+    monkeypatch.setattr(db_module, "_database", Database(tmp_path / "routes_test.duckdb"), raising=False)
     from backend.app.api import routes
+
+    return routes
+
+
+def test_sync_today_route_maps_to_daily_light(tmp_path, monkeypatch):
+    routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
 
     calls = []
 
@@ -186,6 +218,105 @@ def test_sync_today_route_maps_to_daily_light(monkeypatch):
     assert response.status_code == 200
     assert response.json()["task_id"] == "update-test"
     assert calls == [{"mode": "daily_light"}]
+
+
+def test_backtest_lab_routes_enqueue_long_running_jobs(tmp_path, monkeypatch):
+    routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
+
+    calls = []
+
+    class FakeUpdateService:
+        def start_signal_evaluation(self, payload, runner):
+            calls.append(("signal", payload))
+            return "task-signal", "signal-eval-test"
+
+        def start_portfolio_backtest(self, payload, runner):
+            calls.append(("portfolio", payload))
+            return "task-portfolio", "portfolio-test"
+
+    monkeypatch.setattr(routes, "update_service", FakeUpdateService())
+    client = TestClient(routes.router)
+
+    signal = client.post("/api/backtest/signal-evaluation", json={"config": {"candidate_limit": 3}})
+    portfolio = client.post("/api/backtest/portfolio", json={"config": {"candidate_limit": 4}})
+
+    assert signal.status_code == 200
+    assert signal.json() == {"task_id": "task-signal", "run_id": "signal-eval-test", "status": "queued"}
+    assert portfolio.status_code == 200
+    assert portfolio.json() == {"task_id": "task-portfolio", "run_id": "portfolio-test", "status": "queued"}
+    assert calls[0][0] == "signal"
+    assert calls[1][0] == "portfolio"
+
+
+def test_source_diagnostics_reports_tushare_configuration_and_fallbacks(tmp_path, monkeypatch):
+    from backend.app import config as config_module
+
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    now = datetime(2026, 5, 22, 10, 0)
+    db.upsert(
+        "source_status",
+        [
+            {
+                "source": "Tushare 实时日线",
+                "capability": "当天行情快照",
+                "status": "failed",
+                "last_checked": now,
+                "last_success": None,
+                "last_failure": now,
+                "failure_reason": "Token 不对",
+                "ttl_until": now,
+                "payload_json": "{}",
+            }
+        ],
+        ["source", "capability"],
+    )
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert(
+        "daily_snapshots",
+        [
+            {
+                "code": "000001.SZ",
+                "date": "2026-05-22",
+                "name": "平安银行",
+                "latest_price": 10.0,
+                "pct_chg": 1.0,
+                "high": 10.1,
+                "low": 9.9,
+                "volume": 1,
+                "amount": 1,
+                "turnover_rate": None,
+                "float_market_value": None,
+                "source": "AkShare 新浪",
+                "updated_at": now,
+            }
+        ],
+        ["code", "date"],
+    )
+    monkeypatch.setattr(
+        config_module,
+        "settings",
+        type(
+            "Settings",
+            (),
+            {
+                "tushare_token": "token",
+                "tushare_realtime_enabled": True,
+                "tushare_history_enabled": True,
+                "tushare_enrichment_enabled": True,
+                "tushare_http_url": "http://101.35.233.113:8020/",
+            },
+        )(),
+        raising=False,
+    )
+
+    result = DataService(db).source_diagnostics()
+
+    assert result["tushare_token_configured"] is True
+    assert result["tushare_http_url_configured"] is True
+    assert result["last_tushare_error"] == "Token 不对"
+    assert result["last_snapshot_source"] == "AkShare 新浪"
+    assert result["realtime_status"] == "failed"
 
 
 def test_intraday_boards_split_anomaly_pullback_and_risk(tmp_path):

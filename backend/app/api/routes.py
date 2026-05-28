@@ -39,6 +39,7 @@ def health() -> Dict[str, Any]:
         "ok": True,
         "database": str(db.path),
         "schema_version": db.scalar("SELECT MAX(version) FROM schema_migrations"),
+        "source_diagnostics": data_service.source_diagnostics(),
     }
 
 
@@ -80,6 +81,11 @@ def data_overview() -> Dict[str, Any]:
 @router.get("/data/capabilities")
 def data_capabilities() -> Dict[str, Any]:
     return {"rows": data_service.capabilities()}
+
+
+@router.get("/data/source-diagnostics")
+def data_source_diagnostics() -> Dict[str, Any]:
+    return data_service.source_diagnostics()
 
 
 @router.get("/market/overview")
@@ -386,7 +392,13 @@ def backtest_result(
 
 @router.post("/backtest/signal-evaluation")
 def run_signal_evaluation(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    return backtest_service.run_signal_evaluation(payload or {})
+    body = payload or {}
+    body["config"] = body.get("config") or strategy_service.default_config()
+    try:
+        task_id, run_id = update_service.start_signal_evaluation(body, backtest_service)
+    except TaskBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"task_id": task_id, "run_id": run_id, "status": "queued"}
 
 
 @router.get("/backtest/signal-evaluation/{run_id}")
@@ -402,7 +414,13 @@ def signal_evaluation_result(
 
 @router.post("/backtest/portfolio")
 def run_portfolio_backtest(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    return backtest_service.run_portfolio_backtest(payload or {})
+    body = payload or {}
+    body["config"] = body.get("config") or strategy_service.default_config()
+    try:
+        task_id, run_id = update_service.start_portfolio_backtest(body, backtest_service)
+    except TaskBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"task_id": task_id, "run_id": run_id, "status": "queued"}
 
 
 @router.get("/backtest/portfolio/{run_id}")

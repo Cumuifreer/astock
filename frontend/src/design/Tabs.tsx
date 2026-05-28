@@ -17,7 +17,7 @@ type TabsProps = {
 export function Tabs({ value, defaultValue, items, onValueChange }: TabsProps) {
   const resolvedDefault = defaultValue || items[0]?.value;
   return (
-    <RadixTabs.Root value={value} defaultValue={resolvedDefault} onValueChange={onValueChange}>
+    <RadixTabs.Root className="tabs-root" value={value} defaultValue={resolvedDefault} onValueChange={onValueChange}>
       <RadixTabs.List className="tabs-list">
         {items.map((item) => (
           <RadixTabs.Trigger className="tabs-trigger" key={item.value} value={item.value}>

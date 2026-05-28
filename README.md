@@ -54,7 +54,7 @@ curl -sS http://127.0.0.1:8000/api/intraday
 
 `ASHARE_INTRADAY_SCHEDULE` 是脚本、后端 scheduler 和状态页共同使用的时间表。轻量服务器上不建议全市场 5 分钟一次。
 
-如果配置了 Tushare 实时日线，盘中雷达会优先使用它；失败时回退到 AkShare 新浪、AkShare 腾讯和本地缓存。Tushare 初始化集中在 `backend/app/sources/tushare_client.py`，密钥只从环境变量读取，不要写进代码：
+如果配置了 Tushare 实时日线，盘中雷达会优先使用它；失败时回退到 AkShare 新浪、AkShare 腾讯和本地缓存。Tushare 初始化集中在 `backend/app/sources/tushare_client.py`，所有调用都会设置中转地址 `pro._DataApi__http_url = "http://101.35.233.113:8020/"`。密钥只从环境变量或项目根目录 `.env` 读取，不要写进代码；可从 `.env.example` 复制本机配置：
 
 ```bash
 export ASHARE_TUSHARE_TOKEN=your-token

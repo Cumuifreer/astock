@@ -1,13 +1,17 @@
 import { useMemo, useState } from 'react';
+import { Plus } from 'lucide-react';
 import type { IndicatorDefinition } from '../../types';
 import { Badge } from '../../design/Badge';
+import { Button } from '../../design/Button';
 import { Combobox } from '../../design/Combobox';
+import { supportedRuleActions } from '../../utils/strategy';
 
 type FactorPickerProps = {
   indicators: IndicatorDefinition[];
+  onAddRule: (indicator: IndicatorDefinition) => void;
 };
 
-export function FactorPicker({ indicators }: FactorPickerProps) {
+export function FactorPicker({ indicators, onAddRule }: FactorPickerProps) {
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -36,10 +40,19 @@ export function FactorPicker({ indicators }: FactorPickerProps) {
               <Badge tone={indicator.data_status === 'executable' ? 'good' : 'neutral'}>{indicator.data_status || 'unknown'}</Badge>
             </div>
             <p className="card-copy">{indicator.description || indicator.formula || '暂无说明'}</p>
-            <div className="rule-chip-grid">
-              {(indicator.supported_actions || []).map((action) => (
+            <div className="rule-chip-grid" style={{ alignItems: 'center' }}>
+              {supportedRuleActions(indicator).map((action) => (
                 <Badge key={action}>{action}</Badge>
               ))}
+              <Button
+                aria-label={`加入 ${indicator.name}`}
+                disabled={indicator.data_status === 'planned'}
+                icon={<Plus size={14} />}
+                onClick={() => onAddRule(indicator)}
+                variant="ghost"
+              >
+                加入规则
+              </Button>
             </div>
           </article>
         ))}

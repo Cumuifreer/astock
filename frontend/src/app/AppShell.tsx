@@ -11,6 +11,8 @@ import { runStrategy } from '../api/strategy';
 import { startIntradaySnapshot } from '../api/intraday';
 import { useBootstrap } from '../hooks/useBootstrap';
 import { usePolling } from '../hooks/usePolling';
+import { useStrategyDraft } from '../hooks/useStrategyDraft';
+import { composeStrategyConfig } from '../utils/strategy';
 
 const productNavigationLabels = ['市场总览', 'Scanner', '分析结果', '盘中雷达', '观察池', '回测实验室', '数据中心', '任务状态'];
 
@@ -38,8 +40,10 @@ export function AppShell() {
   });
   const runStrategyMutation = useMutation({
     mutationFn: async () => {
-      const config = bootstrap.data?.default_strategy;
-      if (!config) throw new Error('默认策略尚未加载');
+      const draft = useStrategyDraft.getState();
+      const baseConfig = draft.config || bootstrap.data?.default_strategy;
+      if (!baseConfig) throw new Error('默认策略尚未加载');
+      const config = composeStrategyConfig(baseConfig, draft.rules, draft.resonances);
       return runStrategy(config);
     },
     onSuccess: invalidate,

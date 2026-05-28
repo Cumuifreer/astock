@@ -116,6 +116,8 @@ test('new API layer exposes market, intraday boards, checkpoints, and backtest e
   assert.match(read('api/data.ts'), /\/api\/tasks\/sync-today/);
   assert.match(read('api/data.ts'), /\/api\/tasks\/.*\/checkpoints/);
   assert.match(read('api/data.ts'), /\/api\/tasks\/.*\/dag/);
+  assert.match(read('api/data.ts'), /\/api\/data\/stocks/);
+  assert.match(read('api/data.ts'), /\/api\/data\/source-diagnostics/);
   assert.match(read('api/intraday.ts'), /\/api\/intraday\/boards/);
   assert.match(read('api/backtest.ts'), /\/api\/backtest\/signal-evaluation/);
   assert.match(read('api/backtest.ts'), /\/api\/backtest\/portfolio/);
@@ -125,6 +127,7 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.match(read('pages/overview/OverviewPage.tsx'), /MarketHero/);
   assert.match(read('pages/overview/OverviewPage.tsx'), /SectorHeatmap/);
   assert.match(read('pages/overview/OverviewPage.tsx'), /DailyActionList/);
+  assert.match(read('pages/overview/OverviewPage.tsx'), /今日资讯简报/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /为什么入选/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /买点质量/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /可操作动作/);
@@ -135,7 +138,12 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.match(read('pages/watchlist/WatchlistPage.tsx'), /invalidation_rule/);
   assert.match(read('pages/backtest/BacktestPage.tsx'), /信号评估/);
   assert.match(read('pages/backtest/BacktestPage.tsx'), /组合回测/);
+  assert.match(read('pages/backtest/SignalEvaluation.tsx'), /mutation\.data\?\.run_id/);
+  assert.match(read('pages/backtest/SignalEvaluation.tsx'), /run\?\.summary/);
+  assert.doesNotMatch(read('pages/backtest/SignalEvaluation.tsx'), /2024-01-01/);
   assert.match(read('pages/data-map/DataMapPage.tsx'), /核心数据/);
   assert.match(read('pages/data-map/DataMapPage.tsx'), /市场上下文/);
+  assert.match(read('pages/data-map/DataMapPage.tsx'), /本地股票仓/);
+  assert.match(read('pages/data-map/DataMapPage.tsx'), /Tushare 诊断/);
   assert.match(read('pages/status/StatusPage.tsx'), /checkpoint/i);
 });

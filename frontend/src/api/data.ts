@@ -1,4 +1,4 @@
-import type { Capability, RuntimeHealth, TaskRun } from '../types';
+import type { Capability, RuntimeHealth, SourceDiagnostics, StockDetail, StockListResponse, TaskRun } from '../types';
 import { post, request } from './client';
 
 export type TaskDagNode = {
@@ -35,6 +35,22 @@ export function getCapabilities(): Promise<{ rows?: Capability[] } | Capability[
 
 export function getDataOverview(): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>('/api/data/overview');
+}
+
+export function getStocks(params: Record<string, string | number>): Promise<StockListResponse> {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== '' && value !== undefined && value !== null) search.set(key, String(value));
+  });
+  return request<StockListResponse>(`/api/data/stocks?${search.toString()}`);
+}
+
+export function getStockDetail(code: string): Promise<StockDetail> {
+  return request<StockDetail>(`/api/data/stocks/${encodeURIComponent(code)}`);
+}
+
+export function getSourceDiagnostics(): Promise<SourceDiagnostics> {
+  return request<SourceDiagnostics>('/api/data/source-diagnostics');
 }
 
 export function getRuntimeHealth(): Promise<RuntimeHealth> {

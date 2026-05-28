@@ -276,9 +276,14 @@ class BacktestService:
         }
         return strategy, sampled_dates, options
 
-    def run_signal_evaluation(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        run_id = f"signal-eval-{uuid.uuid4().hex[:12]}"
-        self.run(payload, run_id=run_id, task_id=None)
+    def run_signal_evaluation(
+        self,
+        payload: Dict[str, Any],
+        run_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        run_id = run_id or f"signal-eval-{uuid.uuid4().hex[:12]}"
+        self.run(payload, run_id=run_id, task_id=task_id)
         run = self.db.query("SELECT * FROM backtest_runs WHERE id = ?", [run_id])[0]
         signals = self._signals_for_run(run_id, limit=5000)
         summary = json.loads(run.get("summary_json") or "{}")
@@ -292,103 +297,180 @@ class BacktestService:
             error_message=run.get("error_message"),
         )
         run = self.db.query("SELECT * FROM backtest_runs WHERE id = ?", [run_id])[0]
+        if task_id:
+            self._patch_task(
+                task_id,
+                summary={"backtest_run_id": run_id, **summary},
+                stage="信号评估完成",
+            )
         return {"run": self._decode_run_row(run), "signals": signals}
 
-    def run_portfolio_backtest(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        run_id = f"portfolio-{uuid.uuid4().hex[:12]}"
+    def run_portfolio_backtest(
+        self,
+        payload: Dict[str, Any],
+        run_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        run_id = run_id or f"portfolio-{uuid.uuid4().hex[:12]}"
         started_at = datetime.utcnow()
-        strategy, sampled_dates, options = self._resolve_options(payload)
-        hold_days = int(payload.get("hold_days") or 5)
-        max_positions = int(payload.get("max_positions") or payload.get("candidate_limit") or 5)
-        transaction_cost = (safe_float(payload.get("transaction_cost_bps")) or 0) / 10000
-        slippage = (safe_float(payload.get("slippage_bps")) or 0) / 10000
-        initial_equity = safe_float(payload.get("initial_equity")) or 1_000_000.0
-        equity = initial_equity
-        peak = initial_equity
-        trades: List[Dict[str, Any]] = []
-        equity_rows: List[Dict[str, Any]] = []
-        all_bars = pd.DataFrame(
-            self.db.query(
-                """
-                SELECT code, date, open, high, low, close, prev_close, pct_chg, is_st
-                FROM historical_bars
-                WHERE date >= ?
-                ORDER BY code, date
-                """,
-                [_date_value(options["start_date"])],
+        try:
+            strategy, sampled_dates, options = self._resolve_options(payload)
+            hold_days = int(payload.get("hold_days") or 5)
+            max_positions = int(payload.get("max_positions") or payload.get("candidate_limit") or 5)
+            transaction_cost = (safe_float(payload.get("transaction_cost_bps")) or 0) / 10000
+            slippage = (safe_float(payload.get("slippage_bps")) or 0) / 10000
+            initial_equity = safe_float(payload.get("initial_equity")) or 1_000_000.0
+            equity = initial_equity
+            peak = initial_equity
+            trades: List[Dict[str, Any]] = []
+            equity_rows: List[Dict[str, Any]] = []
+            self.db.upsert(
+                "portfolio_backtest_runs",
+                [
+                    {
+                        "id": run_id,
+                        "status": "running",
+                        "started_at": started_at,
+                        "finished_at": None,
+                        "config_json": json.dumps({**payload, "config": strategy}, ensure_ascii=False),
+                        "summary_json": json.dumps(options, ensure_ascii=False),
+                        "error_message": None,
+                    }
+                ],
+                ["id"],
             )
-        )
-        bars_by_code = {str(code): group.copy() for code, group in all_bars.groupby("code")} if not all_bars.empty else {}
-        for as_of in sampled_dates:
-            try:
-                frame = self.analysis_service._build_analysis_frame(strategy, as_of_date=as_of)
-                candidates, _, _ = apply_strategy_filters(frame, strategy)
-            except Exception:
-                candidates = []
-            for candidate in candidates[:max_positions]:
-                code = str(candidate.get("code"))
-                trade = _simulate_trade(
-                    bars_by_code.get(code, pd.DataFrame()),
-                    code,
-                    candidate.get("name") or code,
-                    as_of,
-                    hold_days,
-                    transaction_cost,
-                    slippage,
+            if task_id:
+                self._patch_task(
+                    task_id,
+                    stage="组合回测",
+                    total=len(sampled_dates),
+                    processed=0,
+                    summary={"backtest_run_id": run_id, **options},
                 )
-                if trade:
-                    trade["run_id"] = run_id
-                    trade["trade_id"] = f"{as_of.isoformat()}:{code}"
-                    trade["weight"] = 1 / max(1, max_positions)
-                    trade["payload_json"] = json.dumps({"signal_score": candidate.get("signal_score")}, ensure_ascii=False)
-                    trades.append(trade)
-            period_returns = [safe_float(trade.get("return_pct")) for trade in trades if trade.get("entry_signal_date") == as_of]
-            clean_returns = [value for value in period_returns if value is not None]
-            if clean_returns:
-                equity *= 1 + sum(clean_returns) / len(clean_returns)
-            peak = max(peak, equity)
-            equity_rows.append(
-                {
-                    "run_id": run_id,
-                    "trade_date": as_of,
-                    "equity": round(equity, 4),
-                    "cash": round(equity, 4),
-                    "position_value": 0.0,
-                    "drawdown": round(equity / peak - 1, 6) if peak else 0,
-                }
+            all_bars = pd.DataFrame(
+                self.db.query(
+                    """
+                    SELECT code, date, open, high, low, close, prev_close, pct_chg, is_st
+                    FROM historical_bars
+                    WHERE date >= ?
+                    ORDER BY code, date
+                    """,
+                    [_date_value(options["start_date"])],
+                )
             )
-        summary = _portfolio_summary(initial_equity, equity, trades, equity_rows, options)
-        now = datetime.utcnow()
-        self.db.upsert(
-            "portfolio_backtest_runs",
-            [
-                {
+            bars_by_code = {str(code): group.copy() for code, group in all_bars.groupby("code")} if not all_bars.empty else {}
+            for index, as_of in enumerate(sampled_dates, start=1):
+                try:
+                    frame = self.analysis_service._build_analysis_frame(strategy, as_of_date=as_of)
+                    candidates, _, _ = apply_strategy_filters(frame, strategy)
+                except Exception:
+                    candidates = []
+                for candidate in candidates[:max_positions]:
+                    code = str(candidate.get("code"))
+                    trade = _simulate_trade(
+                        bars_by_code.get(code, pd.DataFrame()),
+                        code,
+                        candidate.get("name") or code,
+                        as_of,
+                        hold_days,
+                        transaction_cost,
+                        slippage,
+                    )
+                    if trade:
+                        trade["run_id"] = run_id
+                        trade["trade_id"] = f"{as_of.isoformat()}:{code}"
+                        trade["weight"] = 1 / max(1, max_positions)
+                        trade["payload_json"] = json.dumps({"signal_score": candidate.get("signal_score")}, ensure_ascii=False)
+                        trades.append(trade)
+                period_returns = [safe_float(trade.get("return_pct")) for trade in trades if trade.get("entry_signal_date") == as_of]
+                clean_returns = [value for value in period_returns if value is not None]
+                if clean_returns:
+                    equity *= 1 + sum(clean_returns) / len(clean_returns)
+                peak = max(peak, equity)
+                equity_rows.append(
+                    {
+                        "run_id": run_id,
+                        "trade_date": as_of,
+                        "equity": round(equity, 4),
+                        "cash": round(equity, 4),
+                        "position_value": 0.0,
+                        "drawdown": round(equity / peak - 1, 6) if peak else 0,
+                    }
+                )
+                if task_id:
+                    self._patch_task(task_id, processed=index, success=len(trades), current_stock=as_of.isoformat())
+            summary = _portfolio_summary(initial_equity, equity, trades, equity_rows, options)
+            now = datetime.utcnow()
+            self.db.upsert(
+                "portfolio_backtest_runs",
+                [
+                    {
+                        "id": run_id,
+                        "status": "completed_full",
+                        "started_at": started_at,
+                        "finished_at": now,
+                        "config_json": json.dumps({**payload, "config": strategy}, ensure_ascii=False),
+                        "summary_json": json.dumps(summary, ensure_ascii=False),
+                        "error_message": None,
+                    }
+                ],
+                ["id"],
+            )
+            self.db.upsert("portfolio_backtest_trades", [_trade_row(trade) for trade in trades], ["run_id", "trade_id"])
+            self.db.upsert("portfolio_backtest_equity", equity_rows, ["run_id", "trade_date"])
+            if task_id:
+                self._patch_task(
+                    task_id,
+                    status="completed_full",
+                    stage="组合回测完成",
+                    current_stock=None,
+                    total=len(sampled_dates),
+                    processed=len(sampled_dates),
+                    success=len(trades),
+                    summary={"backtest_run_id": run_id, **summary},
+                    finished_at=now,
+                )
+            return {
+                "run": {
                     "id": run_id,
                     "status": "completed_full",
                     "started_at": started_at,
                     "finished_at": now,
-                    "config_json": json.dumps({**payload, "config": strategy}, ensure_ascii=False),
-                    "summary_json": json.dumps(summary, ensure_ascii=False),
+                    "summary": summary,
+                    "config": {**payload, "config": strategy},
                     "error_message": None,
-                }
-            ],
-            ["id"],
-        )
-        self.db.upsert("portfolio_backtest_trades", [_trade_row(trade) for trade in trades], ["run_id", "trade_id"])
-        self.db.upsert("portfolio_backtest_equity", equity_rows, ["run_id", "trade_date"])
-        return {
-            "run": {
-                "id": run_id,
-                "status": "completed_full",
-                "started_at": started_at,
-                "finished_at": now,
-                "summary": summary,
-                "config": {**payload, "config": strategy},
-                "error_message": None,
-            },
-            "trades": [_jsonable(trade) for trade in trades],
-            "equity_curve": equity_rows,
-        }
+                },
+                "trades": [_jsonable(trade) for trade in trades],
+                "equity_curve": equity_rows,
+            }
+        except Exception as exc:
+            now = datetime.utcnow()
+            self.db.upsert(
+                "portfolio_backtest_runs",
+                [
+                    {
+                        "id": run_id,
+                        "status": "failed",
+                        "started_at": started_at,
+                        "finished_at": now,
+                        "config_json": json.dumps(payload or {}, ensure_ascii=False),
+                        "summary_json": "{}",
+                        "error_message": str(exc),
+                    }
+                ],
+                ["id"],
+            )
+            if task_id:
+                self._patch_task(
+                    task_id,
+                    status="failed",
+                    stage="组合回测失败",
+                    failed=1,
+                    warning=str(exc),
+                    error_message=str(exc),
+                    finished_at=now,
+                )
+            raise
 
     def portfolio_result(self, run_id: str) -> Dict[str, Any]:
         rows = self.db.query("SELECT * FROM portfolio_backtest_runs WHERE id = ?", [run_id])

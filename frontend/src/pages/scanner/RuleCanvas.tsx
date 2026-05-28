@@ -1,13 +1,19 @@
 import type { IndicatorDefinition, StrategyRule, StrategyResonance } from '../../types';
 import { Badge } from '../../design/Badge';
+import { Button } from '../../design/Button';
 import { EmptyState } from '../../design/EmptyState';
+import { createResonanceId, resonanceBonusOptions, strategyRuleSelectLabel } from '../../utils/strategy';
 import { RuleCard } from './RuleCard';
+import { Plus, Trash2 } from 'lucide-react';
 
 type RuleCanvasProps = {
   rules: StrategyRule[];
   resonances: StrategyResonance[];
   indicators: Map<string, IndicatorDefinition>;
   selectableResonanceRules: StrategyRule[];
+  onPatchRule: (ruleId: string, patch: Partial<StrategyRule>) => void;
+  onRemoveRule: (ruleId: string) => void;
+  onSetResonances: (resonances: StrategyResonance[]) => void;
 };
 
 const sections: Array<{ title: string; action?: string; copy: string }> = [
@@ -17,7 +23,27 @@ const sections: Array<{ title: string; action?: string; copy: string }> = [
   { title: 'Display', action: 'display', copy: '展示列不参与运算，只进入候选表和证据面板。' },
 ];
 
-export function RuleCanvas({ rules, resonances, indicators, selectableResonanceRules }: RuleCanvasProps) {
+export function RuleCanvas({ rules, resonances, indicators, selectableResonanceRules, onPatchRule, onRemoveRule, onSetResonances }: RuleCanvasProps) {
+  const updateResonance = (id: string, patch: Partial<StrategyResonance>) => {
+    onSetResonances(resonances.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  };
+  const addResonance = () => {
+    const initialRules = selectableResonanceRules.slice(0, 2);
+    if (initialRules.length < 2) return;
+    onSetResonances([
+      ...resonances,
+      {
+        id: createResonanceId(),
+        name: initialRules.map((rule) => indicators.get(rule.indicator_id)?.name || rule.indicator_id).join(' + '),
+        rule_ids: initialRules.map((rule) => rule.id),
+        bonus: 8,
+        enabled: true,
+        source: 'rule_ids',
+      },
+    ]);
+  };
+  const removeResonance = (id: string) => onSetResonances(resonances.filter((item) => item.id !== id));
+
   return (
     <div className="list-stack">
       <section className="surface pad">
@@ -37,7 +63,15 @@ export function RuleCanvas({ rules, resonances, indicators, selectableResonanceR
                   <p className="card-copy">{section.copy}</p>
                 </div>
                 {sectionRules.length ? (
-                  sectionRules.map((rule) => <RuleCard indicator={indicators.get(rule.indicator_id)} key={rule.id} rule={rule} />)
+                  sectionRules.map((rule) => (
+                    <RuleCard
+                      indicator={indicators.get(rule.indicator_id)}
+                      key={rule.id}
+                      onPatch={(patch) => onPatchRule(rule.id, patch)}
+                      onRemove={() => onRemoveRule(rule.id)}
+                      rule={rule}
+                    />
+                  ))
                 ) : (
                   <EmptyState title={`${section.title} 暂无规则`} description="从左侧指标库添加真实可执行指标。" />
                 )}
@@ -53,7 +87,12 @@ export function RuleCanvas({ rules, resonances, indicators, selectableResonanceR
             <h2>Resonance</h2>
             <p>共振只引用已有 filter/score 规则，固定 bonus，不重新填写阈值。</p>
           </div>
-          <Badge tone="purple">{selectableResonanceRules.length} 个可引用规则</Badge>
+          <div className="button-row">
+            <Badge tone="purple">{selectableResonanceRules.length} 个可引用规则</Badge>
+            <Button disabled={selectableResonanceRules.length < 2} icon={<Plus size={15} />} onClick={addResonance} variant="secondary">
+              新建共振
+            </Button>
+          </div>
         </div>
         <div className="resonance-chip-grid">
           {selectableResonanceRules.map((rule) => (
@@ -66,10 +105,64 @@ export function RuleCanvas({ rules, resonances, indicators, selectableResonanceR
           {resonances.length ? (
             resonances.map((item) => (
               <article className="rule-card" key={item.id}>
-                <strong>{item.name}</strong>
-                <p className="card-copy">
-                  {item.rule_ids.length} 条规则共振，bonus +{item.bonus}，上限由策略合同控制。
-                </p>
+                <div className="rule-card-header">
+                  <label className="rule-name-input">
+                    <span>共振名称</span>
+                    <input value={item.name || ''} onChange={(event) => updateResonance(item.id, { name: event.target.value })} />
+                  </label>
+                  <label className="mini-toggle">
+                    <input checked={item.enabled !== false} type="checkbox" onChange={(event) => updateResonance(item.id, { enabled: event.target.checked })} />
+                    启用
+                  </label>
+                </div>
+                <div className="rule-editor resonance-editor">
+                  {(item.rule_ids || []).map((ruleId, index) => (
+                    <label key={`${item.id}-${index}`}>
+                      <span>规则 {index + 1}</span>
+                      <select
+                        value={ruleId}
+                        onChange={(event) => {
+                          const next = [...(item.rule_ids || [])];
+                          next[index] = event.target.value;
+                          updateResonance(item.id, { rule_ids: Array.from(new Set(next.filter(Boolean))) });
+                        }}
+                      >
+                        {selectableResonanceRules.map((rule) => (
+                          <option key={rule.id} value={rule.id}>
+                            {strategyRuleSelectLabel(rule, indicators)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                  <label>
+                    <span>Bonus</span>
+                    <select value={String(item.bonus ?? 8)} onChange={(event) => updateResonance(item.id, { bonus: Number(event.target.value) })}>
+                      {resonanceBonusOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="button-row">
+                  <Button
+                    disabled={(item.rule_ids || []).length >= selectableResonanceRules.length}
+                    icon={<Plus size={14} />}
+                    onClick={() => {
+                      const used = new Set(item.rule_ids || []);
+                      const nextRule = selectableResonanceRules.find((rule) => !used.has(rule.id));
+                      if (nextRule) updateResonance(item.id, { rule_ids: [...(item.rule_ids || []), nextRule.id] });
+                    }}
+                    variant="ghost"
+                  >
+                    增加引用
+                  </Button>
+                  <Button icon={<Trash2 size={14} />} onClick={() => removeResonance(item.id)} variant="ghost">
+                    删除共振
+                  </Button>
+                </div>
               </article>
             ))
           ) : (
