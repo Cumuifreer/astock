@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { Fragment, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -10,9 +10,10 @@ type DataTableProps<TData extends object> = {
   columns: Array<ColumnDef<TData, unknown>>;
   empty?: ReactNode;
   estimateRowHeight?: number;
+  renderSubRow?: (row: TData) => ReactNode;
 };
 
-export function DataTable<TData extends object>({ data, columns, empty, estimateRowHeight = 48 }: DataTableProps<TData>) {
+export function DataTable<TData extends object>({ data, columns, empty, estimateRowHeight = 48, renderSubRow }: DataTableProps<TData>) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const table = useReactTable({
     data,
@@ -60,12 +61,20 @@ export function DataTable<TData extends object>({ data, columns, empty, estimate
           ) : null}
           {virtualItems.map((virtualRow) => {
             const row = rows[virtualRow.index];
+            const subRow = renderSubRow?.(row.original);
             return (
-              <tr key={row.id}>
-                {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-                ))}
-              </tr>
+              <Fragment key={row.id}>
+                <tr>
+                  {row.getVisibleCells().map((cell) => (
+                    <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+                  ))}
+                </tr>
+                {subRow ? (
+                  <tr className="data-table-subrow">
+                    <td colSpan={columns.length}>{subRow}</td>
+                  </tr>
+                ) : null}
+              </Fragment>
             );
           })}
           {padding.bottom > 0 ? (

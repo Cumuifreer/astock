@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -723,6 +724,76 @@ def test_intraday_task_records_snapshot_and_runs_radar(tmp_path, monkeypatch):
     assert task["kind"] == "intraday"
     assert radar["summary"]["candidate_count"] == 1
     assert radar["rows"][0]["status"] == "刚突破"
+
+
+def test_intraday_task_refreshes_market_environment_and_concept_heat(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行"), _stock("000002.SZ", "万科A")], ["code"])
+    db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+    db.upsert("historical_bars", [_bar("000002.SZ", day, close=8.0) for day in range(1, 22)], ["code", "date"])
+    db.upsert(
+        "tushare_ths_member",
+        [
+            {"code": "000001.SZ", "name": "平安银行", "con_code": "885001.TI", "con_name": "测试概念", "source": "test"},
+            {"code": "000002.SZ", "name": "万科A", "con_code": "885001.TI", "con_name": "测试概念", "source": "test"},
+        ],
+        ["code", "con_code"],
+    )
+    IntradayRadarService(db).save_config({"min_amount": 0, "platform_bull_amount_advantage": 0, "candidate_limit": 10})
+
+    service = UpdateService(db)
+
+    class ImmediateExecutor:
+        def submit(self, fn, *args):
+            fn(*args)
+
+    monkeypatch.setattr(service, "executor", ImmediateExecutor())
+    monkeypatch.setattr(
+        service,
+        "_fetch_intraday_snapshot_frame",
+        lambda include_bj, exclude_star, warnings: pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "平安银行",
+                    "latest_price": 10.55,
+                    "pct_chg": 4.2,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "AkShare 新浪",
+                },
+                {
+                    "code": "000002.SZ",
+                    "name": "万科A",
+                    "latest_price": 8.8,
+                    "pct_chg": 6.1,
+                    "high": 8.9,
+                    "low": 8.1,
+                    "volume": 2_500_000.0,
+                    "amount": 44_000_000.0,
+                    "source": "AkShare 新浪",
+                },
+            ]
+        ),
+    )
+
+    task_id = service.start_intraday_sample({"sample_at": "2026-05-21T10:00:00"})
+    task = db.query("SELECT summary_json FROM task_runs WHERE id = ?", [task_id])[0]
+    market = db.query("SELECT * FROM market_environment WHERE date = ?", ["2026-05-21"])[0]
+    sector = db.query("SELECT * FROM market_sector_daily WHERE trade_date = ? AND sector_code = ?", ["2026-05-21", "885001.TI"])[0]
+    summary = json.loads(task["summary_json"])
+
+    assert summary["market_environment_count"] == 1
+    assert summary["sector_heat_count"] == 1
+    assert market["up_count"] == 2
+    assert market["strong_count"] == 1
+    assert sector["sector_name"] == "测试概念"
+    assert sector["member_count"] == 2
+    assert sector["strong_count"] == 1
+    assert sector["source"] == "实时快照概念热度"
 
 
 def test_intraday_snapshot_prefers_tushare_realtime(tmp_path, monkeypatch):

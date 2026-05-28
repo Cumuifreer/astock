@@ -71,17 +71,16 @@ export function StatusPage() {
         <div className="section-heading">
           <div>
             <h2>任务状态</h2>
-            <p>查看当前任务、等待队列、定时计划和最近失败原因。</p>
+            <p>查看当前任务、等待队列和定时计划。</p>
           </div>
           <Badge tone={activeTask ? 'info' : 'neutral'}>{activeTask ? '有任务' : '系统待命'}</Badge>
         </div>
-        <div className="grid-4 status-summary-grid">
+        <div className="grid-3 status-summary-grid">
           <Metric label="系统状态" value={systemLabel(activeTask)} />
           <Metric label="任务队列" value={`运行 ${runningTasks.length} · 排队 ${queuedTasks.length}`} />
-          <Metric label="定时计划" value={schedulerLabel(scheduler)} />
           <Metric label="AI 模型" value={llmLabel(llm)} tone={llm?.configured ? 'neutral' : 'risk'} />
-          <Metric label="最近失败" value={failedTasks[0]?.error_message || failedTasks[0]?.warning || '无'} tone={failedTasks.length ? 'risk' : 'neutral'} />
         </div>
+        <ScheduleStatusStrip scheduler={scheduler} />
         {activeTask && ['queued', 'running'].includes(activeTask.status) ? (
           <article className="task-progress-card" style={{ marginTop: 16 }}>
             <div className="rule-card-header">
@@ -103,6 +102,12 @@ export function StatusPage() {
 
       {showMaintenance ? (
       <section className="maintenance-details surface pad">
+        {failedTasks.length ? (
+          <article className="recent-failure-panel">
+            <span>最近失败</span>
+            <strong>{failedTasks[0]?.error_message || failedTasks[0]?.warning || '失败原因待记录'}</strong>
+          </article>
+        ) : null}
         <section className="grid-2" style={{ marginTop: 16 }}>
           <div>
             <div className="section-heading">
@@ -157,17 +162,36 @@ function Metric({ label, value, tone = 'neutral' }: { label: string; value: stri
   );
 }
 
-function schedulerLabel(scheduler?: { enabled?: boolean; next_slot?: { time?: string | null; sample_at?: string | null } | null; remaining_count?: number; latest_slot?: { sample_at?: string | null; status?: string | null } | null } | null) {
-  if (!scheduler?.enabled) return '未开启';
-  const next = scheduler.next_slot?.time || scheduler.next_slot?.sample_at;
-  const latest = scheduler.latest_slot?.sample_at;
-  const remaining = scheduler.remaining_count ?? 0;
-  return `${latest ? `最近 ${formatDateTime(latest)}` : '最近暂无'} · ${next ? `下次 ${next}` : '下次待定'} · 今日还剩 ${remaining} 次`;
+type SchedulerHealth = {
+  enabled?: boolean;
+  next_slot?: { time?: string | null; sample_at?: string | null } | null;
+  remaining_count?: number;
+  latest_slot?: { sample_at?: string | null; status?: string | null } | null;
+} | null;
+
+function ScheduleStatusStrip({ scheduler }: { scheduler?: SchedulerHealth }) {
+  const enabled = Boolean(scheduler?.enabled);
+  const next = scheduler?.next_slot?.time || scheduler?.next_slot?.sample_at;
+  const latest = scheduler?.latest_slot?.sample_at;
+  const remaining = scheduler?.remaining_count ?? 0;
+  const latestRawStatus = scheduler?.latest_slot?.status;
+  const latestStatus = latestRawStatus ? taskStatusLabel(latestRawStatus) : latest ? '已记录' : '暂无';
+  return (
+    <article className="schedule-status-strip">
+      <strong>定时计划</strong>
+      <span>盘中采样：{enabled ? '已开启' : '未开启'}</span>
+      <span>下一次：{enabled ? next || '待定' : '未开启'}</span>
+      <span>今日剩余：{enabled ? `${remaining} 次` : '-'}</span>
+      <span>最近一次：{latest ? `${formatDateTime(latest)} · ${latestStatus}` : '暂无'}</span>
+    </article>
+  );
 }
 
 function llmLabel(llm?: { configured?: boolean; model?: string | null; url_host?: string | null } | null) {
   if (!llm?.configured) return '未配置';
-  return `${llm.model || '已配置'} · ${llm.url_host || '兼容接口'}`;
+  const marker = `${llm.model || ''} ${llm.url_host || ''}`.toLowerCase();
+  if (marker.includes('deepseek')) return 'DeepSeek';
+  return '已配置';
 }
 
 function systemLabel(task?: TaskRun | null) {

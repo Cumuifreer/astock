@@ -212,6 +212,11 @@ button {
   gap: var(--space-4);
 }
 
+.scanner-workspace-full > main {
+  width: 100%;
+  min-width: 0;
+}
+
 .metric-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -240,6 +245,46 @@ button {
 .status-metric-card.risk {
   border-color: rgba(239, 68, 68, 0.24);
   background: #fff7f7;
+}
+
+.schedule-status-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.schedule-status-strip strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.recent-failure-panel {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid rgba(239, 68, 68, 0.24);
+  border-radius: var(--radius-sm);
+  background: #fff7f7;
+}
+
+.recent-failure-panel span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.recent-failure-panel strong {
+  color: var(--danger);
+  overflow-wrap: anywhere;
 }
 
 .task-progress-card {
@@ -571,6 +616,34 @@ button {
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.data-table-subrow td {
+  padding-top: 0;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.watchlist-note-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.watchlist-note-row span {
+  color: var(--text-muted);
+  font-weight: 900;
+}
+
+.watchlist-note-row p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .table-wrap {
@@ -953,8 +1026,26 @@ button {
   border-radius: var(--radius-sm);
   background: var(--bg-soft);
   color: var(--text-primary);
-  cursor: pointer;
   font-weight: 900;
+}
+
+.indicator-group-toggle {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.indicator-group-toggle span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .indicator-active-strip {
@@ -990,17 +1081,17 @@ button {
 
 .indicator-card-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(260px, 1fr));
-  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(224px, 1fr));
+  gap: var(--space-2);
   padding: var(--space-3);
   border-top: 1px solid var(--border-subtle);
 }
 
 .indicator-card {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-2);
   align-content: start;
-  min-height: 188px;
+  min-height: 156px;
   padding: var(--space-3);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -1032,6 +1123,12 @@ button {
 
 .indicator-card-body {
   min-width: 0;
+}
+
+.money-unit-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .indicator-table {

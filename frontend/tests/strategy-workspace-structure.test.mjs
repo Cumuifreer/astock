@@ -15,20 +15,35 @@ const dataMapSource = readFileSync(resolve(__dirname, '../src/pages/data-map/Dat
 const capabilityCardSource = readFileSync(resolve(__dirname, '../src/pages/data-map/CapabilityCard.tsx'), 'utf8');
 const marketFlowSource = readFileSync(resolve(__dirname, '../src/pages/overview/MarketFlowPanel.tsx'), 'utf8');
 const shellSource = readFileSync(resolve(__dirname, '../src/app/AppShell.tsx'), 'utf8');
+const indicatorRegistrySource = readFileSync(resolve(__dirname, '../../backend/app/services/indicator_registry.py'), 'utf8');
 
 test('scanner page is organized as one indicator matrix plus combination panel', () => {
   assert.match(scannerSource, /IndicatorMatrix/);
   assert.match(scannerSource, /CombinationBonusPanel/);
-  assert.match(scannerSource, /StrategySummary/);
+  assert.doesNotMatch(scannerSource, /StrategySummary/);
+  assert.doesNotMatch(scannerSource, /grid-aside/);
+  assert.match(scannerSource, /scanner-workspace-full/);
   assert.doesNotMatch(scannerSource, /UniversePanel|RuleCanvas/);
   const combined = `${scannerSource}\n${indicatorMatrixSource}\n${combinationSource}`;
   for (const label of ['基础股票池', '流动性与成交', '相对强弱', '平台与突破', '组合加分']) {
     assert.match(combined, new RegExp(label));
   }
   assert.match(indicatorMatrixSource, /点击左侧开启/);
+  assert.match(indicatorMatrixSource, /expandedGroups/);
+  assert.match(indicatorMatrixSource, /indicator-group-toggle/);
+  assert.match(indicatorMatrixSource, /formatChineseMoneyUnit/);
+  assert.match(indicatorMatrixSource, /money-unit-hint/);
   assert.doesNotMatch(combined, /高级参数|规则配置|调整参数|怎么用|尚未启用|开启后填写|仅展示|移除|影响/);
   assert.doesNotMatch(scannerSource, /StrategyRuleBuilder/);
   assert.doesNotMatch(scannerSource, /StrategyResonanceBuilder/);
+});
+
+test('RPS indicators do not expose the global RPS period inside individual RPS cards', () => {
+  assert.match(indicatorRegistrySource, /data_indicator\("rps20"[\s\S]*?paired_strategy_ids=\["min_rps20"\]/);
+  assert.match(indicatorRegistrySource, /data_indicator\("rps60"[\s\S]*?paired_strategy_ids=\["min_rps60"\]/);
+  assert.match(indicatorRegistrySource, /data_indicator\("rps120"[\s\S]*?paired_strategy_ids=\["min_rps120"\]/);
+  assert.doesNotMatch(indicatorRegistrySource, /data_indicator\("rps20"[\s\S]*?paired_strategy_ids=\[[^\]]*"rps_window"[^\]]*\]/);
+  assert.doesNotMatch(indicatorRegistrySource, /data_indicator\("rps60"[\s\S]*?paired_strategy_ids=\[[^\]]*"rps_window"[^\]]*\]/);
 });
 
 test('combination bonus can only reference enabled filter and score indicators', () => {

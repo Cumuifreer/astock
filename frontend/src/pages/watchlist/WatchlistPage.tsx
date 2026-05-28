@@ -186,7 +186,6 @@ function WatchlistTable({
       { header: 'T+10', cell: ({ row }) => formatPercentStatus(row.original.return_10d) },
       { header: '最新收益', cell: ({ row }) => formatPercentStatus(row.original.return_latest) },
       { header: '来源', cell: ({ row }) => sourceLabel(row.original.source_type, row.original.source_label) },
-      { header: '备注', cell: ({ row }) => row.original.note || row.original.hypothesis || '未填写' },
       {
         header: '操作',
         cell: ({ row }) => (
@@ -205,8 +204,19 @@ function WatchlistTable({
   );
   return (
     <section className="surface pad">
-      <DataTable data={items} columns={columns} estimateRowHeight={72} />
+      <DataTable data={items} columns={columns} estimateRowHeight={104} renderSubRow={(item) => <WatchlistNoteRow item={item} />} />
     </section>
+  );
+}
+
+function WatchlistNoteRow({ item }: { item: HypothesisItem }) {
+  const note = item.note || item.hypothesis || '未填写';
+  const label = item.note ? '备注' : item.hypothesis ? '加入理由' : '备注';
+  return (
+    <div className="watchlist-note-row">
+      <span>{label}</span>
+      <p>{note}</p>
+    </div>
   );
 }
 

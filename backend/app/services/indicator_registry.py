@@ -488,8 +488,8 @@ DATA_INDICATORS: List[Dict[str, Any]] = [
         missing="allow",
         paired_strategy_ids=["min_float_market_value", "max_float_market_value"],
     ),
-    data_indicator("rps20", "RPS20", "technical", "本地历史 K 线", "按最近 20 日收益率在全市场排序并映射到 0-100。", "短期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps20", "rps_window"]),
-    data_indicator("rps60", "RPS60", "technical", "本地历史 K 线", "按最近 60 日收益率在全市场排序并映射到 0-100。", "中期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps60", "rps_window"]),
+    data_indicator("rps20", "RPS20", "technical", "本地历史 K 线", "按最近 20 日收益率在全市场排序并映射到 0-100。", "短期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps20"]),
+    data_indicator("rps60", "RPS60", "technical", "本地历史 K 线", "按最近 60 日收益率在全市场排序并映射到 0-100。", "中期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps60"]),
     data_indicator("rps120", "RPS120", "technical", "本地历史 K 线", "按最近 120 日收益率在全市场排序并映射到 0-100。", "中长期相对强度。", ["filter", "score", "sort"], missing="skip", paired_strategy_ids=["min_rps120"]),
     data_indicator("macd_state", "MACD 状态", "technical", "本地历史 K 线 / Tushare stk_factor", "DIF、DEA 和 0 轴关系。", "确认动能是否改善。", ["display"], missing="allow", analysis_ready=False),
     data_indicator("platform_range", "平台振幅", "platform", "本地历史 K 线", "平台窗口内最高价 / 最低价 - 1，或按收盘价区间计算。", "衡量横盘收敛程度。", ["filter", "score"], missing="skip", paired_strategy_ids=["platform_max_range", "platform_max_range_mode"]),
@@ -587,7 +587,7 @@ STRATEGY_PARAM_INDICATORS: List[Dict[str, Any]] = [
     strategy_param("ma_short_window", "MA 短期", "technical", "strength_trend", "强弱与趋势", number_control(unit="日", min_value=3), "短期均线周期。"),
     strategy_param("ma_long_window", "MA 长期", "technical", "strength_trend", "强弱与趋势", number_control(unit="日", min_value=4), "长期均线周期。"),
     strategy_param("trend_filter", "趋势过滤", "technical", "strength_trend", "强弱与趋势", select_control([("ma_short_above_long", "短均线在长均线上方"), ("none", "不启用")]), "通用趋势过滤方式。"),
-    strategy_param("rps_window", "RPS 周期", "technical", "strength_trend", "强弱与趋势", select_control([("20", "RPS20"), ("60", "RPS60"), ("120", "RPS120")]), "排序或过滤使用的 RPS 周期。"),
+    strategy_param("rps_window", "排序 RPS 周期", "technical", "strength_trend", "强弱与趋势", select_control([("20", "RPS20"), ("60", "RPS60"), ("120", "RPS120")]), "用于排序和旧策略兼容；RPS20/RPS60/RPS120 下限分别独立配置。"),
     strategy_param("min_rps20", "RPS20 下限", "technical", "strength_trend", "强弱与趋势", number_control(allow_blank=True, min_value=0, max_value=100), "RPS20 低于该值时过滤。"),
     strategy_param("min_rps60", "RPS60 下限", "technical", "strength_trend", "强弱与趋势", number_control(allow_blank=True, min_value=0, max_value=100), "RPS60 低于该值时过滤。"),
     strategy_param("min_rps120", "RPS120 下限", "technical", "strength_trend", "强弱与趋势", number_control(allow_blank=True, min_value=0, max_value=100), "RPS120 低于该值时过滤。"),
@@ -603,7 +603,6 @@ STRATEGY_PARAM_INDICATORS: List[Dict[str, Any]] = [
     strategy_param("min_theme_limit_count", "题材涨停数下限", "theme", "theme_strength", "题材强度", number_control(allow_blank=True, min_value=0), "所属题材内涨停家数不足时过滤。", usage=["filter", "score"]),
     strategy_param("candidate_limit", "候选上限", "stock_pool", "output", "输出设置", number_control(min_value=1, max_value=500), "每次分析最多输出的候选数量。"),
     strategy_param("sort_by", "排序", "stock_pool", "output", "输出设置", select_control([("signal_score", "信号分数"), ("rps20", "RPS20"), ("amount", "成交额"), ("pct_chg", "涨跌幅")]), "候选排序字段。", usage=["sort"]),
-    strategy_param("macd_filter_enabled", "启用 MACD 过滤", "technical", "legacy", "兼容参数", boolean_control(), "兼容旧策略中的 MACD 总开关。", usage=["switch"]),
 ]
 
 

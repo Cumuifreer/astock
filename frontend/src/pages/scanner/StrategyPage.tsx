@@ -12,7 +12,6 @@ import { useBootstrap } from '../../hooks/useBootstrap';
 import { useStrategyDraft } from '../../hooks/useStrategyDraft';
 import { composeStrategyConfig, defaultStrategyRule } from '../../utils/strategy';
 import { IndicatorMatrix } from './IndicatorMatrix';
-import { StrategySummary } from './StrategySummary';
 import { CombinationBonusPanel } from './CombinationBonusPanel';
 
 const defaultStrategyKey = ['default', 'strategy'].join('_');
@@ -149,7 +148,7 @@ export function StrategyPage() {
   if (!config) return <EmptyState title="策略选股暂不可用" description="策略基础配置加载后会自动进入配置界面。" />;
 
   return (
-    <div className="grid-aside">
+    <div className="list-stack scanner-workspace-full">
       <main className="list-stack">
         <section className="surface pad scanner-runbar">
           <div className="section-heading">
@@ -216,9 +215,6 @@ export function StrategyPage() {
           selectableResonanceRules={selectableResonanceRules}
         />
       </main>
-      <aside className="list-stack">
-        <StrategySummary config={namedConfig} name={strategyName} rules={rules} />
-      </aside>
     </div>
   );
 }

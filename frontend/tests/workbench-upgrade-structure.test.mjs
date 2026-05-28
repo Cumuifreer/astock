@@ -176,9 +176,11 @@ test('task progress and topbar popover avoid false running states', () => {
   assert.match(statusPage, /flowProgress/);
   assert.match(statusPage, /progressByTaskId/);
   assert.match(statusPage, /getTasks/);
-  for (const label of ['系统状态', '任务队列', '定时计划', '最近失败']) {
+  for (const label of ['系统状态', '任务队列', '定时计划', 'DeepSeek']) {
     assert.match(statusPage, new RegExp(label));
   }
+  assert.match(statusPage, /schedule-status-strip/);
+  assert.doesNotMatch(statusPage, /Metric label="最近失败"/);
 
   const metrics = read('utils/metrics.ts');
   assert.match(metrics, /isTerminalTaskStatus/);
@@ -194,6 +196,10 @@ test('scanner exposes a unified indicator matrix and panel-based combination bon
   assert.doesNotMatch(matrix, /怎么用|尚未启用|开启后填写|影响|仅展示|移除/);
   assert.match(matrix, /indicator-card-grid/);
   assert.match(matrix, /已启用指标/);
+  assert.match(matrix, /expandedGroups/);
+  assert.match(matrix, /indicator-group-toggle/);
+  assert.match(matrix, /formatChineseMoneyUnit/);
+  assert.match(matrix, /money-unit-hint/);
   assert.match(matrix, /indicatorParameterKeys/);
   assert.doesNotMatch(matrix, /调整参数|高级参数|规则配置/);
   assert.match(matrix, /Switch/);

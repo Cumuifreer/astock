@@ -86,12 +86,16 @@ test('analysis results display strategy names and auto-load candidate explanatio
 
 test('watchlist uses dialogs and DataTable for management', () => {
   const watchlist = read('pages/watchlist/WatchlistPage.tsx');
+  const dataTable = read('design/DataTable.tsx');
   assert.match(watchlist, /ConfirmDialog/);
   assert.match(watchlist, /EditDialog/);
   assert.match(watchlist, /DataTable/);
   assert.match(watchlist, /header:\s*'T\+10'/);
-  assert.match(watchlist, /header:\s*'备注'/);
-  assert.match(watchlist, /row\.original\.note/);
+  assert.doesNotMatch(watchlist, /header:\s*'备注'/);
+  assert.match(watchlist, /renderSubRow/);
+  assert.match(watchlist, /watchlist-note-row/);
+  assert.match(watchlist, /item\.note/);
+  assert.match(dataTable, /renderSubRow/);
   assert.doesNotMatch(watchlist, /批量标记有效|批量标记误报|Segmented|失效条件|review_status|观察中|误报|有效/);
   assert.match(watchlist, /批量删除/);
   assert.doesNotMatch(watchlist, /<table/);
@@ -119,9 +123,11 @@ test('backtest page exposes strategy selection parameters results and queue trac
 
 test('status page defaults to a concise user view with hidden maintenance mode', () => {
   const status = read('pages/status/StatusPage.tsx');
-  for (const label of ['系统状态', '任务队列', '定时计划', '最近失败', '查看维护信息']) {
+  for (const label of ['系统状态', '任务队列', '定时计划', 'DeepSeek', '查看维护信息']) {
     assert.match(status, new RegExp(label));
   }
+  assert.match(status, /schedule-status-strip/);
+  assert.doesNotMatch(status, /Metric label="最近失败"/);
   assert.doesNotMatch(status, /developer-details/);
   assert.doesNotMatch(status, /开发者详情/);
 });
