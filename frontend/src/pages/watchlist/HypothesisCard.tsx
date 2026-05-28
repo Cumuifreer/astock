@@ -1,5 +1,6 @@
 import type { WatchlistItem } from '../../types';
 import { Badge } from '../../design/Badge';
+import { Button } from '../../design/Button';
 import { formatPercent } from '../../utils/format';
 
 export type HypothesisItem = WatchlistItem & {
@@ -9,7 +10,13 @@ export type HypothesisItem = WatchlistItem & {
   tags?: string[];
 };
 
-export function HypothesisCard({ item }: { item: HypothesisItem }) {
+type HypothesisCardProps = {
+  item: HypothesisItem;
+  onEdit: (item: HypothesisItem, field: 'note' | 'invalidation_rule' | 'review_status') => void;
+  onDelete: (item: HypothesisItem) => void;
+};
+
+export function HypothesisCard({ item, onEdit, onDelete }: HypothesisCardProps) {
   return (
     <article className="rule-card">
       <div className="rule-card-header">
@@ -42,6 +49,20 @@ export function HypothesisCard({ item }: { item: HypothesisItem }) {
             {tag}
           </Badge>
         ))}
+      </div>
+      <div className="rule-card-actions">
+        <Button onClick={() => onEdit(item, 'note')} variant="ghost">
+          编辑备注
+        </Button>
+        <Button onClick={() => onEdit(item, 'invalidation_rule')} variant="ghost">
+          编辑失效条件
+        </Button>
+        <Button onClick={() => onEdit(item, 'review_status')} variant="ghost">
+          编辑状态
+        </Button>
+        <Button onClick={() => onDelete(item)} variant="danger">
+          删除
+        </Button>
       </div>
     </article>
   );

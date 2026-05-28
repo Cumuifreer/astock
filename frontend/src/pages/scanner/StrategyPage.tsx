@@ -17,13 +17,13 @@ import { FactorPicker } from './FactorPicker';
 import { StrategySummary } from './StrategySummary';
 
 const scannerSections = [
-  'Universe',
-  'Filters',
-  'Scores',
-  'Risks',
-  'Display',
-  'Resonance',
-  'Advanced',
+  '股票池',
+  '硬性筛选',
+  '评分因子',
+  '风险控制',
+  '展示字段',
+  '组合加分',
+  '高级参数',
 ];
 
 const resonanceChipGridClass = 'resonance-chip-grid';
@@ -153,8 +153,8 @@ export function StrategyPage() {
     }, 0);
   };
 
-  if (bootstrap.isLoading) return <LoadingState label="加载 Scanner 合同" />;
-  if (!config) return <EmptyState title="Scanner 暂无默认策略" description="保留旧策略兼容逻辑；当 bootstrap 返回默认策略后会自动进入规则画布。" />;
+  if (bootstrap.isLoading) return <LoadingState label="加载策略能力" />;
+  if (!config) return <EmptyState title="策略选股暂无默认配置" description="默认策略加载后会自动进入规则配置。" />;
 
   return (
     <div className="grid-aside">
@@ -162,10 +162,10 @@ export function StrategyPage() {
         <section className="surface pad scanner-runbar">
           <div className="section-heading">
             <div>
-              <h2>当前 Scanner</h2>
-              <p>选择预设、复制为自定义策略，或保存当前画布 draft 后运行。</p>
+              <h2>当前策略</h2>
+              <p>选择策略、复制为自定义策略，或保存当前配置后运行。</p>
               <div className="rule-chip-grid" style={{ marginTop: 8 }}>
-                <Badge tone={presetId ? 'info' : 'neutral'}>{presetId || 'new-draft'}</Badge>
+                <Badge tone={presetId ? 'info' : 'neutral'}>{presetId ? '已保存策略' : '未保存策略'}</Badge>
                 {isSystem ? <Badge tone="watch">系统策略只能复制</Badge> : <Badge tone="good">自定义可保存</Badge>}
                 {isDefault ? <Badge tone="purple">默认策略</Badge> : null}
               </div>
@@ -229,7 +229,7 @@ export function StrategyPage() {
           <div className="section-heading">
             <div>
               <h2>画布分区</h2>
-              <p>这些分区对应策略合同，不创建后端不会执行的假规则。</p>
+              <p>按股票池、规则、组合加分和高级参数组织当前策略。</p>
             </div>
           </div>
           <div className={`rule-chip-grid ${resonanceChipGridClass}`}>

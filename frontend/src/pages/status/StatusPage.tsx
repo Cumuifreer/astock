@@ -50,12 +50,12 @@ export function StatusPage() {
   }, [activeTask, dagRows]);
   const checkpointColumns = useMemo<Array<ColumnDef<UpdateCheckpoint, unknown>>>(
     () => [
-      { header: 'job', accessorKey: 'job_id' },
-      { header: 'capability', accessorKey: 'capability' },
-      { header: 'batch', accessorKey: 'batch_key' },
-      { header: 'status', accessorKey: 'status', cell: ({ row }) => <Badge>{row.original.status}</Badge> },
-      { header: 'rows_written', accessorKey: 'rows_written' },
-      { header: 'finished', accessorKey: 'finished_at', cell: ({ row }) => formatDateTime(row.original.finished_at) },
+      { header: '节点', accessorKey: 'job_id' },
+      { header: '数据类别', accessorKey: 'capability' },
+      { header: '批次', accessorKey: 'batch_key' },
+      { header: '状态', accessorKey: 'status', cell: ({ row }) => <Badge>{checkpointStatusLabel(row.original.status)}</Badge> },
+      { header: '写入行数', accessorKey: 'rows_written' },
+      { header: '完成时间', accessorKey: 'finished_at', cell: ({ row }) => formatDateTime(row.original.finished_at) },
     ],
     [],
   );
@@ -68,9 +68,9 @@ export function StatusPage() {
         <div className="section-heading">
           <div>
             <h2>当前运行任务</h2>
-            <p>任务队列、今日已完成任务、失败任务、定时计划和开发者详情统一在这里。</p>
+            <p>任务队列、今日已完成任务、失败任务和定时计划统一在这里。</p>
           </div>
-          <Badge tone={activeTask ? 'info' : 'neutral'}>{activeTask?.id || 'idle'}</Badge>
+          <Badge tone={activeTask ? 'info' : 'neutral'}>{activeTask ? '有任务' : '系统待命'}</Badge>
         </div>
         <section className="task-status-grid">
           <TaskQueue emptyLabel="当前没有运行中的任务" title="当前运行" tasks={runningTasks} progressByTaskId={progressByTaskId} />
@@ -80,35 +80,48 @@ export function StatusPage() {
         </section>
       </section>
 
-      <section className="grid-2">
-        <div className="surface pad">
-          <div className="section-heading">
-            <div>
-              <h2>数据更新 DAG 进度</h2>
-              <p>展示每个 capability 的依赖、覆盖策略、请求策略和当前状态。</p>
-            </div>
-          </div>
-          <div className="list-stack">
-            {dagRows.map((node) => (
-              <div className="split-row" key={node.id}>
-                <span>{node.label || node.id}</span>
-                <Badge>{node.status || 'queued'}</Badge>
+      <details className="developer-details surface pad">
+        <summary>开发者详情</summary>
+        <section className="grid-2" style={{ marginTop: 16 }}>
+          <div>
+            <div className="section-heading">
+              <div>
+                <h2>同步流程节点</h2>
+                <p>展示每个数据节点的依赖、覆盖策略、请求策略和当前状态。</p>
               </div>
-            ))}
-            {!dagRows.length ? <p className="card-copy">暂无 DAG 数据。</p> : null}
-          </div>
-        </div>
-
-        <div className="surface pad">
-          <div className="section-heading">
-            <div>
-              <h2>checkpoint 列表</h2>
-              <p>状态页读取 update_checkpoints，不只依赖 summary_json。</p>
+            </div>
+            <div className="list-stack">
+              {dagRows.map((node) => (
+                <div className="split-row" key={node.id}>
+                  <span>{node.label || node.id}</span>
+                  <Badge>{checkpointStatusLabel(node.status)}</Badge>
+                </div>
+              ))}
+              {!dagRows.length ? <p className="card-copy">暂无流程数据。</p> : null}
             </div>
           </div>
-          <DataTable data={checkpointRows} columns={checkpointColumns} />
-        </div>
-      </section>
+
+          <div>
+            <div className="section-heading">
+              <div>
+                <h2>进度节点列表</h2>
+                <p>读取真实进度节点，不只依赖任务摘要。</p>
+              </div>
+            </div>
+            <DataTable data={checkpointRows} columns={checkpointColumns} />
+          </div>
+        </section>
+      </details>
     </div>
   );
+}
+
+function checkpointStatusLabel(status?: string | null) {
+  if (status === 'queued') return '排队中';
+  if (status === 'running') return '运行中';
+  if (status === 'completed') return '已完成';
+  if (status === 'partial') return '部分完成';
+  if (status === 'failed') return '失败';
+  if (status === 'skipped') return '已跳过';
+  return status || '待更新';
 }

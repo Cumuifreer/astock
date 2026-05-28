@@ -14,8 +14,8 @@ export function BacktestPage() {
       <section className="surface pad">
         <div className="section-heading">
           <div>
-            <h2>回测实验室</h2>
-            <p>先判断规则是否有预测力，再判断组合是否能赚钱。</p>
+            <h2>回测</h2>
+            <p>选择策略和时间范围，评估信号质量与组合表现。</p>
           </div>
           <div className="rule-chip-grid">
             <Badge tone="info">{runs.data?.rows?.length || 0} 次历史运行</Badge>

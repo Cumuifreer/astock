@@ -4,6 +4,7 @@ import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
 import { CheckTile } from '../../design/CheckTile';
 import { EmptyState } from '../../design/EmptyState';
+import { Select } from '../../design/Select';
 import { createResonanceId, resonanceBonusOptions, strategyRuleSelectLabel } from '../../utils/strategy';
 import { RuleCard } from './RuleCard';
 import { Plus, Trash2 } from 'lucide-react';
@@ -22,10 +23,10 @@ type RuleCanvasProps = {
 };
 
 const sections: Array<{ title: string; action?: string; copy: string }> = [
-  { title: 'Filters', action: 'filter', copy: '硬筛规则必须有足够覆盖率，缺失处理明确。' },
-  { title: 'Scores', action: 'score', copy: '加分规则只在字段命中时生效，不让缺失字段偷加分。' },
-  { title: 'Risks', action: 'risk', copy: '风险规则用于过热、炸板、筹码压力和异常换手。' },
-  { title: 'Display', action: 'display', copy: '展示列不参与运算，只进入候选表和证据面板。' },
+  { title: '硬性筛选', action: 'filter', copy: '必须满足的条件，不满足会直接剔除。' },
+  { title: '评分因子', action: 'score', copy: '命中后增加排序分数，缺失字段不会偷加分。' },
+  { title: '风险控制', action: 'risk', copy: '用于过热、炸板、筹码压力和异常换手。' },
+  { title: '展示字段', action: 'display', copy: '只进入候选表和证据面板，不参与打分。' },
 ];
 
 const nullableAdvancedNumberKeys = new Set(['volume_ratio_min']);
@@ -83,8 +84,8 @@ export function RuleCanvas({
       <section className="surface pad">
         <div className="section-heading">
           <div>
-            <h2>Rule Canvas</h2>
-            <p>Universe / Filters / Scores / Risks / Display / Resonance / Advanced</p>
+            <h2>规则配置</h2>
+            <p>规则配置会按硬性筛选、评分因子、风险控制和展示字段分组。</p>
           </div>
         </div>
         <div className="grid-2">
@@ -118,13 +119,13 @@ export function RuleCanvas({
       <section className="surface pad">
         <div className="section-heading">
           <div>
-            <h2>Resonance</h2>
-            <p>共振只引用已有 filter/score 规则，固定 bonus，不重新填写阈值。</p>
+            <h2>组合加分</h2>
+            <p>组合加分只引用已有硬性筛选或评分因子，使用固定加分，不重新填写阈值。</p>
           </div>
           <div className="button-row">
             <Badge tone="purple">{selectableResonanceRules.length} 个可引用规则</Badge>
             <Button disabled={selectedRuleIds.length < 2} icon={<Plus size={15} />} onClick={addResonance} variant="secondary">
-              新建共振
+              新建组合
             </Button>
           </div>
         </div>
@@ -146,7 +147,7 @@ export function RuleCanvas({
               <article className="rule-card" key={item.id}>
                 <div className="rule-card-header">
                   <label className="rule-name-input">
-                    <span>共振名称</span>
+                    <span>组合名称</span>
                     <input value={item.name || ''} onChange={(event) => updateResonance(item.id, { name: event.target.value })} />
                   </label>
                   <CheckTile checked={item.enabled !== false} label="启用" onCheckedChange={(checked) => updateResonance(item.id, { enabled: checked })} />
@@ -155,31 +156,26 @@ export function RuleCanvas({
                   {(item.rule_ids || []).map((ruleId, index) => (
                     <label key={`${item.id}-${index}`}>
                       <span>规则 {index + 1}</span>
-                      <select
+                      <Select
+                        label={`规则 ${index + 1}`}
                         value={ruleId}
-                        onChange={(event) => {
+                        onChange={(value) => {
                           const next = [...(item.rule_ids || [])];
-                          next[index] = event.target.value;
+                          next[index] = value;
                           updateResonance(item.id, { rule_ids: Array.from(new Set(next.filter(Boolean))) });
                         }}
-                      >
-                        {selectableResonanceRules.map((rule) => (
-                          <option key={rule.id} value={rule.id}>
-                            {strategyRuleSelectLabel(rule, indicators)}
-                          </option>
-                        ))}
-                      </select>
+                        options={selectableResonanceRules.map((rule) => ({ value: rule.id, label: strategyRuleSelectLabel(rule, indicators) }))}
+                      />
                     </label>
                   ))}
                   <label>
-                    <span>Bonus</span>
-                    <select value={String(item.bonus ?? 8)} onChange={(event) => updateResonance(item.id, { bonus: Number(event.target.value) })}>
-                      {resonanceBonusOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
+                    <span>加分</span>
+                    <Select
+                      label="加分"
+                      value={String(item.bonus ?? 8)}
+                      onChange={(value) => updateResonance(item.id, { bonus: Number(value) })}
+                      options={resonanceBonusOptions.map((option) => ({ value: String(option.value), label: option.label }))}
+                    />
                   </label>
                 </div>
                 <div className="button-row">
@@ -196,13 +192,13 @@ export function RuleCanvas({
                     增加引用
                   </Button>
                   <Button icon={<Trash2 size={14} />} onClick={() => removeResonance(item.id)} variant="ghost">
-                    删除共振
+                    删除组合
                   </Button>
                 </div>
               </article>
             ))
           ) : (
-            <EmptyState title="暂无共振规则" description="选择已有硬筛或加分规则后，可以形成可解释的固定加分。" />
+            <EmptyState title="暂无组合加分" description="选择已有硬性筛选或评分因子后，可以形成可解释的固定加分。" />
           )}
         </div>
       </section>
@@ -210,11 +206,11 @@ export function RuleCanvas({
       <section className="surface pad">
         <div className="section-heading">
           <div>
-            <h2>Advanced</h2>
-            <p>平台窗口、EMA、MACD、随机指标等内部参数可折叠编辑，避免主画布变成参数墙。</p>
+            <h2>高级参数</h2>
+            <p>平台窗口、EMA、MACD、随机指标等参数可折叠编辑，避免主画布变成参数墙。</p>
           </div>
         </div>
-        <details className="advanced-parameters" open>
+        <details className="advanced-parameters">
           <summary>高级参数</summary>
           <div className="parameter-grid">
             <NumberField

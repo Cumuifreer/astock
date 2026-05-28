@@ -17,7 +17,7 @@ import { CapabilityCard } from './CapabilityCard';
 
 const groups: Array<{ title: string; names: string[] }> = [
   { title: '核心数据', names: ['股票基础信息', '历史 K 线', '当天行情快照', '流通市值', '换手率', 'RPS', '振幅'] },
-  { title: '增强数据', names: ['每日指标', '技术因子', '资金流向', '筹码分布', '概念/行业成分'] },
+  { title: '补充数据', names: ['每日指标', '技术因子', '资金流向', '筹码分布', '概念/行业成分'] },
   { title: '事件数据', names: ['涨跌停', '龙虎榜/游资'] },
   { title: '市场上下文', names: ['市场环境', '板块热力', '资讯简报'] },
 ];
@@ -63,7 +63,7 @@ export function DataMapPage() {
     const syncFromHash = () => setTab(dataMapTabFromHash());
     const handleTabEvent = (event: Event) => {
       const value = (event as CustomEvent<string>).detail;
-      if (value === 'warehouse' || value === 'health') setTab(value);
+      if (value === 'warehouse' || value === 'health' || value === 'diagnostics') setTab(value);
     };
     window.addEventListener('hashchange', syncFromHash);
     window.addEventListener('data-map-tab', handleTabEvent);
@@ -107,11 +107,15 @@ export function DataMapPage() {
               <DataHealth
                 backfillingCapability={backfillingCapability}
                 capabilities={capabilityRows}
-                diagnostics={diagnostics.data}
-                loading={capabilities.isLoading || diagnostics.isLoading}
+                loading={capabilities.isLoading}
                 onBackfill={(capability) => backfillMutation.mutate(capability)}
               />
             ),
+          },
+          {
+            value: 'diagnostics',
+            label: '数据源诊断',
+            content: <SourceDiagnosticsPanel diagnostics={diagnostics.data} loading={diagnostics.isLoading} />,
           },
         ]}
       />
@@ -268,46 +272,18 @@ function StockWarehouse({
 
 function DataHealth({
   capabilities,
-  diagnostics,
   loading,
   onBackfill,
   backfillingCapability,
 }: {
   capabilities: Capability[];
-  diagnostics?: SourceDiagnostics;
   loading: boolean;
   onBackfill: (capability: Capability) => void;
   backfillingCapability: string | null;
 }) {
-  const healthCards = useMemo(
-    () => [
-      ['Tushare', diagnostics?.tushare_token_configured ? '已配置' : '未配置', diagnostics?.last_tushare_error],
-      ['实时日线', statusLabel(diagnostics?.realtime_status), diagnostics?.last_snapshot_source],
-      ['历史日线', statusLabel(diagnostics?.history_status), diagnostics?.last_history_source],
-      ['增强数据', statusLabel(diagnostics?.enrichment_status), diagnostics?.tushare_http_url_configured ? diagnostics?.tushare_http_url : '缺少中转地址'],
-    ],
-    [diagnostics],
-  );
   if (loading) return <LoadingState label="读取数据健康" />;
   return (
     <div className="page-grid">
-      <section className="surface pad">
-        <div className="section-heading">
-          <div>
-            <h2>Tushare 诊断</h2>
-            <p>显示配置、最近失败和当前快照/历史数据是否已回退。</p>
-          </div>
-        </div>
-        <div className="grid-4">
-          {healthCards.map(([label, value, detail]) => (
-            <div className="metric-pill" key={String(label)}>
-              <span className="metric-label">{String(label)}</span>
-              <div className="metric-value" style={{ fontSize: 16 }}>{String(value || '--')}</div>
-              <small>{String(detail || '')}</small>
-            </div>
-          ))}
-        </div>
-      </section>
       {groups.map((group) => {
         const items = capabilities.filter((row) => group.names.includes(row.capability));
         if (!items.length) return null;
@@ -336,7 +312,40 @@ function DataHealth({
   );
 }
 
+function SourceDiagnosticsPanel({ diagnostics, loading }: { diagnostics?: SourceDiagnostics; loading: boolean }) {
+  const healthCards = useMemo(
+    () => [
+      ['Tushare token', diagnostics?.tushare_token_configured ? '已配置' : '未配置', diagnostics?.last_tushare_error],
+      ['实时行情', statusLabel(diagnostics?.realtime_status), diagnostics?.last_snapshot_source],
+      ['历史行情', statusLabel(diagnostics?.history_status), diagnostics?.last_history_source],
+      ['补充数据', statusLabel(diagnostics?.enrichment_status), diagnostics?.tushare_http_url_configured ? diagnostics?.tushare_http_url : '缺少中转地址'],
+    ],
+    [diagnostics],
+  );
+  if (loading) return <LoadingState label="读取数据源诊断" />;
+  return (
+    <section className="surface pad">
+      <div className="section-heading">
+        <div>
+          <h2>数据源诊断</h2>
+          <p>维护者可在这里查看配置、最近失败原因和回退数据源。</p>
+        </div>
+      </div>
+      <div className="grid-4">
+        {healthCards.map(([label, value, detail]) => (
+          <div className="metric-pill" key={String(label)}>
+            <span className="metric-label">{String(label)}</span>
+            <div className="metric-value" style={{ fontSize: 16 }}>{String(value || '暂无')}</div>
+            <small>{String(detail || '')}</small>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function dataMapTabFromHash() {
+  if (window.location.hash.includes('tab=diagnostics')) return 'diagnostics';
   return window.location.hash.includes('tab=health') ? 'health' : 'warehouse';
 }
 

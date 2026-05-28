@@ -48,7 +48,7 @@ function DailyBriefPanel({ brief }: { brief: DailyBrief | null }) {
     <section className="surface pad daily-brief-panel">
       <div className="section-heading">
         <div>
-          <h2>今日资讯简报</h2>
+          <h2>市场简报</h2>
           <p>{brief.hero_headline || brief.daily_overview || '多源资讯摘要'}</p>
         </div>
         <div className="button-row">

@@ -270,6 +270,7 @@ class IntradayRadarService:
         codes = [row["code"] for row in snapshots]
         previous = self._previous_snapshots(codes, target_sample_time, trade_date)
         history = self._history_for_snapshot(codes, trade_date)
+        theme_sync = self._theme_sync_for_codes(codes, trade_date)
         pct_values = sorted([safe_float(row.get("pct_chg")) for row in snapshots if safe_float(row.get("pct_chg")) is not None])
         amount_speed_values: List[float] = []
         scored = []
@@ -294,6 +295,7 @@ class IntradayRadarService:
             pct_rank = _percentile_rank(pct_values, pct_chg)
             trend_gain = _recent_gain(history.get(row["code"], []), 20)
             risk_pullback = abs(drawdown or 0) * 100 + max(0, (safe_float(row.get("high")) or 0) - (latest or 0))
+            theme = theme_sync.get(row["code"]) or {}
             metrics = {
                 "intraday_amount_speed": _round_optional(amount_speed, 4),
                 "amount_delta": _round_optional(amount_delta, 2),
@@ -302,7 +304,9 @@ class IntradayRadarService:
                 "intraday_drawdown": _round_optional(drawdown, 6),
                 "open_strength": _round_optional(open_strength, 6),
                 "market_rank_pct_chg": _round_optional(pct_rank, 4),
-                "theme_sync_score": None,
+                "theme_sync_score": _round_optional((safe_float(theme.get("heat_score")) or 0) / 100, 4) if theme else None,
+                "strong_theme_name": theme.get("sector_name"),
+                "strong_theme_heat": _round_optional(theme.get("heat_score"), 2),
                 "risk_pullback_score": _round_optional(risk_pullback, 4),
                 "trend_gain_20d": _round_optional(trend_gain, 6),
             }
@@ -370,8 +374,52 @@ class IntradayRadarService:
             "source": row.get("source"),
             "reasons": reasons,
             "metrics": metrics,
+            "intraday_amount_speed": metrics.get("intraday_amount_speed"),
+            "amount_delta": metrics.get("amount_delta"),
+            "theme_sync_score": metrics.get("theme_sync_score"),
+            "strong_theme_name": metrics.get("strong_theme_name"),
+            "strong_theme_heat": metrics.get("strong_theme_heat"),
+            "intraday_drawdown": metrics.get("intraday_drawdown"),
+            "open_strength": metrics.get("open_strength"),
+            "risk_pullback_score": metrics.get("risk_pullback_score"),
             "chart_url": f"https://finance.sina.com.cn/realstock/company/{to_sina_chart_symbol(code)}/nc.shtml",
         }
+
+    def _theme_sync_for_codes(self, codes: List[str], trade_date: date) -> Dict[str, Dict[str, Any]]:
+        clean_codes = sorted({str(code) for code in codes if code})
+        if not clean_codes:
+            return {}
+        sector_date = self.db.scalar(
+            """
+            SELECT MAX(trade_date)
+            FROM market_sector_daily
+            WHERE trade_date <= ?
+            """,
+            [trade_date],
+        )
+        if not sector_date:
+            return {}
+        placeholders = ",".join(["?"] * len(clean_codes))
+        rows = self.db.query(
+            f"""
+            SELECT m.code,
+                   d.sector_code,
+                   d.sector_name,
+                   d.heat_score
+            FROM tushare_ths_member m
+            JOIN market_sector_daily d
+              ON d.sector_code = m.con_code
+            WHERE m.code IN ({placeholders})
+              AND d.trade_date = ?
+              AND d.heat_score IS NOT NULL
+            ORDER BY m.code, d.heat_score DESC
+            """,
+            [*clean_codes, sector_date],
+        )
+        output: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            output.setdefault(str(row["code"]), row)
+        return output
 
     def _theme_pulse(self) -> List[Dict[str, Any]]:
         rows = self.db.query(

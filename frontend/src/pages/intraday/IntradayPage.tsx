@@ -33,13 +33,22 @@ export function IntradayPage() {
         <Tabs
           defaultValue="anomaly"
           items={[
-            { value: 'anomaly', label: '异动榜', content: <IntradayBoard rows={data.anomaly || []} tone="info" /> },
-            { value: 'pullback', label: '低吸榜', content: <IntradayBoard rows={data.pullback || []} tone="good" /> },
-            { value: 'danger', label: '风险榜', content: <IntradayBoard rows={data.risk || []} tone="risk" /> },
+            { value: 'anomaly', label: '异动榜', content: <BoardWithHint hint="异动榜：成交速度明显放大，涨幅排名靠前，且未明显冲高回落。" rows={data.anomaly || []} tone="info" /> },
+            { value: 'pullback', label: '低吸榜', content: <BoardWithHint hint="低吸榜：趋势仍在，日内不过热，回落到可观察区间。" rows={data.pullback || []} tone="good" /> },
+            { value: 'danger', label: '风险榜', content: <BoardWithHint hint="风险榜：冲高回落、放量滞涨、涨幅过热或风险标签增加。" rows={data.risk || []} tone="risk" /> },
           ]}
         />
       </section>
       <IntradayTimeline themes={data.theme_pulse || []} />
+    </div>
+  );
+}
+
+function BoardWithHint({ hint, rows, tone }: { hint: string; rows: Parameters<typeof IntradayBoard>[0]['rows']; tone: 'info' | 'good' | 'risk' }) {
+  return (
+    <div className="list-stack">
+      <p className="card-copy">{hint}</p>
+      <IntradayBoard rows={rows} tone={tone} />
     </div>
   );
 }

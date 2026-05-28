@@ -1,6 +1,7 @@
 import type { StrategyConfig } from '../../types';
 import { Badge } from '../../design/Badge';
 import { CheckTile } from '../../design/CheckTile';
+import { Select } from '../../design/Select';
 
 type UniversePanelProps = {
   config: StrategyConfig;
@@ -32,7 +33,7 @@ export function UniversePanel({ config, focusedParameter, onPatchConfig }: Unive
     <section className="surface pad">
       <div className="section-heading">
         <div>
-          <h2>Universe 股票池</h2>
+          <h2>股票池</h2>
           <p>交易范围、活跃口径、市值、成交额和排序口径都可以直接调整。</p>
         </div>
         <Badge tone="info">{config.include_bj ? '含北交所' : '沪深为主'}</Badge>
@@ -139,13 +140,12 @@ export function UniversePanel({ config, focusedParameter, onPatchConfig }: Unive
         />
         <label className={fieldClass(focusedParameter === 'sort_by')}>
           <span>排序字段</span>
-          <select id="strategy-field-sort_by" value={config.sort_by || 'signal_score'} onChange={(event) => patchString('sort_by', event.target.value)}>
-            {sortOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <Select
+            label="排序字段"
+            value={config.sort_by || 'signal_score'}
+            onChange={(value) => patchString('sort_by', value)}
+            options={sortOptions}
+          />
         </label>
         <div className="parameter-field toggle-stack">
           <CheckTile checked={Boolean(config.include_bj)} id="strategy-field-include_bj" label="包含北交所" onCheckedChange={(checked) => patchBoolean('include_bj', checked)} />

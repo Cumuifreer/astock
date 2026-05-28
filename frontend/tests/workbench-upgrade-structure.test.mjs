@@ -104,7 +104,7 @@ test('light design tokens and product navigation are present', () => {
   assert.doesNotMatch(tokens, /color-scheme:\s*dark/);
 
   const shell = read('app/AppShell.tsx');
-  for (const label of ['市场总览', 'Scanner', '分析结果', '盘中雷达', '观察池', '回测实验室', '数据中心', '任务状态']) {
+  for (const label of ['市场总览', '策略选股', '分析结果', '盘中雷达', '观察池', '回测', '数据中心', '任务状态']) {
     assert.match(shell, new RegExp(label));
   }
   assert.match(shell, /syncToday/);
@@ -129,15 +129,16 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.match(read('pages/overview/OverviewPage.tsx'), /MarketHero/);
   assert.match(read('pages/overview/OverviewPage.tsx'), /SectorHeatmap/);
   assert.match(read('pages/overview/OverviewPage.tsx'), /DailyActionList/);
-  assert.match(read('pages/overview/OverviewPage.tsx'), /今日资讯简报/);
+  assert.match(read('pages/overview/OverviewPage.tsx'), /市场简报/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /为什么入选/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /买点质量/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /可操作动作/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /异动榜/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /低吸榜/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /风险榜/);
-  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /hypothesis/);
-  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /invalidation_rule/);
+  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /卡片视图/);
+  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /表格视图/);
+  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /确认删除这个观察项/);
   assert.match(read('pages/backtest/BacktestPage.tsx'), /信号评估/);
   assert.match(read('pages/backtest/BacktestPage.tsx'), /组合回测/);
   assert.match(read('pages/backtest/SignalEvaluation.tsx'), /mutation\.data\?\.run_id/);
@@ -146,8 +147,8 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.match(read('pages/data-map/DataMapPage.tsx'), /核心数据/);
   assert.match(read('pages/data-map/DataMapPage.tsx'), /市场上下文/);
   assert.match(read('pages/data-map/DataMapPage.tsx'), /本地股票仓/);
-  assert.match(read('pages/data-map/DataMapPage.tsx'), /Tushare 诊断/);
-  assert.match(read('pages/status/StatusPage.tsx'), /checkpoint/i);
+  assert.match(read('pages/data-map/DataMapPage.tsx'), /数据源诊断/);
+  assert.match(read('pages/status/StatusPage.tsx'), /开发者详情/);
 });
 
 test('task progress and topbar popover avoid false running states', () => {

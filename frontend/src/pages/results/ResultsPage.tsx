@@ -1,42 +1,202 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import type { Candidate } from '../../types';
-import { getAnalysisReports } from '../../api/strategy';
+import { getAnalysisReport, getAnalysisReports, runStrategy } from '../../api/strategy';
+import { addWatchlistItems } from '../../api/watchlist';
 import { Badge } from '../../design/Badge';
+import { Button } from '../../design/Button';
 import { EmptyState } from '../../design/EmptyState';
 import { LoadingState } from '../../design/LoadingState';
+import { Select } from '../../design/Select';
 import { useBootstrap } from '../../hooks/useBootstrap';
+import { formatDateTime } from '../../utils/date';
+import { formatMoney, formatPercent, formatRatio } from '../../utils/format';
 import { CandidateTable } from './CandidateTable';
 import { CandidateEvidencePanel } from './CandidateEvidencePanel';
+
+type SortKey = 'signal_score' | 'rps20' | 'amount' | 'pct_chg' | 'turnover_rate' | 'risk';
 
 export function ResultsPage() {
   const bootstrap = useBootstrap();
   const reports = useQuery({ queryKey: ['analysis-reports'], queryFn: getAnalysisReports });
-  const candidates = bootstrap.data?.candidates?.rows || [];
-  const [selected, setSelected] = useState<Candidate | null>(candidates[0] || null);
+  const flattenedReports = useMemo(
+    () => (reports.data?.groups || []).flatMap((group) => group.reports.map((report) => ({ ...report, signalMode: group.signal_mode }))),
+    [reports.data],
+  );
+  const [selectedRunId, setSelectedRunId] = useState<string>('');
+  const [selected, setSelected] = useState<Candidate | null>(null);
+  const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('signal_score');
+  const latestRunId = bootstrap.data?.candidates?.run_id || flattenedReports[0]?.id || '';
+  const reportDetail = useQuery({
+    queryKey: ['analysis-report', selectedRunId],
+    queryFn: () => getAnalysisReport(selectedRunId),
+    enabled: Boolean(selectedRunId),
+  });
+  const activeCandidates = reportDetail.data?.candidates?.rows || bootstrap.data?.candidates?.rows || [];
+  const activeReport = reportDetail.data?.analysis || bootstrap.data?.latest_analysis || flattenedReports.find((report) => report.id === selectedRunId) || null;
+  const observedCodes = useMemo(
+    () => new Set((bootstrap.data?.watchlist?.batches || []).flatMap((batch) => batch.items.map((item) => item.code))),
+    [bootstrap.data],
+  );
+  const filteredCandidates = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return [...activeCandidates]
+      .filter((candidate) => !term || candidate.code.toLowerCase().includes(term) || candidate.name.toLowerCase().includes(term))
+      .sort((left, right) => candidateSortValue(right, sortKey) - candidateSortValue(left, sortKey));
+  }, [activeCandidates, search, sortKey]);
+  const rerunMutation = useMutation({
+    mutationFn: () => {
+      const config = activeReport?.config || bootstrap.data?.default_strategy;
+      return config ? runStrategy(config) : Promise.resolve(null);
+    },
+  });
+  const batchAddMutation = useMutation({
+    mutationFn: () =>
+      addWatchlistItems({
+        source_type: 'strategy',
+        source_label: '分析结果',
+        source_ref: activeReport?.id || selectedRunId || null,
+        items: filteredCandidates.slice(0, 50).map((candidate) => ({
+          code: candidate.code,
+          name: candidate.name,
+          entry_price: candidate.latest_price,
+          signal_score: candidate.signal_score,
+          signal_type: candidate.signal_type,
+          chart_url: candidate.chart_url,
+          reasons: candidate.reasons || [],
+          metrics: candidate.metrics || {},
+          hypothesis: (candidate.reasons || []).slice(0, 2).join('；') || '策略候选进入观察池',
+          invalidation_rule: '跌破最近平台或策略风险项重新命中',
+        })),
+      }),
+  });
+
+  useEffect(() => {
+    if (!selectedRunId && latestRunId) setSelectedRunId(latestRunId);
+  }, [latestRunId, selectedRunId]);
+
+  useEffect(() => {
+    setSelected(filteredCandidates[0] || null);
+  }, [selectedRunId, filteredCandidates]);
 
   if (bootstrap.isLoading) return <LoadingState label="读取候选结果" />;
+
+  const reportOptions = flattenedReports.length
+    ? flattenedReports.map((report) => ({
+        value: report.id,
+        label: `${formatDateTime(report.finished_at || report.started_at)} · ${report.summary?.candidate_count ?? 0} 个候选`,
+      }))
+    : latestRunId
+      ? [{ value: latestRunId, label: '最近一次分析结果' }]
+      : [{ value: 'none', label: '暂无历史报告' }];
 
   return (
     <div className="page-grid">
       <section className="surface pad">
         <div className="section-heading">
           <div>
-            <h2>候选结果</h2>
-            <p>支持列选择、多列排序、固定代码列和保存视图的表格框架已经就位。</p>
+            <h2>分析结果</h2>
+            <p>保留每次分析历史，候选列表和证据面板会随当前报告切换。</p>
           </div>
           <div className="rule-chip-grid">
-            <Badge tone="info">{candidates.length} 个候选</Badge>
+            <Badge tone="info">{filteredCandidates.length} 个候选</Badge>
             <Badge>{reports.data?.groups?.length || 0} 组报告</Badge>
           </div>
         </div>
-        {candidates.length ? (
-          <CandidateTable candidates={candidates} onSelect={setSelected} />
+        <div className="data-toolbar">
+          <Select
+            label="当前报告"
+            value={selectedRunId || reportOptions[0].value}
+            onChange={(value) => value !== 'none' && setSelectedRunId(value)}
+            options={reportOptions}
+          />
+          <label className="search-box">
+            <input placeholder="搜索代码 / 名称" value={search} onChange={(event) => setSearch(event.target.value)} />
+          </label>
+          <Select
+            label="排序"
+            value={sortKey}
+            onChange={(value) => setSortKey(value as SortKey)}
+            options={[
+              { value: 'signal_score', label: '总分' },
+              { value: 'rps20', label: 'RPS' },
+              { value: 'amount', label: '成交额' },
+              { value: 'pct_chg', label: '涨跌幅' },
+              { value: 'turnover_rate', label: '换手率' },
+              { value: 'risk', label: '风险分' },
+            ]}
+          />
+        </div>
+        <div className="grid-4">
+          <Metric label="当前报告" value={selectedRunId ? selectedRunId.slice(0, 12) : '暂无'} />
+          <Metric label="运行时间" value={activeReport ? formatDateTime(activeReport.finished_at || activeReport.started_at) : '暂无'} />
+          <Metric label="候选数量" value={String(activeCandidates.length)} />
+          <Metric label="策略" value={strategyLabel(activeReport?.config)} />
+        </div>
+        <div className="button-row" style={{ margin: '14px 0' }}>
+          <Button disabled={rerunMutation.isPending || !activeReport} onClick={() => rerunMutation.mutate()} variant="secondary">
+            重新运行
+          </Button>
+          <Button disabled={!filteredCandidates.length} onClick={() => exportCandidates(filteredCandidates)} variant="secondary">
+            导出
+          </Button>
+          <Button disabled={batchAddMutation.isPending || !filteredCandidates.length} onClick={() => batchAddMutation.mutate()} variant="primary">
+            加入观察池
+          </Button>
+        </div>
+        {reportDetail.isLoading ? (
+          <LoadingState label="读取历史报告" />
+        ) : filteredCandidates.length ? (
+          <CandidateTable candidates={filteredCandidates} observedCodes={observedCodes} onSelect={setSelected} />
         ) : (
           <EmptyState title="暂无候选" description="运行策略后，这里会展示候选表和结构化证据。" />
         )}
       </section>
-      <CandidateEvidencePanel candidate={selected || candidates[0] || null} />
+      <CandidateEvidencePanel candidate={selected || filteredCandidates[0] || null} />
     </div>
   );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="metric-pill">
+      <span className="metric-label">{label}</span>
+      <div className="metric-value">{value || '暂无'}</div>
+    </article>
+  );
+}
+
+function strategyLabel(config: unknown): string {
+  if (!config || typeof config !== 'object') return '未命名策略';
+  const record = config as Record<string, unknown>;
+  return String(record.name || record.preset_name || record.signal_mode || '未命名策略');
+}
+
+function candidateSortValue(candidate: Candidate, sortKey: SortKey): number {
+  if (sortKey === 'risk') {
+    const flags = Array.isArray(candidate.metrics?.risk_flags) ? candidate.metrics.risk_flags.length : 0;
+    return Number(candidate.metrics?.risk_score || flags || 0);
+  }
+  return Number(candidate[sortKey] || 0);
+}
+
+function exportCandidates(candidates: Candidate[]) {
+  const rows = candidates.map((candidate) => ({
+    code: candidate.code,
+    name: candidate.name,
+    signal_score: formatRatio(candidate.signal_score),
+    rps20: formatRatio(candidate.rps20),
+    amount: formatMoney(candidate.amount),
+    pct_chg: formatPercent(candidate.pct_chg),
+    turnover_rate: formatPercent(candidate.turnover_rate),
+    reasons: candidate.reasons?.join('；') || '',
+  }));
+  const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `analysis-candidates-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

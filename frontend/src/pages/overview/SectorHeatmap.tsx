@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
-import type { SectorHeatNode } from '../../api/market';
+import { useQuery } from '@tanstack/react-query';
+import { getSectorHeatmap, type SectorHeatNode } from '../../api/market';
 import { Segmented } from '../../design/Segmented';
 import { EmptyState } from '../../design/EmptyState';
 import { formatMoney, formatPercent, toNumber } from '../../utils/format';
+import { normalizeRows } from '../../utils/metrics';
 
 type HeatMode = 'concept' | 'industry' | 'money' | 'limit';
 
@@ -13,14 +15,15 @@ type SectorHeatmapProps = {
 
 export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
   const [mode, setMode] = useState<HeatMode>('concept');
-  const filtered = sectors
-    .filter((sector) => {
-      const type = sector.type || sector.sector_type;
-      if (mode === 'industry') return type === 'industry';
-      if (mode === 'concept') return type !== 'industry';
-      return true;
-    })
-    .slice(0, 36);
+  const queryType = mode === 'industry' ? 'industry' : 'concept';
+  const queryMetric = mode === 'money' ? 'moneyflow' : mode === 'limit' ? 'limit' : 'heat';
+  const heatmap = useQuery({
+    queryKey: ['sector-heatmap', queryType, queryMetric],
+    queryFn: () => getSectorHeatmap(queryType, queryMetric, 80),
+  });
+  const rows = normalizeRows<SectorHeatNode>(heatmap.data);
+  const sourceRows = rows.length || mode !== 'concept' ? rows : sectors;
+  const filtered = sourceRows.slice(0, 36);
   const option = useMemo(
     () => ({
       tooltip: {
@@ -29,9 +32,9 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
           return [
             `<strong>${raw.name || raw.sector_name || '--'}</strong>`,
             `涨跌幅：${formatPercent(raw.pct_chg)}`,
-            `净流入：${formatMoney(raw.net_amount)}`,
-            `涨停数：${raw.limit_up_count ?? '--'}`,
-            `领涨股：${raw.leader_name || raw.leader_code || '--'}`,
+            `主力净流入：${formatMoney(raw.net_amount)}`,
+            `涨停家数：${raw.limit_up_count ?? 0}`,
+            `领涨股：${raw.leader_name || raw.leader_code || '待同步'}`,
           ].join('<br/>');
         },
       },
@@ -67,16 +70,16 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
     <section className="surface pad">
       <div className="section-heading">
         <div>
-          <h2>板块热力图</h2>
-          <p>面积看成交额或数量，颜色看热度分，tooltip 展示资金、涨停扩散和领涨股。</p>
+          <h2>板块热力</h2>
+          <p>面积看成交额或数量，颜色看热度分，悬停可看资金、涨停扩散和领涨股。</p>
         </div>
         <Segmented
           value={mode}
           onChange={setMode}
           options={[
-            { value: 'concept', label: '概念' },
-            { value: 'industry', label: '行业' },
-            { value: 'money', label: '资金' },
+            { value: 'concept', label: '概念热度' },
+            { value: 'industry', label: '行业热度' },
+            { value: 'money', label: '资金流向' },
             { value: 'limit', label: '涨停扩散' },
           ]}
         />
@@ -96,7 +99,7 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
           </div>
         </>
       ) : (
-        <EmptyState title="板块热力等待同步" description="同步今日数据会写入 market_sector_daily，并在这里展示概念、行业、资金和涨停扩散。" />
+        <EmptyState title="板块热力暂未更新" description="请先同步今日数据；若已同步，说明当前类别暂无可展示样本。" />
       )}
     </section>
   );

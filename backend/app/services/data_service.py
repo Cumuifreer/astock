@@ -380,8 +380,8 @@ class DataService:
                    amount,
                    net_amount,
                    company_count,
-                   limit_up_count,
-                   strong_count,
+                   COALESCE(limit_up_count, 0) AS limit_up_count,
+                   COALESCE(strong_count, 0) AS strong_count,
                    leader_code,
                    leader_name,
                    heat_score,
@@ -410,6 +410,15 @@ class DataService:
             ORDER BY started_at, job_id, batch_key
             """,
             [task_id],
+        )
+        dag_order = {node["id"]: index for index, node in enumerate(DATA_UPDATE_DAG)}
+        rows.sort(
+            key=lambda row: (
+                row.get("started_at") or datetime.min,
+                dag_order.get(str(row.get("job_id") or ""), 10_000),
+                str(row.get("job_id") or ""),
+                str(row.get("batch_key") or ""),
+            )
         )
         for row in rows:
             row["payload"] = json.loads(row.pop("payload_json") or "{}")
@@ -1536,9 +1545,9 @@ class DataService:
 
     def _data_freshness(self) -> List[Dict[str, Any]]:
         rows = [
-            ("历史 K 线", self.db.scalar("SELECT MAX(date) FROM historical_bars")),
-            ("当日快照", self.db.scalar("SELECT MAX(date) FROM daily_snapshots")),
-            ("Tushare 增强", self.db.scalar("SELECT MAX(trade_date) FROM tushare_daily_basic")),
+            ("历史行情", self.db.scalar("SELECT MAX(date) FROM historical_bars")),
+            ("今日行情", self.db.scalar("SELECT MAX(date) FROM daily_snapshots")),
+            ("补充交易数据", self.db.scalar("SELECT MAX(trade_date) FROM tushare_daily_basic")),
             ("市场环境", self.db.scalar("SELECT MAX(date) FROM market_environment")),
             ("板块热力", self.db.scalar("SELECT MAX(trade_date) FROM market_sector_daily")),
         ]
@@ -1549,8 +1558,10 @@ class DataService:
             output.append(
                 {
                     "label": label,
+                    "latest_update": value,
                     "latest_date": value,
-                    "status": "fresh" if item_date and latest and item_date >= latest else "stale" if item_date else "missing",
+                    "status": "normal" if item_date and latest and item_date >= latest else "stale" if item_date else "missing",
+                    "message": "已同步至最近交易日" if item_date and latest and item_date >= latest else "需要同步今日数据" if item_date else "暂未同步",
                 }
             )
         return output

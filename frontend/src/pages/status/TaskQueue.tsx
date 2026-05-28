@@ -26,21 +26,40 @@ export function TaskQueue({ tasks, progressByTaskId = {}, title, emptyLabel = '�
       {tasks.map((task) => (
         <article className="rule-card" key={task.id}>
           <div className="rule-card-header">
-            <strong>{task.kind}</strong>
-            <Badge tone={task.status === 'failed' ? 'risk' : task.status === 'running' ? 'info' : 'good'}>{task.status}</Badge>
+            <strong>{kindLabel(task.kind)}</strong>
+            <Badge tone={task.status === 'failed' ? 'risk' : task.status === 'running' ? 'info' : 'good'}>{statusLabel(task.status)}</Badge>
           </div>
           <p className="card-copy">
-            {task.stage || '等待阶段'} · {task.source || '本地仓库'} · 心跳 {formatDateTime(task.updated_at)}
+            {task.stage || '等待阶段'} · 最近心跳 {formatDateTime(task.updated_at)}
           </p>
-          <Progress label={`${task.kind} ${task.status}`} state={task.status} value={taskProgressValue(task, progressByTaskId[task.id])} />
+          <Progress label={`${kindLabel(task.kind)} ${statusLabel(task.status)}`} state={task.status} value={taskProgressValue(task, progressByTaskId[task.id])} />
           <div className="rule-chip-grid">
-            <Badge>processed {task.processed}</Badge>
-            <Badge>success {task.success}</Badge>
-            <Badge>failed {task.failed}</Badge>
-            <Badge>skipped {task.skipped}</Badge>
+            <Badge>已处理 {task.processed}</Badge>
+            <Badge>成功 {task.success}</Badge>
+            <Badge>失败 {task.failed}</Badge>
+            <Badge>跳过 {task.skipped}</Badge>
           </div>
         </article>
       ))}
     </div>
   );
+}
+
+function kindLabel(kind?: string | null) {
+  if (kind === 'update') return '同步今日数据';
+  if (kind === 'analyze') return '运行策略';
+  if (kind === 'backtest') return '回测';
+  if (kind === 'intraday') return '盘中采样';
+  if (kind === 'brief') return '市场简报';
+  return kind || '任务';
+}
+
+function statusLabel(status?: string | null) {
+  if (status === 'queued') return '排队中';
+  if (status === 'running') return '运行中';
+  if (status === 'completed_full') return '已完成';
+  if (status === 'completed_partial') return '部分完成';
+  if (status === 'failed') return '失败';
+  if (status === 'skipped') return '已跳过';
+  return status || '未知';
 }

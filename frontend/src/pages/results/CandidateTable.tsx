@@ -7,10 +7,11 @@ import { formatMoney, formatPercent, formatRatio } from '../../utils/format';
 
 type CandidateTableProps = {
   candidates: Candidate[];
+  observedCodes: Set<string>;
   onSelect: (candidate: Candidate) => void;
 };
 
-export function CandidateTable({ candidates, onSelect }: CandidateTableProps) {
+export function CandidateTable({ candidates, observedCodes, onSelect }: CandidateTableProps) {
   const columns = useMemo<Array<ColumnDef<Candidate, unknown>>>(
     () => [
       { header: '排名', accessorKey: 'rank', cell: ({ row }) => <strong>{row.original.rank}</strong> },
@@ -26,11 +27,32 @@ export function CandidateTable({ candidates, onSelect }: CandidateTableProps) {
       { header: '涨跌幅', accessorKey: 'pct_chg', cell: ({ row }) => formatPercent(row.original.pct_chg) },
       { header: '成交额', accessorKey: 'amount', cell: ({ row }) => formatMoney(row.original.amount) },
       { header: 'RPS20', accessorKey: 'rps20', cell: ({ row }) => formatRatio(row.original.rps20) },
-      { header: '信号', accessorKey: 'signal_type' },
+      {
+        header: '标签',
+        cell: ({ row }) => (
+          <div className="rule-chip-grid">
+            {candidateTags(row.original, observedCodes.has(row.original.code)).map((tag) => (
+              <Badge key={tag} tone={tag === '风险' ? 'risk' : tag === '已观察' ? 'watch' : 'good'}>
+                {tag}
+              </Badge>
+            ))}
+          </div>
+        ),
+      },
     ],
-    [onSelect],
+    [observedCodes, onSelect],
   );
   return (
     <DataTable data={candidates} columns={columns} />
   );
+}
+
+function candidateTags(candidate: Candidate, observed: boolean): string[] {
+  const tags: string[] = [];
+  if (Number(candidate.signal_score || 0) >= 80 || Number(candidate.rps20 || 0) >= 85) tags.push('强势');
+  if (Number(candidate.metrics?.volume_ratio || 0) >= 1.5 || Number(candidate.amount || 0) >= 100000000) tags.push('放量');
+  if (candidate.metrics?.strong_theme_name || candidate.metrics?.theme_sync_score) tags.push('题材');
+  if (Array.isArray(candidate.metrics?.risk_flags) ? candidate.metrics.risk_flags.length : Number(candidate.amplitude || 0) >= 8) tags.push('风险');
+  if (observed) tags.push('已观察');
+  return tags.length ? tags.slice(0, 4) : ['观察'];
 }

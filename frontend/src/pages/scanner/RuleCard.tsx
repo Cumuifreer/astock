@@ -2,6 +2,7 @@ import type { IndicatorDefinition, StrategyRule } from '../../types';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
 import { CheckTile } from '../../design/CheckTile';
+import { Select } from '../../design/Select';
 import {
   defaultOperatorForIndicator,
   defaultValueForIndicator,
@@ -22,6 +23,13 @@ const actionTone: Record<string, 'info' | 'good' | 'watch' | 'neutral'> = {
   score: 'good',
   risk: 'watch',
   display: 'neutral',
+};
+
+const statusLabel: Record<string, string> = {
+  executable: '可执行',
+  display_only: '仅展示',
+  planned: '待接入',
+  partial: '部分可用',
 };
 
 type RuleCardProps = {
@@ -60,50 +68,47 @@ export function RuleCard({ rule, indicator, onPatch, onRemove }: RuleCardProps) 
     <article className="rule-card">
       <div className="rule-card-header">
         <strong>{name}</strong>
-        <Badge tone={actionTone[rule.action] || 'neutral'}>{rule.action}</Badge>
+        <Badge tone={actionTone[rule.action] || 'neutral'}>{ruleActionMeta[rule.action]?.label || '仅展示'}</Badge>
       </div>
       <p className="card-copy">
-        {indicator ? ruleSummary(rule, indicator) : `${operator} ${rule.value ?? ''}`} · 缺失策略：{rule.missing_policy || 'neutral'} · 权重：{rule.weight ?? '--'}
+        {indicator ? ruleSummary(rule, indicator) : `${operator} ${rule.value ?? ''}`} · 缺失处理：{missingPolicyOptions.find((item) => item.id === rule.missing_policy)?.label || '缺失中性'} · 权重：{rule.weight ?? '未设置'}
       </p>
       <div className="rule-chip-grid">
         {indicator?.coverage_group ? <Badge>{indicator.coverage_group}</Badge> : null}
-        {indicator?.data_status ? <Badge>{indicator.data_status}</Badge> : null}
+        {indicator?.data_status ? <Badge>{statusLabel[indicator.data_status] || indicator.data_status}</Badge> : null}
         <CheckTile checked={rule.enabled !== false} label={rule.enabled === false ? '停用' : '启用'} onCheckedChange={(checked) => onPatch({ enabled: checked })} />
       </div>
       <div className="rule-editor">
         <label>
           <span>动作</span>
-          <select value={action} onChange={(event) => applyAction(event.target.value as StrategyRule['action'])}>
-            {actions.map((item) => (
-              <option key={item} value={item}>
-                {ruleActionMeta[item].label}
-              </option>
-            ))}
-          </select>
+          <Select
+            label="动作"
+            value={action}
+            onChange={(value) => applyAction(value as StrategyRule['action'])}
+            options={actions.map((item) => ({ value: item, label: ruleActionMeta[item].label }))}
+          />
         </label>
         {!displayOnly ? (
           <>
             <label>
               <span>条件</span>
-              <select value={operator} onChange={(event) => onPatch({ operator: event.target.value as StrategyRule['operator'] })}>
-                {operators.map((item) => (
-                  <option key={item} value={item}>
-                    {ruleOperatorMeta[item]?.label || item}
-                  </option>
-                ))}
-              </select>
+              <Select
+                label="条件"
+                value={operator}
+                onChange={(value) => onPatch({ operator: value as StrategyRule['operator'] })}
+                options={operators.map((item) => ({ value: item, label: ruleOperatorMeta[item]?.label || item }))}
+              />
             </label>
             {operator !== 'is_true' ? (
               <label>
                 <span>{operator === 'between' ? '下限' : '数值'}</span>
                 {useChoiceValue ? (
-                  <select value={String(rule.value ?? choiceOptions[0]?.value ?? '')} onChange={(event) => onPatch({ value: event.target.value })}>
-                    {choiceOptions.map((option) => (
-                      <option key={String(option.value)} value={String(option.value)}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Select
+                    label="数值"
+                    value={String(rule.value ?? choiceOptions[0]?.value ?? '')}
+                    onChange={(value) => onPatch({ value })}
+                    options={choiceOptions.map((option) => ({ value: String(option.value), label: option.label }))}
+                  />
                 ) : (
                   <input
                     type={numeric ? 'number' : 'text'}
@@ -141,13 +146,12 @@ export function RuleCard({ rule, indicator, onPatch, onRemove }: RuleCardProps) 
         ) : null}
         <label>
           <span>缺失策略</span>
-          <select value={rule.missing_policy || 'neutral'} onChange={(event) => onPatch({ missing_policy: event.target.value })}>
-            {missingPolicyOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <Select
+            label="缺失策略"
+            value={rule.missing_policy || 'neutral'}
+            onChange={(value) => onPatch({ missing_policy: value })}
+            options={missingPolicyOptions.map((option) => ({ value: option.id, label: option.label }))}
+          />
         </label>
       </div>
       <div className="rule-card-actions">

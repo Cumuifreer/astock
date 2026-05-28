@@ -10,10 +10,10 @@ import type {
 import { formatMoney, formatNumber } from './format';
 
 export const ruleActionMeta: Record<RuleAction, { label: string; verb: string; note: string }> = {
-  filter: { label: '硬筛', verb: '必须满足', note: '不满足直接剔除' },
+  filter: { label: '硬性筛选', verb: '必须满足', note: '不满足直接剔除' },
   score: { label: '加分', verb: '命中加分', note: '参与排序分数' },
-  risk: { label: '风险', verb: '命中扣分', note: '只做风险折减' },
-  display: { label: '展示', verb: '候选展示', note: '不参与决策' },
+  risk: { label: '风险控制', verb: '命中扣分', note: '只做风险折减' },
+  display: { label: '仅展示', verb: '候选展示', note: '不参与决策' },
 };
 
 export const ruleOperatorMeta: Record<RuleOperator, { label: string; summary: string }> = {
@@ -30,7 +30,7 @@ export const ruleOperatorMeta: Record<RuleOperator, { label: string; summary: st
 
 export const missingPolicyOptions = [
   { id: 'neutral', label: '缺失中性' },
-  { id: 'skip', label: '缺失跳过' },
+  { id: 'skip', label: '缺失剔除' },
   { id: 'keep', label: '缺失保留' },
   { id: 'allow', label: '缺失允许' },
 ];
@@ -77,7 +77,7 @@ export function indicatorParameterKeys(indicator: IndicatorDefinition): string[]
   return [];
 }
 
-export function indicatorParameterScope(indicator: IndicatorDefinition): 'Universe' | 'Advanced' | 'Strategy' {
+export function indicatorParameterScope(indicator: IndicatorDefinition): '股票池' | '高级参数' | '策略参数' {
   const universeKeys = new Set([
     'min_price',
     'min_amount',
@@ -94,8 +94,8 @@ export function indicatorParameterScope(indicator: IndicatorDefinition): 'Univer
     'exclude_star_board',
   ]);
   const keys = indicatorParameterKeys(indicator);
-  if (keys.some((key) => universeKeys.has(key))) return 'Universe';
-  return keys.length ? 'Advanced' : 'Strategy';
+  if (keys.some((key) => universeKeys.has(key))) return '股票池';
+  return keys.length ? '高级参数' : '策略参数';
 }
 
 export function supportedRuleActions(indicator: IndicatorDefinition): RuleAction[] {
@@ -203,8 +203,9 @@ export function strategyRuleSelectLabel(rule: StrategyRule, indicatorById: Map<s
 
 export function strategySummary(strategy: StrategyConfig | null | undefined) {
   if (!strategy) return '尚未加载策略';
+  const modeLabel = strategy.analysis_mode === 'strict' ? '严格模式' : strategy.analysis_mode === 'score' ? '评分模式' : '综合模式';
   const bits = [
-    strategy.analysis_mode || 'score',
+    modeLabel,
     `候选 ${formatNumber(strategy.candidate_limit || 0, 0)}`,
     `成交额 ${formatMoney(strategy.min_amount)}`,
   ];

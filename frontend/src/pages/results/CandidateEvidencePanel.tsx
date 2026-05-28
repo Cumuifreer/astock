@@ -15,7 +15,7 @@ export function CandidateEvidencePanel({ candidate }: CandidateEvidencePanelProp
       candidate
         ? addWatchlistItems({
             source_type: 'strategy',
-            source_label: 'Scanner 候选',
+            source_label: '策略选股候选',
             source_ref: candidate.code,
             items: [
               {
@@ -38,7 +38,7 @@ export function CandidateEvidencePanel({ candidate }: CandidateEvidencePanelProp
       <section className="surface pad">
         <div className="section-heading">
           <div>
-            <h2>候选证据面板</h2>
+            <h2>选股解释</h2>
             <p>选择候选后展示为什么入选、买点质量、风险和可操作动作。</p>
           </div>
         </div>
@@ -50,7 +50,7 @@ export function CandidateEvidencePanel({ candidate }: CandidateEvidencePanelProp
   const matchedRules = ruleResults
     .filter((item) => item.matched)
     .slice(0, 6)
-    .map((item) => `${item.indicator_name || item.indicator_id}: ${item.value ?? '--'}${item.adjustment ? ` (${item.adjustment})` : ''}`);
+    .map((item) => `${item.indicator_name || item.indicator_id}: ${item.value ?? '未记录'}${item.adjustment ? ` (${item.adjustment})` : ''}`);
   const riskRules = ruleResults
     .filter((item) => item.action === 'risk' || item.missing || item.reason)
     .slice(0, 6)
@@ -64,7 +64,7 @@ export function CandidateEvidencePanel({ candidate }: CandidateEvidencePanelProp
     <section className="surface pad">
       <div className="section-heading">
         <div>
-          <h2>{candidate.name} 证据面板</h2>
+          <h2>{candidate.name} 选股解释</h2>
           <p>
             {candidate.code} · 总分 {formatRatio(candidate.signal_score)}
           </p>
@@ -73,7 +73,6 @@ export function CandidateEvidencePanel({ candidate }: CandidateEvidencePanelProp
       </div>
       <div className="grid-2">
         <EvidenceBlock title="为什么入选" items={candidate.reasons?.length ? candidate.reasons : matchedRules} />
-        <EvidenceBlock title="规则命中" items={matchedRules.length ? matchedRules : ['本次报告未返回逐条规则结果']} />
         <EvidenceBlock
           title="买点质量"
           items={[
@@ -84,14 +83,21 @@ export function CandidateEvidencePanel({ candidate }: CandidateEvidencePanelProp
           ]}
         />
         <EvidenceBlock
-          title="风险"
+          title="风险提示"
           items={(riskRules.length ? riskRules : [
             `换手率 ${formatPercent(candidate.turnover_rate)}`,
             `振幅 ${formatPercent(candidate.amplitude)}`,
             `流通市值 ${formatMoney(candidate.float_market_value)}`,
           ])}
         />
-        <EvidenceBlock title="数据来源" items={sources.length ? sources : ['暂无结构化来源']} />
+        <EvidenceBlock
+          title="后续观察"
+          items={[
+            '建议观察 3 个交易日',
+            '失效条件：跌破 5 日线或放量跌破平台',
+            '复盘指标：T+1 / T+3 / T+5 收益',
+          ]}
+        />
       </div>
       <div className="button-row" aria-label="可操作动作" style={{ marginTop: 16 }}>
         <Button disabled={addMutation.isPending} onClick={() => addMutation.mutate()} variant="primary">
@@ -99,10 +105,20 @@ export function CandidateEvidencePanel({ candidate }: CandidateEvidencePanelProp
         </Button>
         {candidate.chart_url ? (
           <Button onClick={() => window.open(candidate.chart_url, '_blank', 'noopener,noreferrer')} variant="secondary">
-            打开 K 线
+            打开K线
           </Button>
         ) : null}
+        <Button onClick={() => window.alert('AI 解读入口已保留：会基于结构化指标、命中规则、风险项、市场状态和板块热力生成摘要。')} variant="secondary">
+          AI 解读
+        </Button>
       </div>
+      <details className="developer-details">
+        <summary>开发者详情</summary>
+        <div className="grid-2" style={{ marginTop: 12 }}>
+          <EvidenceBlock title="数据来源" items={sources.length ? sources : ['暂无结构化来源']} />
+          <EvidenceBlock title="规则明细" items={matchedRules.length ? matchedRules : ['这次分析缺少规则明细，可重新运行策略生成完整解释']} />
+        </div>
+      </details>
     </section>
   );
 }

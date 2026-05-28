@@ -10,22 +10,20 @@ type MarketHeroProps = {
 
 export function MarketHero({ state, tradeDate }: MarketHeroProps) {
   const score = typeof state?.score === 'number' ? state.score : null;
-  const label = state?.label || '等待市场状态';
+  const label = state?.label || '待同步';
   const riskTone = state?.risk_level === '高' || state?.risk_level === '极高' ? 'risk' : state?.risk_level === '中' ? 'watch' : 'good';
   return (
     <section className="surface hero-panel">
       <div>
         <div className="hero-kicker">{tradeDate || state?.trade_date || '最近交易日'}</div>
-        <h2 className="hero-title">
-          {label}，建议仓位 {state?.suggested_position || '等待数据'}
-        </h2>
+        <h2 className="hero-title">今日市场：{label}</h2>
         <p className="hero-copy">
-          {state?.headline || '完成同步今日数据后，系统会基于市场宽度、指数趋势、成交额热度、涨跌停温度和板块热力生成可解释的市场判断。'}
+          {state?.headline || '一句话判断：完成同步今日数据后，系统会基于市场宽度、指数趋势、成交额热度、涨跌停温度和板块热力生成可解释的市场判断。'}
         </p>
         <div className="metric-row" style={{ marginTop: 18 }}>
           <div className="metric-pill">
-            <span className="metric-label">MarketState</span>
-            <div className="metric-value">{score === null ? '--' : formatNumber(score, 0)}</div>
+            <span className="metric-label">市场评分</span>
+            <div className="metric-value">{score === null ? '待同步' : formatNumber(score, 0)}</div>
           </div>
           <div className="metric-pill">
             <span className="metric-label">风险等级</span>
@@ -35,7 +33,7 @@ export function MarketHero({ state, tradeDate }: MarketHeroProps) {
           </div>
           <div className="metric-pill">
             <span className="metric-label">仓位建议</span>
-            <div className="metric-value">{state?.suggested_position || '--'}</div>
+            <div className="metric-value">{state?.suggested_position || '待同步'}</div>
           </div>
         </div>
       </div>

@@ -15,6 +15,12 @@ type FactorPickerProps = {
 
 type PickerMode = 'supplement' | 'built-in' | 'all';
 const initialVisibleCount = 36;
+const statusLabel: Record<string, string> = {
+  executable: '可执行',
+  display_only: '仅展示',
+  planned: '待接入',
+  partial: '部分可用',
+};
 
 export function FactorPicker({ indicators, onAddRule, onEditParameter }: FactorPickerProps) {
   const [query, setQuery] = useState('');
@@ -52,7 +58,7 @@ export function FactorPicker({ indicators, onAddRule, onEditParameter }: FactorP
       <div className="section-heading">
         <div>
           <h2>指标搜索</h2>
-          <p>仅把真实可执行、合同允许的指标放进规则画布。</p>
+          <p>所有可用指标按分类展示，启用后会进入规则配置。</p>
         </div>
       </div>
       <Segmented
@@ -86,10 +92,10 @@ export function FactorPicker({ indicators, onAddRule, onEditParameter }: FactorP
             <article className="rule-card" key={indicator.id}>
               <div className="rule-card-header">
                 <strong>{indicator.name}</strong>
-                <Badge tone={indicator.data_status === 'executable' ? 'good' : 'neutral'}>{indicator.data_status || 'unknown'}</Badge>
+                <Badge tone={indicator.data_status === 'executable' ? 'good' : 'neutral'}>{statusLabel[indicator.data_status || ''] || '待确认'}</Badge>
               </div>
               <p className="card-copy">
-                {indicator.group_label || indicator.category_id || '未分类'} · {indicator.source || '本地指标'}
+                {indicator.group_label || indicator.category_id || '未分类'}
               </p>
               <p className="card-copy">{indicator.description || indicator.formula || '暂无说明'}</p>
               {builtIn ? (

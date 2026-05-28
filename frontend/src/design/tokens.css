@@ -692,6 +692,17 @@ button {
   cursor: pointer;
 }
 
+.developer-details {
+  display: block;
+  margin-top: var(--space-4);
+}
+
+.developer-details summary {
+  cursor: pointer;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
 .rule-editor {
   display: grid;
   gap: var(--space-3);

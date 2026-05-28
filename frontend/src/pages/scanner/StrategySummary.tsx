@@ -20,7 +20,7 @@ export function StrategySummary({ name, config, rules }: StrategySummaryProps) {
           <h2>策略摘要</h2>
           <p>{name}</p>
         </div>
-        <Badge tone="info">{config.analysis_mode || 'score'}</Badge>
+        <Badge tone="info">{modeLabel(config.analysis_mode)}</Badge>
       </div>
       <div className="list-stack">
         <SummaryRow label="硬筛" value={filters} />
@@ -37,6 +37,12 @@ export function StrategySummary({ name, config, rules }: StrategySummaryProps) {
       </div>
     </section>
   );
+}
+
+function modeLabel(mode?: string | null) {
+  if (mode === 'strict') return '严格模式';
+  if (mode === 'score') return '评分模式';
+  return '综合模式';
 }
 
 function SummaryRow({ label, value }: { label: string; value: number }) {

@@ -20,7 +20,7 @@ test('scanner page is organized as a professional rule canvas', () => {
   assert.match(scannerSource, /UniversePanel/);
   assert.match(scannerSource, /RuleCanvas/);
   assert.match(scannerSource, /StrategySummary/);
-  for (const label of ['Universe', 'Filters', 'Scores', 'Risks', 'Display', 'Resonance', 'Advanced']) {
+  for (const label of ['股票池', '硬性筛选', '评分因子', '风险控制', '展示字段', '组合加分', '高级参数']) {
     assert.match(scannerSource, new RegExp(label));
   }
   assert.doesNotMatch(scannerSource, /StrategyRuleBuilder/);

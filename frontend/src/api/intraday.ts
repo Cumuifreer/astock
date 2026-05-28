@@ -2,18 +2,26 @@ import type { IntradayTimeline } from '../types';
 import { post, request } from './client';
 
 export type IntradayCandidate = {
+  rank?: number;
   code: string;
   name?: string;
   pct_chg?: number | null;
+  amount?: number | null;
   amount_speed?: number | null;
   intraday_amount_speed?: number | null;
   amount_delta?: number | null;
+  intraday_drawdown?: number | null;
+  open_strength?: number | null;
   theme?: string | null;
   theme_sync_score?: number | null;
+  strong_theme_name?: string | null;
+  strong_theme_heat?: number | null;
   score?: number | null;
   signal_tags?: string[];
   risk_tags?: string[];
   reasons?: string[];
+  chart_url?: string | null;
+  metrics?: Record<string, unknown>;
 };
 
 export type ThemePulse = {

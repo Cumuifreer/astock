@@ -1,5 +1,6 @@
 import type {
   AnalysisReportsResponse,
+  AnalysisReportDetail,
   Bootstrap,
   IndicatorLibrary,
   StrategyConfig,
@@ -24,8 +25,8 @@ export function getAnalysisReports(): Promise<AnalysisReportsResponse> {
   return request<AnalysisReportsResponse>('/api/analysis/reports');
 }
 
-export function getAnalysisReport(id: string): Promise<Record<string, unknown>> {
-  return request<Record<string, unknown>>(`/api/analysis/reports/${encodeURIComponent(id)}?limit=300`);
+export function getAnalysisReport(id: string): Promise<AnalysisReportDetail> {
+  return request<AnalysisReportDetail>(`/api/analysis/reports/${encodeURIComponent(id)}?limit=300`);
 }
 
 export function saveStrategy(payload: Record<string, unknown>): Promise<{ preset: StrategyPreset }> {

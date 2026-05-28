@@ -1997,6 +1997,8 @@ class UpdateService:
         finished_at: Optional[datetime] = None,
     ) -> None:
         now = datetime.utcnow()
+        existing = self.db.query("SELECT started_at FROM update_checkpoints WHERE id = ?", [f"{task_id}:{job_id}:{batch_key}"])
+        existing_started_at = existing[0].get("started_at") if existing else None
         self.db.upsert(
             "update_checkpoints",
             [
@@ -2009,7 +2011,7 @@ class UpdateService:
                     "batch_key": batch_key,
                     "status": status,
                     "rows_written": rows_written,
-                    "started_at": started_at or now,
+                    "started_at": started_at or existing_started_at or now,
                     "finished_at": finished_at if finished_at is not None else (now if status in {"completed", "skipped", "partial", "failed"} else None),
                     "error_message": error_message,
                     "payload_json": payload or {},
@@ -2210,7 +2212,69 @@ class UpdateService:
             rows.extend(frame.to_dict("records"))
         if not rows:
             return 0
+        self._attach_sector_breadth_counts(rows)
         return self.db.upsert("market_sector_daily", rows, ["sector_code", "sector_type", "trade_date"])
+
+    def _attach_sector_breadth_counts(self, rows: List[Dict[str, Any]]) -> None:
+        by_date: Dict[date, List[Dict[str, Any]]] = {}
+        for row in rows:
+            trade_date = _date_option(row.get("trade_date"))
+            if trade_date:
+                by_date.setdefault(trade_date, []).append(row)
+        for trade_date, dated_rows in by_date.items():
+            sector_codes = sorted({str(row.get("sector_code")) for row in dated_rows if row.get("sector_code")})
+            if not sector_codes:
+                continue
+            placeholders = ",".join(["?"] * len(sector_codes))
+            params: List[Any] = [trade_date, trade_date, trade_date, *sector_codes]
+            count_rows = self.db.query(
+                f"""
+                SELECT m.con_code AS sector_code,
+                       COUNT(DISTINCT CASE WHEN UPPER(COALESCE(l.limit_type, '')) LIKE 'U%' THEN m.code END) AS limit_up_count,
+                       COUNT(DISTINCT CASE WHEN COALESCE(s.pct_chg, h.pct_chg) >= 5 THEN m.code END) AS strong_count
+                FROM tushare_ths_member m
+                LEFT JOIN tushare_limit_list_d l
+                  ON l.code = m.code AND l.trade_date = ?
+                LEFT JOIN daily_snapshots s
+                  ON s.code = m.code AND s.date = ?
+                LEFT JOIN historical_bars h
+                  ON h.code = m.code AND h.date = ?
+                WHERE m.con_code IN ({placeholders})
+                GROUP BY m.con_code
+                """,
+                params,
+            )
+            counts = {str(row["sector_code"]): row for row in count_rows}
+            leader_rows = self.db.query(
+                f"""
+                SELECT m.con_code AS sector_code,
+                       m.code,
+                       COALESCE(s.name, b.name, m.name) AS name,
+                       COALESCE(s.pct_chg, h.pct_chg) AS pct_chg
+                FROM tushare_ths_member m
+                LEFT JOIN daily_snapshots s
+                  ON s.code = m.code AND s.date = ?
+                LEFT JOIN historical_bars h
+                  ON h.code = m.code AND h.date = ?
+                LEFT JOIN stock_basic b
+                  ON b.code = m.code
+                WHERE m.con_code IN ({placeholders})
+                  AND COALESCE(s.pct_chg, h.pct_chg) IS NOT NULL
+                ORDER BY m.con_code, COALESCE(s.pct_chg, h.pct_chg) DESC
+                """,
+                [trade_date, trade_date, *sector_codes],
+            )
+            leaders: Dict[str, Dict[str, Any]] = {}
+            for leader in leader_rows:
+                leaders.setdefault(str(leader["sector_code"]), leader)
+            for row in dated_rows:
+                code = str(row.get("sector_code") or "")
+                count = counts.get(code, {})
+                leader = leaders.get(code, {})
+                row["limit_up_count"] = int(count.get("limit_up_count") or 0)
+                row["strong_count"] = int(count.get("strong_count") or 0)
+                row["leader_code"] = row.get("leader_code") or leader.get("code")
+                row["leader_name"] = row.get("leader_name") or leader.get("name")
 
     def _update_tushare_daily_basic(
         self,

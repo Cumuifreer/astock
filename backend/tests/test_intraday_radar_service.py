@@ -263,6 +263,84 @@ def test_intraday_radar_uses_previous_snapshot_deltas(tmp_path):
     assert row["metrics"]["price_change"] > 0
 
 
+def test_intraday_boards_flatten_metrics_and_compute_theme_sync(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert("historical_bars", [_bar("000001.SZ", day, close=10.0) for day in range(1, 22)], ["code", "date"])
+    db.upsert(
+        "tushare_ths_member",
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "con_code": "885800.TI",
+                "con_name": "超级电容",
+                "weight": None,
+                "in_date": "2020-01-01",
+                "out_date": None,
+                "is_new": "Y",
+                "source": "test",
+                "updated_at": "2026-05-21T09:00:00",
+            }
+        ],
+        ["code", "con_code"],
+    )
+    db.upsert(
+        "market_sector_daily",
+        [
+            {
+                "sector_code": "885800.TI",
+                "sector_name": "超级电容",
+                "sector_type": "concept",
+                "trade_date": "2026-05-21",
+                "pct_chg": 2.1,
+                "amount": 1_000_000_000.0,
+                "net_amount": 120_000_000.0,
+                "company_count": 20,
+                "limit_up_count": 2,
+                "strong_count": 6,
+                "leader_code": "000001.SZ",
+                "leader_name": "平安银行",
+                "heat_score": 72.0,
+                "source": "test",
+                "updated_at": "2026-05-21T10:00:00",
+            }
+        ],
+        ["sector_code", "sector_type", "trade_date"],
+    )
+
+    service = IntradayRadarService(db)
+    first = datetime(2026, 5, 21, 9, 35)
+    second = datetime(2026, 5, 21, 10, 0)
+    base_snapshot = {
+        "code": "000001.SZ",
+        "name": "平安银行",
+        "latest_price": 10.4,
+        "pct_chg": 4.0,
+        "high": 10.45,
+        "low": 9.9,
+        "volume": 1_000_000.0,
+        "amount": 10_000_000.0,
+        "source": "test",
+    }
+    service.record_snapshots(pd.DataFrame([base_snapshot]), sample_at=first, trade_date="2026-05-21")
+    service.record_snapshots(
+        pd.DataFrame([{**base_snapshot, "latest_price": 10.5, "high": 10.55, "amount": 60_000_000.0}]),
+        sample_at=second,
+        trade_date="2026-05-21",
+    )
+
+    boards = service.boards(sample_at=second, limit=10)
+    row = boards["anomaly"][0]
+
+    assert row["intraday_amount_speed"] is not None
+    assert row["amount_delta"] == 50_000_000.0
+    assert row["theme_sync_score"] == 0.72
+    assert row["strong_theme_name"] == "超级电容"
+    assert row["metrics"]["theme_sync_score"] == 0.72
+
+
 def test_intraday_timeline_tracks_candidate_across_samples(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

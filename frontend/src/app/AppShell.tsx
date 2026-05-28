@@ -14,7 +14,7 @@ import { usePolling } from '../hooks/usePolling';
 import { useStrategyDraft } from '../hooks/useStrategyDraft';
 import { composeStrategyConfig } from '../utils/strategy';
 
-const productNavigationLabels = ['市场总览', 'Scanner', '分析结果', '盘中雷达', '观察池', '回测实验室', '数据中心', '任务状态'];
+const productNavigationLabels = ['市场总览', '策略选股', '分析结果', '盘中雷达', '观察池', '回测', '数据中心', '任务状态'];
 
 export function AppShell() {
   const [activeRoute, setActiveRoute] = useState<RouteId>(() => parseRouteHash(window.location.hash));
