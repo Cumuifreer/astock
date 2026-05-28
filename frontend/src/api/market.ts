@@ -46,6 +46,7 @@ export type DataFreshnessItem = {
   label?: string;
   capability?: string;
   latest_update?: string | null;
+  latest_date?: string | null;
   status?: string;
   description?: string;
 };

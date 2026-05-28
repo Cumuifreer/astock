@@ -1,6 +1,7 @@
 import type { IndicatorDefinition, StrategyRule } from '../../types';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
+import { CheckTile } from '../../design/CheckTile';
 import {
   defaultOperatorForIndicator,
   defaultValueForIndicator,
@@ -67,10 +68,7 @@ export function RuleCard({ rule, indicator, onPatch, onRemove }: RuleCardProps) 
       <div className="rule-chip-grid">
         {indicator?.coverage_group ? <Badge>{indicator.coverage_group}</Badge> : null}
         {indicator?.data_status ? <Badge>{indicator.data_status}</Badge> : null}
-        <label className="mini-toggle">
-          <input type="checkbox" checked={rule.enabled !== false} onChange={(event) => onPatch({ enabled: event.target.checked })} />
-          {rule.enabled === false ? '停用' : '启用'}
-        </label>
+        <CheckTile checked={rule.enabled !== false} label={rule.enabled === false ? '停用' : '启用'} onCheckedChange={(checked) => onPatch({ enabled: checked })} />
       </div>
       <div className="rule-editor">
         <label>

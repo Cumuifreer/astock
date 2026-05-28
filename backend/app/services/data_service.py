@@ -815,6 +815,30 @@ class DataService:
         row.pop("queue_order", None)
         return row
 
+    def task_runs(self, statuses: Optional[List[str]] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        clean_statuses = [str(status).strip() for status in statuses or [] if str(status).strip()]
+        params: List[Any] = []
+        where = ""
+        if clean_statuses:
+            where = f"WHERE status IN ({', '.join(['?'] * len(clean_statuses))})"
+            params.extend(clean_statuses)
+        params.append(max(1, min(int(limit or 50), 200)))
+        rows = self.db.query(
+            f"""
+            SELECT *
+            FROM task_runs
+            {where}
+            ORDER BY queue_order NULLS LAST, started_at DESC, updated_at DESC, id
+            LIMIT ?
+            """,
+            params,
+        )
+        for row in rows:
+            row["summary"] = json.loads(row.pop("summary_json") or "{}")
+            row.pop("payload_json", None)
+            row.pop("queue_order", None)
+        return rows
+
     def latest_daily_brief(self) -> Optional[Dict[str, Any]]:
         rows = self.db.query("SELECT * FROM daily_briefs ORDER BY generated_at DESC LIMIT 1")
         if not rows:

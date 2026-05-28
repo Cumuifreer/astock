@@ -6,7 +6,7 @@ import type {
   StrategyPreset,
   StrategyVersion,
 } from '../types';
-import { post, request } from './client';
+import { del, post, request } from './client';
 
 export function getBootstrap(): Promise<Bootstrap> {
   return request<Bootstrap>('/api/bootstrap');
@@ -30,6 +30,14 @@ export function getAnalysisReport(id: string): Promise<Record<string, unknown>> 
 
 export function saveStrategy(payload: Record<string, unknown>): Promise<{ preset: StrategyPreset }> {
   return post<{ preset: StrategyPreset }>('/api/strategies', payload);
+}
+
+export function duplicateStrategy(id: string): Promise<{ preset: StrategyPreset }> {
+  return post<{ preset: StrategyPreset }>(`/api/strategies/${encodeURIComponent(id)}/duplicate`, {});
+}
+
+export function deleteStrategy(id: string): Promise<{ ok: boolean }> {
+  return del<{ ok: boolean }>(`/api/strategies/${encodeURIComponent(id)}`);
 }
 
 export function getStrategyVersions(id: string): Promise<{ rows: StrategyVersion[] }> {

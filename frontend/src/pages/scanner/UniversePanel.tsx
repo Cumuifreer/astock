@@ -1,5 +1,6 @@
 import type { StrategyConfig } from '../../types';
 import { Badge } from '../../design/Badge';
+import { CheckTile } from '../../design/CheckTile';
 
 type UniversePanelProps = {
   config: StrategyConfig;
@@ -147,24 +148,13 @@ export function UniversePanel({ config, focusedParameter, onPatchConfig }: Unive
           </select>
         </label>
         <div className="parameter-field toggle-stack">
-          <label className="mini-toggle">
-            <input
-              checked={Boolean(config.include_bj)}
-              id="strategy-field-include_bj"
-              type="checkbox"
-              onChange={(event) => patchBoolean('include_bj', event.target.checked)}
-            />
-            包含北交所
-          </label>
-          <label className="mini-toggle">
-            <input
-              checked={Boolean(config.exclude_star_board)}
-              id="strategy-field-exclude_star_board"
-              type="checkbox"
-              onChange={(event) => patchBoolean('exclude_star_board', event.target.checked)}
-            />
-            排除科创板
-          </label>
+          <CheckTile checked={Boolean(config.include_bj)} id="strategy-field-include_bj" label="包含北交所" onCheckedChange={(checked) => patchBoolean('include_bj', checked)} />
+          <CheckTile
+            checked={Boolean(config.exclude_star_board)}
+            id="strategy-field-exclude_star_board"
+            label="排除科创板"
+            onCheckedChange={(checked) => patchBoolean('exclude_star_board', checked)}
+          />
         </div>
       </div>
     </section>

@@ -1,9 +1,18 @@
 import type { Capability } from '../../types';
 import { Badge } from '../../design/Badge';
+import { Button } from '../../design/Button';
 import { formatDate } from '../../utils/date';
 import { capabilityHealth } from '../../utils/metrics';
 
-export function CapabilityCard({ capability }: { capability: Capability }) {
+export function CapabilityCard({
+  capability,
+  onBackfill,
+  backfilling,
+}: {
+  capability: Capability;
+  onBackfill?: (capability: Capability) => void;
+  backfilling?: boolean;
+}) {
   const health = capabilityHealth(capability);
   return (
     <article className="card">
@@ -22,6 +31,13 @@ export function CapabilityCard({ capability }: { capability: Capability }) {
         ))}
       </div>
       {capability.last_failure_reason ? <p className="card-copy" style={{ marginTop: 12, color: 'var(--danger)' }}>{capability.last_failure_reason}</p> : null}
+      {capability.can_backfill ? (
+        <div className="rule-card-actions">
+          <Button disabled={backfilling || !onBackfill} onClick={() => onBackfill?.(capability)} variant="ghost">
+            {backfilling ? '已加入队列' : '补齐'}
+          </Button>
+        </div>
+      ) : null}
     </article>
   );
 }

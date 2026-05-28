@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { IndicatorDefinition, StrategyConfig, StrategyRule, StrategyResonance } from '../../types';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
+import { CheckTile } from '../../design/CheckTile';
 import { EmptyState } from '../../design/EmptyState';
 import { createResonanceId, resonanceBonusOptions, strategyRuleSelectLabel } from '../../utils/strategy';
 import { RuleCard } from './RuleCard';
@@ -148,10 +149,7 @@ export function RuleCanvas({
                     <span>共振名称</span>
                     <input value={item.name || ''} onChange={(event) => updateResonance(item.id, { name: event.target.value })} />
                   </label>
-                  <label className="mini-toggle">
-                    <input checked={item.enabled !== false} type="checkbox" onChange={(event) => updateResonance(item.id, { enabled: event.target.checked })} />
-                    启用
-                  </label>
+                  <CheckTile checked={item.enabled !== false} label="启用" onCheckedChange={(checked) => updateResonance(item.id, { enabled: checked })} />
                 </div>
                 <div className="rule-editor resonance-editor">
                   {(item.rule_ids || []).map((ruleId, index) => (
@@ -328,15 +326,12 @@ export function RuleCanvas({
             />
             <div className="parameter-field">
               <span>平台突破收盘确认</span>
-              <label className="mini-toggle">
-                <input
-                  checked={Boolean(config.platform_breakout_require_close_above)}
-                  id="strategy-field-platform_breakout_require_close_above"
-                  type="checkbox"
-                  onChange={(event) => patchBoolean('platform_breakout_require_close_above', event.target.checked)}
-                />
-                启用
-              </label>
+              <CheckTile
+                checked={Boolean(config.platform_breakout_require_close_above)}
+                id="strategy-field-platform_breakout_require_close_above"
+                label="启用"
+                onCheckedChange={(checked) => patchBoolean('platform_breakout_require_close_above', checked)}
+              />
             </div>
           </div>
         </details>

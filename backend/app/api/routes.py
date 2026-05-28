@@ -176,6 +176,15 @@ def sync_today(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return {"task_id": task_id, "status": "queued"}
 
 
+@router.get("/tasks")
+def list_tasks(
+    status: str = Query(default="queued,running"),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> Dict[str, Any]:
+    statuses = [item.strip() for item in status.split(",") if item.strip()]
+    return {"rows": data_service.task_runs(statuses=statuses, limit=limit)}
+
+
 @router.get("/tasks/{task_id}/dag")
 def task_dag(task_id: str) -> Dict[str, Any]:
     return data_service.task_dag(task_id)

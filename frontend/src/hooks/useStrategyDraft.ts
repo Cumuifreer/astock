@@ -3,12 +3,15 @@ import type { StrategyConfig, StrategyRule, StrategyResonance } from '../types';
 import { composeStrategyConfig } from '../utils/strategy';
 
 type StrategyDraftState = {
+  presetId: string | null;
   name: string;
   config: StrategyConfig | null;
   rules: StrategyRule[];
   resonances: StrategyResonance[];
+  isSystem: boolean;
+  isDefault: boolean;
   initialized: boolean;
-  setDraft: (name: string, config: StrategyConfig | null) => void;
+  setDraft: (draft: { presetId?: string | null; name: string; config: StrategyConfig | null; isSystem?: boolean; isDefault?: boolean }) => void;
   setName: (name: string) => void;
   setRules: (rules: StrategyRule[]) => void;
   setResonances: (resonances: StrategyResonance[]) => void;
@@ -16,17 +19,23 @@ type StrategyDraftState = {
 };
 
 export const useStrategyDraft = create<StrategyDraftState>((set) => ({
-  name: '我的 Scanner',
+  presetId: null,
+  name: '未命名策略',
   config: null,
   rules: [],
   resonances: [],
+  isSystem: false,
+  isDefault: false,
   initialized: false,
-  setDraft: (name, config) =>
+  setDraft: ({ presetId = null, name, config, isSystem = false, isDefault = false }) =>
     set({
+      presetId,
       name,
       config,
       rules: Array.isArray(config?.strategy_rules) ? config.strategy_rules : [],
       resonances: Array.isArray(config?.strategy_resonances) ? config.strategy_resonances : [],
+      isSystem,
+      isDefault,
       initialized: Boolean(config),
     }),
   setName: (name) => set({ name }),

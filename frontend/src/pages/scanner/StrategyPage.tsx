@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Play, Save, Star } from 'lucide-react';
-import type { IndicatorDefinition, IndicatorLibrary, StrategyConfig, StrategyRule } from '../../types';
-import { runStrategy, saveStrategy } from '../../api/strategy';
+import { Copy, Play, PlusCircle, Save, Star, Trash2 } from 'lucide-react';
+import type { IndicatorDefinition, IndicatorLibrary, StrategyConfig, StrategyPreset, StrategyRule } from '../../types';
+import { deleteStrategy, duplicateStrategy, runStrategy, saveStrategy } from '../../api/strategy';
+import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
 import { EmptyState } from '../../design/EmptyState';
 import { LoadingState } from '../../design/LoadingState';
+import { Select } from '../../design/Select';
 import { useBootstrap } from '../../hooks/useBootstrap';
 import { useStrategyDraft } from '../../hooks/useStrategyDraft';
 import { composeStrategyConfig, defaultStrategyRule, indicatorParameterKeys, usableRuleIndicators } from '../../utils/strategy';
@@ -29,10 +31,13 @@ const resonanceChipGridClass = 'resonance-chip-grid';
 export function StrategyPage() {
   const bootstrap = useBootstrap();
   const queryClient = useQueryClient();
+  const presetId = useStrategyDraft((state) => state.presetId);
   const draftName = useStrategyDraft((state) => state.name);
   const draftConfig = useStrategyDraft((state) => state.config);
   const draftRules = useStrategyDraft((state) => state.rules);
   const draftResonances = useStrategyDraft((state) => state.resonances);
+  const isSystem = useStrategyDraft((state) => state.isSystem);
+  const isDefault = useStrategyDraft((state) => state.isDefault);
   const initialized = useStrategyDraft((state) => state.initialized);
   const setDraft = useStrategyDraft((state) => state.setDraft);
   const setName = useStrategyDraft((state) => state.setName);
@@ -42,11 +47,17 @@ export function StrategyPage() {
   const [focusedParameter, setFocusedParameter] = useState<string | null>(null);
   const data = bootstrap.data;
   const library = (data as typeof data & { indicator_library?: IndicatorLibrary })?.indicator_library;
+  const strategies = data?.strategies || [];
 
   useEffect(() => {
     if (!data?.default_strategy || initialized) return;
-    const defaultPreset = data.strategies.find((preset) => preset.is_default) || data.strategies[0];
-    setDraft(defaultPreset?.name || '我的 Scanner', defaultPreset?.config || data.default_strategy);
+    setDraft({
+      presetId: null,
+      name: '未命名策略',
+      config: cloneConfig(data.default_strategy),
+      isSystem: false,
+      isDefault: false,
+    });
   }, [data, initialized, setDraft]);
 
   const config = draftConfig || data?.default_strategy;
@@ -59,10 +70,63 @@ export function StrategyPage() {
   const invalidate = () => {
     void queryClient.invalidateQueries();
   };
+  const applyPreset = (preset: StrategyPreset) => {
+    setDraft({
+      presetId: preset.id,
+      name: preset.name,
+      config: cloneConfig(preset.config),
+      isSystem: preset.is_system,
+      isDefault: preset.is_default,
+    });
+  };
+  const createNewDraft = () => {
+    if (!data?.default_strategy) return;
+    setDraft({
+      presetId: null,
+      name: '未命名策略',
+      config: cloneConfig(data.default_strategy),
+      isSystem: false,
+      isDefault: false,
+    });
+  };
+  const selectPreset = (value: string) => {
+    if (value === 'draft-new') {
+      createNewDraft();
+      return;
+    }
+    const preset = strategies.find((item) => item.id === value);
+    if (preset) applyPreset(preset);
+  };
   const saveMutation = useMutation({
-    mutationFn: (setDefault: boolean) => saveStrategy({ name: draftName, config: currentConfig, set_default: setDefault }),
+    mutationFn: ({ setDefault, saveAs }: { setDefault: boolean; saveAs: boolean }) =>
+      saveStrategy({
+        id: !saveAs && !isSystem ? presetId || undefined : undefined,
+        name: draftName || '未命名策略',
+        config: currentConfig,
+        set_default: setDefault,
+      }),
     onSuccess: (result) => {
-      setDraft(result.preset.name, result.preset.config);
+      applyPreset(result.preset);
+      invalidate();
+    },
+  });
+  const duplicateMutation = useMutation({
+    mutationFn: () =>
+      presetId && isSystem
+        ? duplicateStrategy(presetId)
+        : saveStrategy({
+            name: `${draftName || '未命名策略'} 副本`,
+            config: currentConfig,
+          }),
+    onSuccess: (result) => {
+      applyPreset(result.preset);
+      invalidate();
+    },
+  });
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteStrategy(presetId || ''),
+    onSuccess: () => {
+      createNewDraft();
       invalidate();
     },
   });
@@ -99,20 +163,49 @@ export function StrategyPage() {
           <div className="section-heading">
             <div>
               <h2>当前 Scanner</h2>
-              <p>保存和运行都使用当前画布 draft，不再回退到默认策略。</p>
+              <p>选择预设、复制为自定义策略，或保存当前画布 draft 后运行。</p>
+              <div className="rule-chip-grid" style={{ marginTop: 8 }}>
+                <Badge tone={presetId ? 'info' : 'neutral'}>{presetId || 'new-draft'}</Badge>
+                {isSystem ? <Badge tone="watch">系统策略只能复制</Badge> : <Badge tone="good">自定义可保存</Badge>}
+                {isDefault ? <Badge tone="purple">默认策略</Badge> : null}
+              </div>
             </div>
             <div className="button-row">
-              <Button disabled={saveMutation.isPending} icon={<Save size={16} />} onClick={() => saveMutation.mutate(false)} variant="secondary">
+              <Button disabled={!data?.default_strategy} icon={<PlusCircle size={16} />} onClick={createNewDraft} variant="secondary">
+                新建
+              </Button>
+              <Button disabled={duplicateMutation.isPending} icon={<Copy size={16} />} onClick={() => duplicateMutation.mutate()} variant="secondary">
+                复制
+              </Button>
+              <Button disabled={saveMutation.isPending || isSystem} icon={<Save size={16} />} onClick={() => saveMutation.mutate({ setDefault: false, saveAs: false })} variant="secondary">
                 保存策略
               </Button>
-              <Button disabled={saveMutation.isPending} icon={<Star size={16} />} onClick={() => saveMutation.mutate(true)} variant="secondary">
+              <Button disabled={saveMutation.isPending} icon={<Save size={16} />} onClick={() => saveMutation.mutate({ setDefault: false, saveAs: true })} variant="secondary">
+                另存为
+              </Button>
+              <Button disabled={saveMutation.isPending} icon={<Star size={16} />} onClick={() => saveMutation.mutate({ setDefault: true, saveAs: isSystem })} variant="secondary">
                 保存为默认
+              </Button>
+              <Button disabled={deleteMutation.isPending || isSystem || !presetId} icon={<Trash2 size={16} />} onClick={() => deleteMutation.mutate()} variant="danger">
+                删除
               </Button>
               <Button disabled={runMutation.isPending} icon={<Play size={16} />} onClick={() => runMutation.mutate()} variant="primary">
                 运行当前策略
               </Button>
             </div>
           </div>
+          <Select
+            label="当前策略"
+            value={presetId || 'draft-new'}
+            onChange={selectPreset}
+            options={[
+              { value: 'draft-new', label: '未命名策略' },
+              ...strategies.map((preset) => ({
+                value: preset.id,
+                label: `${preset.name}${preset.is_system ? ' · 系统' : ''}${preset.is_default ? ' · 默认' : ''}`,
+              })),
+            ]}
+          />
           <input className="strategy-name-input" value={draftName} onChange={(event) => setName(event.target.value)} />
         </section>
         <UniversePanel config={currentConfig} focusedParameter={focusedParameter} onPatchConfig={patchConfig} />
@@ -150,6 +243,10 @@ export function StrategyPage() {
       </aside>
     </div>
   );
+}
+
+function cloneConfig(config: StrategyConfig): StrategyConfig {
+  return JSON.parse(JSON.stringify(config)) as StrategyConfig;
 }
 
 function fallbackRules(config: StrategyConfig | null | undefined): StrategyRule[] {

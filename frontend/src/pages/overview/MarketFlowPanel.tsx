@@ -14,7 +14,6 @@ const pulseLabels: Array<[string, string]> = [
   ['turnover_score', '成交额热度'],
   ['index_score', '指数趋势'],
   ['sector_heat_score', '题材扩散'],
-  ['risk_score', '风险状态'],
 ];
 
 export function MarketFlowPanel({ pulse, freshness }: MarketFlowPanelProps) {
@@ -47,7 +46,7 @@ export function MarketFlowPanel({ pulse, freshness }: MarketFlowPanelProps) {
           {(freshness.length ? freshness : [{ label: 'Tushare 增强', latest_update: null, status: 'waiting' }]).map((item, index) => (
             <div className="split-row" key={`${item.label || item.capability}-${index}`}>
               <span>{item.label || item.capability || '数据集'}</span>
-              <Badge tone={item.status === 'normal' ? 'good' : 'watch'}>{formatDate(item.latest_update)}</Badge>
+              <Badge tone={item.status === 'normal' || item.status === 'fresh' ? 'good' : 'watch'}>{formatDate(item.latest_update || item.latest_date)}</Badge>
             </div>
           ))}
         </div>

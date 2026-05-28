@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getTaskCheckpoints, getTaskDag } from '../../api/data';
+import { getTaskCheckpoints, getTaskDag, getTasks } from '../../api/data';
 import { Badge } from '../../design/Badge';
 import { DataTable } from '../../design/DataTable';
 import { LoadingState } from '../../design/LoadingState';
@@ -14,8 +14,23 @@ import type { TaskDagNode, UpdateCheckpoint } from '../../api/data';
 
 export function StatusPage() {
   const bootstrap = useBootstrap();
-  const tasks = [bootstrap.data?.update_status, bootstrap.data?.analyze_status, bootstrap.data?.backtest_status, bootstrap.data?.intraday_status, bootstrap.data?.brief_status].filter(Boolean) as TaskRun[];
-  const activeTask = tasks.find((task) => ['queued', 'running'].includes(task.status)) || tasks[0];
+  const activeTasks = useQuery({
+    queryKey: ['tasks', 'queued,running'],
+    queryFn: () => getTasks({ status: 'queued,running', limit: 50 }),
+  });
+  const recentTasks = useQuery({
+    queryKey: ['tasks', 'recent'],
+    queryFn: () => getTasks({ status: 'completed_full,completed_partial,failed', limit: 50 }),
+  });
+  const fallbackTasks = [bootstrap.data?.update_status, bootstrap.data?.analyze_status, bootstrap.data?.backtest_status, bootstrap.data?.intraday_status, bootstrap.data?.brief_status].filter(Boolean) as TaskRun[];
+  const activeRows = normalizeRows<TaskRun>(activeTasks.data);
+  const recentRows = normalizeRows<TaskRun>(recentTasks.data);
+  const effectiveActiveRows = activeRows.length ? activeRows : fallbackTasks.filter((task) => ['queued', 'running'].includes(task.status));
+  const runningTasks = effectiveActiveRows.filter((task) => task.status === 'running');
+  const queuedTasks = effectiveActiveRows.filter((task) => task.status === 'queued');
+  const failedTasks = recentRows.filter((task) => task.status === 'failed');
+  const completedTasks = recentRows.filter((task) => task.status !== 'failed');
+  const activeTask = runningTasks[0] || queuedTasks[0] || fallbackTasks.find((task) => ['queued', 'running'].includes(task.status)) || fallbackTasks[0];
   const dag = useQuery({
     queryKey: ['task-dag', activeTask?.id],
     queryFn: () => getTaskDag(activeTask?.id || ''),
@@ -45,7 +60,7 @@ export function StatusPage() {
     [],
   );
 
-  if (bootstrap.isLoading) return <LoadingState label="读取任务状态" />;
+  if (bootstrap.isLoading || activeTasks.isLoading) return <LoadingState label="读取任务状态" />;
 
   return (
     <div className="page-grid">
@@ -57,7 +72,12 @@ export function StatusPage() {
           </div>
           <Badge tone={activeTask ? 'info' : 'neutral'}>{activeTask?.id || 'idle'}</Badge>
         </div>
-        <TaskQueue tasks={tasks} progressByTaskId={progressByTaskId} />
+        <section className="task-status-grid">
+          <TaskQueue emptyLabel="当前没有运行中的任务" title="当前运行" tasks={runningTasks} progressByTaskId={progressByTaskId} />
+          <TaskQueue emptyLabel="等待队列为空" title="等待队列" tasks={queuedTasks} progressByTaskId={progressByTaskId} />
+          <TaskQueue emptyLabel="暂无最近完成任务" title="最近完成" tasks={completedTasks.slice(0, 6)} />
+          <TaskQueue emptyLabel="暂无失败任务" title="失败任务" tasks={failedTasks.slice(0, 6)} />
+        </section>
       </section>
 
       <section className="grid-2">

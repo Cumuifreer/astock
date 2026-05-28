@@ -7,18 +7,22 @@ import { taskProgressValue } from '../../utils/metrics';
 type TaskQueueProps = {
   tasks: TaskRun[];
   progressByTaskId?: Record<string, number | null | undefined>;
+  title?: string;
+  emptyLabel?: string;
 };
 
-export function TaskQueue({ tasks, progressByTaskId = {} }: TaskQueueProps) {
+export function TaskQueue({ tasks, progressByTaskId = {}, title, emptyLabel = '暂无运行任务' }: TaskQueueProps) {
   if (!tasks.length) {
     return (
       <div className="empty-state">
-        <div>暂无运行任务</div>
+        {title ? <strong>{title}</strong> : null}
+        <div>{emptyLabel}</div>
       </div>
     );
   }
   return (
     <div className="list-stack">
+      {title ? <h3 className="subsection-title">{title}</h3> : null}
       {tasks.map((task) => (
         <article className="rule-card" key={task.id}>
           <div className="rule-card-header">

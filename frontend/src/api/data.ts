@@ -65,6 +65,14 @@ export function startUpdate(payload: Record<string, unknown>): Promise<Record<st
   return post('/api/tasks/update', payload);
 }
 
+export function getTasks(params: { status?: string; limit?: number } = {}): Promise<{ rows?: TaskRun[] } | TaskRun[]> {
+  const search = new URLSearchParams();
+  if (params.status) search.set('status', params.status);
+  if (params.limit) search.set('limit', String(params.limit));
+  const path = search.toString() ? `/api/tasks?${search.toString()}` : '/api/tasks';
+  return request<{ rows?: TaskRun[] } | TaskRun[]>(path);
+}
+
 export function getTaskDag(taskId: string): Promise<{ nodes?: TaskDagNode[] } | TaskDagNode[]> {
   return request<{ nodes?: TaskDagNode[] } | TaskDagNode[]>(`/api/tasks/${encodeURIComponent(taskId)}/dag`);
 }

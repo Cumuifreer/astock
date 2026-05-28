@@ -40,6 +40,7 @@ test('frontend is split into app, api, design, pages, hooks, and utils', () => {
     'design/Drawer.tsx',
     'design/Tabs.tsx',
     'design/Tooltip.tsx',
+    'design/CheckTile.tsx',
     'design/EmptyState.tsx',
     'design/LoadingState.tsx',
     'pages/overview/OverviewPage.tsx',
@@ -116,6 +117,7 @@ test('new API layer exposes market, intraday boards, checkpoints, and backtest e
   assert.match(read('api/data.ts'), /\/api\/tasks\/sync-today/);
   assert.match(read('api/data.ts'), /\/api\/tasks\/.*\/checkpoints/);
   assert.match(read('api/data.ts'), /\/api\/tasks\/.*\/dag/);
+  assert.match(read('api/data.ts'), /\/api\/tasks\?/);
   assert.match(read('api/data.ts'), /\/api\/data\/stocks/);
   assert.match(read('api/data.ts'), /\/api\/data\/source-diagnostics/);
   assert.match(read('api/intraday.ts'), /\/api\/intraday\/boards/);
@@ -166,6 +168,10 @@ test('task progress and topbar popover avoid false running states', () => {
   const statusPage = read('pages/status/StatusPage.tsx');
   assert.match(statusPage, /dagProgress/);
   assert.match(statusPage, /progressByTaskId/);
+  assert.match(statusPage, /getTasks/);
+  for (const label of ['当前运行', '等待队列', '最近完成', '失败任务']) {
+    assert.match(statusPage, new RegExp(label));
+  }
 
   const metrics = read('utils/metrics.ts');
   assert.match(metrics, /isTerminalTaskStatus/);
@@ -195,10 +201,13 @@ test('scanner exposes editable universe, built-in indicators, and explicit reson
   }
 
   const picker = read('pages/scanner/FactorPicker.tsx');
-  assert.match(picker, /显示内置指标/);
+  for (const label of ['补充规则', '内置参数', '全部指标', '显示更多', '会与已有参数叠加生效']) {
+    assert.match(picker, new RegExp(label));
+  }
   assert.match(picker, /paired_strategy_ids/);
   assert.match(picker, /编辑参数/);
   assert.match(picker, /转为显式规则/);
+  assert.doesNotMatch(picker, /slice\(0,\s*24\)/);
 
   const canvas = read('pages/scanner/RuleCanvas.tsx');
   assert.doesNotMatch(canvas, /slice\(0,\s*2\)/);

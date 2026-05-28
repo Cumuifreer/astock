@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Database, Search } from 'lucide-react';
-import { getCapabilities, getSourceDiagnostics, getStockDetail, getStocks } from '../../api/data';
+import { getCapabilities, getSourceDiagnostics, getStockDetail, getStocks, startUpdate } from '../../api/data';
 import type { Capability, SourceDiagnostics, StockDetail, StockRow } from '../../types';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
@@ -25,12 +25,14 @@ const groups: Array<{ title: string; names: string[] }> = [
 const limit = 40;
 
 export function DataMapPage() {
-  const [tab, setTab] = useState('warehouse');
+  const [tab, setTab] = useState(() => dataMapTabFromHash());
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('active');
   const [exchange, setExchange] = useState('');
   const [offset, setOffset] = useState(0);
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
+  const [backfillingCapability, setBackfillingCapability] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const capabilities = useQuery({ queryKey: ['capabilities'], queryFn: getCapabilities });
   const diagnostics = useQuery({ queryKey: ['source-diagnostics'], queryFn: getSourceDiagnostics });
   const stocks = useQuery({
@@ -45,6 +47,31 @@ export function DataMapPage() {
   const capabilityRows = normalizeRows<Capability>(capabilities.data);
   const stockRows = stocks.data?.rows || [];
   const total = stocks.data?.total || 0;
+  const backfillMutation = useMutation({
+    mutationFn: (capability: Capability) => startUpdate({ mode: 'capability_backfill', capability: capability.capability }),
+    onMutate: (capability) => setBackfillingCapability(capability.capability),
+    onSettled: () => {
+      setBackfillingCapability(null);
+      void queryClient.invalidateQueries({ queryKey: ['capabilities'] });
+      void queryClient.invalidateQueries({ queryKey: ['bootstrap'] });
+      void queryClient.invalidateQueries({ queryKey: ['runtime-health'] });
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+
+  useEffect(() => {
+    const syncFromHash = () => setTab(dataMapTabFromHash());
+    const handleTabEvent = (event: Event) => {
+      const value = (event as CustomEvent<string>).detail;
+      if (value === 'warehouse' || value === 'health') setTab(value);
+    };
+    window.addEventListener('hashchange', syncFromHash);
+    window.addEventListener('data-map-tab', handleTabEvent);
+    return () => {
+      window.removeEventListener('hashchange', syncFromHash);
+      window.removeEventListener('data-map-tab', handleTabEvent);
+    };
+  }, []);
 
   return (
     <div className="page-grid">
@@ -77,7 +104,13 @@ export function DataMapPage() {
             value: 'health',
             label: '数据健康',
             content: (
-              <DataHealth capabilities={capabilityRows} diagnostics={diagnostics.data} loading={capabilities.isLoading || diagnostics.isLoading} />
+              <DataHealth
+                backfillingCapability={backfillingCapability}
+                capabilities={capabilityRows}
+                diagnostics={diagnostics.data}
+                loading={capabilities.isLoading || diagnostics.isLoading}
+                onBackfill={(capability) => backfillMutation.mutate(capability)}
+              />
             ),
           },
         ]}
@@ -233,7 +266,19 @@ function StockWarehouse({
   );
 }
 
-function DataHealth({ capabilities, diagnostics, loading }: { capabilities: Capability[]; diagnostics?: SourceDiagnostics; loading: boolean }) {
+function DataHealth({
+  capabilities,
+  diagnostics,
+  loading,
+  onBackfill,
+  backfillingCapability,
+}: {
+  capabilities: Capability[];
+  diagnostics?: SourceDiagnostics;
+  loading: boolean;
+  onBackfill: (capability: Capability) => void;
+  backfillingCapability: string | null;
+}) {
   const healthCards = useMemo(
     () => [
       ['Tushare', diagnostics?.tushare_token_configured ? '已配置' : '未配置', diagnostics?.last_tushare_error],
@@ -276,7 +321,12 @@ function DataHealth({ capabilities, diagnostics, loading }: { capabilities: Capa
             </div>
             <div className="grid-3">
               {items.map((capability) => (
-                <CapabilityCard capability={capability} key={capability.capability} />
+                <CapabilityCard
+                  backfilling={backfillingCapability === capability.capability}
+                  capability={capability}
+                  key={capability.capability}
+                  onBackfill={onBackfill}
+                />
               ))}
             </div>
           </section>
@@ -284,6 +334,10 @@ function DataHealth({ capabilities, diagnostics, loading }: { capabilities: Capa
       })}
     </div>
   );
+}
+
+function dataMapTabFromHash() {
+  return window.location.hash.includes('tab=health') ? 'health' : 'warehouse';
 }
 
 function StockProfile({ detail }: { detail: StockDetail | null }) {

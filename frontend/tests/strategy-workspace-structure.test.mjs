@@ -9,6 +9,11 @@ const scannerSource = readFileSync(resolve(__dirname, '../src/pages/scanner/Stra
 const factorPickerSource = readFileSync(resolve(__dirname, '../src/pages/scanner/FactorPicker.tsx'), 'utf8');
 const ruleCanvasSource = readFileSync(resolve(__dirname, '../src/pages/scanner/RuleCanvas.tsx'), 'utf8');
 const ruleCardSource = readFileSync(resolve(__dirname, '../src/pages/scanner/RuleCard.tsx'), 'utf8');
+const universeSource = readFileSync(resolve(__dirname, '../src/pages/scanner/UniversePanel.tsx'), 'utf8');
+const draftSource = readFileSync(resolve(__dirname, '../src/hooks/useStrategyDraft.ts'), 'utf8');
+const dataMapSource = readFileSync(resolve(__dirname, '../src/pages/data-map/DataMapPage.tsx'), 'utf8');
+const capabilityCardSource = readFileSync(resolve(__dirname, '../src/pages/data-map/CapabilityCard.tsx'), 'utf8');
+const marketFlowSource = readFileSync(resolve(__dirname, '../src/pages/overview/MarketFlowPanel.tsx'), 'utf8');
 const shellSource = readFileSync(resolve(__dirname, '../src/app/AppShell.tsx'), 'utf8');
 
 test('scanner page is organized as a professional rule canvas', () => {
@@ -44,4 +49,45 @@ test('scanner supports adding editing saving and running current draft', () => {
   assert.match(shellSource, /useStrategyDraft\.getState/);
   assert.match(shellSource, /composeStrategyConfig/);
   assert.doesNotMatch(shellSource, /const config = bootstrap\.data\?\.default_strategy/);
+});
+
+test('scanner has explicit preset management instead of only saving a single strategy name', () => {
+  for (const label of ['新建', '复制', '保存', '另存为', '保存为默认', '删除']) {
+    assert.match(scannerSource, new RegExp(label));
+  }
+  assert.match(scannerSource, /duplicateStrategy/);
+  assert.match(scannerSource, /deleteStrategy/);
+  assert.match(scannerSource, /presetId/);
+  assert.match(scannerSource, /isSystem/);
+  assert.match(scannerSource, /isDefault/);
+  assert.match(draftSource, /presetId/);
+  assert.match(draftSource, /isSystem/);
+  assert.match(draftSource, /isDefault/);
+  assert.match(draftSource, /未命名策略/);
+});
+
+test('top actions and data health use precise update semantics', () => {
+  assert.match(shellSource, /打开数据中心/);
+  assert.doesNotMatch(shellSource, /补齐数据类别/);
+  assert.match(dataMapSource, /mode:\s*'capability_backfill'/);
+  assert.match(dataMapSource, /capability:\s*capability\.capability/);
+  assert.match(capabilityCardSource, /补齐/);
+  assert.match(capabilityCardSource, /onBackfill/);
+});
+
+test('market overview reads the backend field names actually returned today', () => {
+  assert.doesNotMatch(marketFlowSource, /risk_score/);
+  assert.match(marketFlowSource, /latest_date/);
+  assert.match(marketFlowSource, /status === 'fresh'/);
+});
+
+test('checkbox UI uses polished check tiles without native browser checkboxes', () => {
+  assert.match(universeSource, /CheckTile/);
+  assert.doesNotMatch(universeSource, /type="checkbox"/);
+  assert.match(factorPickerSource, /Segmented/);
+  assert.doesNotMatch(factorPickerSource, /type="checkbox"/);
+  assert.match(ruleCanvasSource, /CheckTile/);
+  assert.doesNotMatch(ruleCanvasSource, /type="checkbox"/);
+  assert.match(ruleCardSource, /CheckTile/);
+  assert.doesNotMatch(ruleCardSource, /type="checkbox"/);
 });

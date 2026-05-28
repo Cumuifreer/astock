@@ -28,3 +28,7 @@ export function post<T>(path: string, payload: ApiRecord = {}): Promise<T> {
 export function patch<T>(path: string, payload: ApiRecord = {}): Promise<T> {
   return request<T>(path, { method: 'PATCH', body: JSON.stringify(payload) });
 }
+
+export function del<T>(path: string): Promise<T> {
+  return request<T>(path, { method: 'DELETE' });
+}

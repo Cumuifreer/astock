@@ -73,6 +73,11 @@ export function AppShell() {
     setActiveRoute(id);
     window.history.replaceState(null, '', `#${id}`);
   };
+  const openDataHealth = () => {
+    setActiveRoute('data-map');
+    window.history.replaceState(null, '', '#data-map?tab=health');
+    window.dispatchEvent(new CustomEvent('data-map-tab', { detail: 'health' }));
+  };
 
   return (
     <div className="workbench-shell">
@@ -119,17 +124,17 @@ export function AppShell() {
               <Popover.Portal>
                 <Popover.Content align="end" className="popover-content" sideOffset={8} style={{ padding: 8, width: 220 }}>
                   <div className="list-stack">
-                    <Button disabled={busy} onClick={() => forceUpdateMutation.mutate()} variant="ghost">
-                      强制全量更新
+                    <Button disabled={busy} onClick={openDataHealth} variant="ghost">
+                      打开数据中心
                     </Button>
-                    <Button disabled={busy} onClick={() => selectRoute('data-map')} variant="ghost">
-                      补齐数据类别
+                    <Button disabled={busy} onClick={() => marketEnvMutation.mutate()} variant="ghost">
+                      重算市场环境
                     </Button>
                     <Button disabled={busy} onClick={() => sampleMutation.mutate()} variant="ghost">
                       盘中采样一次
                     </Button>
-                    <Button disabled={busy} onClick={() => marketEnvMutation.mutate()} variant="ghost">
-                      重算市场环境
+                    <Button disabled={busy} onClick={() => forceUpdateMutation.mutate()} variant="ghost">
+                      强制全量更新
                     </Button>
                   </div>
                 </Popover.Content>
@@ -144,7 +149,7 @@ export function AppShell() {
 }
 
 function parseRouteHash(hash: string): RouteId {
-  const value = hash.replace(/^#\/?/, '') as RouteId;
+  const value = hash.replace(/^#\/?/, '').split('?')[0] as RouteId;
   return routes.some((route) => route.id === value) ? value : 'overview';
 }
 
