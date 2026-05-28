@@ -205,6 +205,9 @@ DATA_UPDATE_DAG: List[Dict[str, Any]] = [
     {"id": "capability_refresh", "label": "能力口径刷新", "capability": "数据能力", "dependencies": ["market_environment"], "freshness_policy": "manual"},
 ]
 
+DAG_TERMINAL_TASK_STATUSES = {"completed_full", "completed_partial", "failed", "skipped"}
+DAG_BLOCKING_CHECKPOINT_STATUSES = {"failed", "blocked"}
+
 
 def _slot_status(
     current: datetime,
@@ -404,10 +407,22 @@ class DataService:
     def task_dag(self, task_id: str) -> Dict[str, Any]:
         checkpoints = self.task_checkpoints(task_id)
         by_job = {row["job_id"]: row for row in checkpoints}
+        task_status = self.db.scalar("SELECT status FROM task_runs WHERE id = ?", [task_id])
+        task_is_terminal = str(task_status or "") in DAG_TERMINAL_TASK_STATUSES
+        status_by_id: Dict[str, str] = {}
         nodes = []
         for node in DATA_UPDATE_DAG:
             checkpoint = by_job.get(node["id"])
-            status = checkpoint.get("status") if checkpoint else "queued"
+            dependencies = node.get("dependencies") or []
+            if checkpoint:
+                status = str(checkpoint.get("status") or "queued")
+            elif any(status_by_id.get(dep) in DAG_BLOCKING_CHECKPOINT_STATUSES for dep in dependencies):
+                status = "blocked"
+            elif task_is_terminal:
+                status = "not_reached"
+            else:
+                status = "queued"
+            status_by_id[node["id"]] = status
             nodes.append(
                 {
                     **node,

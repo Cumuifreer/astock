@@ -1,3 +1,4 @@
+import { forwardRef } from 'react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import clsx from 'clsx';
 
@@ -6,11 +7,14 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   icon?: ReactNode;
 };
 
-export function Button({ variant = 'secondary', icon, children, className, type = 'button', ...props }: ButtonProps) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { variant = 'secondary', icon, children, className, type = 'button', ...props },
+  ref,
+) {
   return (
-    <button type={type} className={clsx('button', variant, className)} {...props}>
+    <button ref={ref} type={type} className={clsx('button', variant, className)} {...props}>
       {icon}
       {children}
     </button>
   );
-}
+});

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Play, Save, Star } from 'lucide-react';
 import type { IndicatorDefinition, IndicatorLibrary, StrategyConfig, StrategyRule } from '../../types';
@@ -8,7 +8,7 @@ import { EmptyState } from '../../design/EmptyState';
 import { LoadingState } from '../../design/LoadingState';
 import { useBootstrap } from '../../hooks/useBootstrap';
 import { useStrategyDraft } from '../../hooks/useStrategyDraft';
-import { composeStrategyConfig, defaultStrategyRule, usableRuleIndicators } from '../../utils/strategy';
+import { composeStrategyConfig, defaultStrategyRule, indicatorParameterKeys, usableRuleIndicators } from '../../utils/strategy';
 import { UniversePanel } from './UniversePanel';
 import { RuleCanvas } from './RuleCanvas';
 import { FactorPicker } from './FactorPicker';
@@ -38,6 +38,8 @@ export function StrategyPage() {
   const setName = useStrategyDraft((state) => state.setName);
   const setRules = useStrategyDraft((state) => state.setRules);
   const setResonances = useStrategyDraft((state) => state.setResonances);
+  const patchConfig = useStrategyDraft((state) => state.patchConfig);
+  const [focusedParameter, setFocusedParameter] = useState<string | null>(null);
   const data = bootstrap.data;
   const library = (data as typeof data & { indicator_library?: IndicatorLibrary })?.indicator_library;
 
@@ -51,7 +53,7 @@ export function StrategyPage() {
   const rules = initialized ? draftRules : fallbackRules(config);
   const resonances = draftResonances;
   const indicators = useMemo(() => new Map((library?.indicators || []).map((indicator) => [indicator.id, indicator] as const)), [library]);
-  const usableIndicators = useMemo(() => usableRuleIndicators(library), [library]);
+  const usableIndicators = useMemo(() => usableRuleIndicators(library, { includePaired: true }), [library]);
   const selectableResonanceRules = rules.filter((rule) => rule.action === 'filter' || rule.action === 'score');
   const currentConfig = useMemo(() => composeStrategyConfig(config, rules, resonances), [config, rules, resonances]);
   const invalidate = () => {
@@ -77,6 +79,14 @@ export function StrategyPage() {
   };
   const addRule = (indicator: IndicatorDefinition) => {
     setRules([...rules, defaultStrategyRule(indicator)]);
+  };
+  const focusIndicatorParameter = (indicator: IndicatorDefinition) => {
+    const key = indicatorParameterKeys(indicator)[0];
+    if (!key) return;
+    setFocusedParameter(key);
+    window.setTimeout(() => {
+      document.getElementById(`strategy-field-${key}`)?.focus();
+    }, 0);
   };
 
   if (bootstrap.isLoading) return <LoadingState label="加载 Scanner 合同" />;
@@ -105,9 +115,12 @@ export function StrategyPage() {
           </div>
           <input className="strategy-name-input" value={draftName} onChange={(event) => setName(event.target.value)} />
         </section>
-        <UniversePanel config={config} />
+        <UniversePanel config={currentConfig} focusedParameter={focusedParameter} onPatchConfig={patchConfig} />
         <RuleCanvas
+          config={currentConfig}
+          focusedParameter={focusedParameter}
           indicators={indicators}
+          onPatchConfig={patchConfig}
           onPatchRule={patchRule}
           onRemoveRule={removeRule}
           onSetResonances={setResonances}
@@ -118,7 +131,7 @@ export function StrategyPage() {
       </main>
       <aside className="list-stack">
         <StrategySummary config={currentConfig} name={draftName} rules={rules} />
-        <FactorPicker indicators={usableIndicators} onAddRule={addRule} />
+        <FactorPicker indicators={usableIndicators} onAddRule={addRule} onEditParameter={focusIndicatorParameter} />
         <section className="surface pad">
           <div className="section-heading">
             <div>

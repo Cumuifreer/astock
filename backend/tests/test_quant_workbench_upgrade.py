@@ -11,7 +11,7 @@ from backend.app.schema import migrate
 from backend.app.services.backtest_service import BacktestService
 from backend.app.services.data_service import DataService
 from backend.app.services.intraday_service import IntradayRadarService
-from backend.app.services.update_service import UpdateService
+from backend.app.services.update_service import DEFAULT_DATA_DAG, UpdateService
 from backend.app.services.watchlist_service import WatchlistService
 
 
@@ -185,6 +185,100 @@ def test_update_checkpoints_and_dag_are_queryable(tmp_path):
         "market_environment",
         "capability_refresh",
     }.issubset({node["id"] for node in dag["nodes"]})
+
+
+def test_update_dag_marks_terminal_missing_nodes_and_blocked_dependents(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    service._write_task("update-running", kind="update", status="running", stage="测试")
+    service._write_task("update-failed", kind="update", status="failed", stage="服务重启后中止")
+
+    running_dag = DataService(db).task_dag("update-running")
+    assert {node["status"] for node in running_dag["nodes"]} == {"queued"}
+
+    failed_dag = DataService(db).task_dag("update-failed")
+    assert failed_dag["nodes"][0]["status"] == "not_reached"
+
+    service.record_checkpoint(
+        "update-failed",
+        job_id="history_qfq",
+        capability="历史 K 线",
+        target_date=date(2026, 5, 22),
+        batch_key="all",
+        status="failed",
+        error_message="rate limit",
+    )
+    blocked_dag = DataService(db).task_dag("update-failed")
+    status_by_id = {node["id"]: node["status"] for node in blocked_dag["nodes"]}
+    assert status_by_id["history_qfq"] == "failed"
+    assert status_by_id["daily_basic"] == "blocked"
+    assert status_by_id["market_environment"] == "blocked"
+
+
+def test_record_checkpoint_syncs_update_task_progress_to_dag(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    service._write_task("update-progress", kind="update", status="running", stage="测试", payload={})
+
+    service.record_checkpoint(
+        "update-progress",
+        job_id="stock_basic",
+        capability="股票基础信息",
+        target_date=date(2026, 5, 22),
+        batch_key="all",
+        status="completed",
+        rows_written=3,
+    )
+    service.record_checkpoint(
+        "update-progress",
+        job_id="daily_snapshot",
+        capability="当天行情快照",
+        target_date=date(2026, 5, 22),
+        batch_key="all",
+        status="skipped",
+        payload={"reason": "coverage_complete"},
+    )
+
+    task = db.query("SELECT processed, total FROM task_runs WHERE id = ?", ["update-progress"])[0]
+
+    assert task["total"] == len(DEFAULT_DATA_DAG)
+    assert task["processed"] == 2
+
+
+def test_market_environment_update_mode_uses_fast_path(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    service._write_task(
+        "market-env",
+        kind="update",
+        status="running",
+        stage="测试",
+        payload={"mode": "market_environment"},
+    )
+    calls = []
+
+    monkeypatch.setattr(service, "_target_history_date", lambda: date(2026, 5, 22))
+    monkeypatch.setattr(service, "_update_market_environment", lambda target_date: calls.append(target_date) or 1)
+    monkeypatch.setattr(service, "_update_basics", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("full update should not run")))
+    monkeypatch.setattr(service.data_service, "refresh_capabilities", lambda: None)
+    monkeypatch.setattr(service.data_service, "capabilities", lambda: [{"capability": "市场环境"}])
+
+    service._run_update("market-env", {"mode": "market_environment"})
+
+    task = db.query("SELECT status, stage, processed, total FROM task_runs WHERE id = ?", ["market-env"])[0]
+    checkpoints = db.query("SELECT job_id, status FROM update_checkpoints WHERE task_id = ?", ["market-env"])
+
+    assert calls == [date(2026, 5, 22)]
+    assert task["status"] == "completed_full"
+    assert task["stage"] == "市场环境已重算"
+    assert task["total"] == len(DEFAULT_DATA_DAG)
+    assert {row["job_id"]: row["status"] for row in checkpoints} == {
+        "market_environment": "completed",
+        "capability_refresh": "completed",
+    }
 
 
 def _import_routes_with_temp_db(tmp_path, monkeypatch):

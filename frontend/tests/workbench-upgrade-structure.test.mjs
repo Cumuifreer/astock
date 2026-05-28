@@ -147,3 +147,68 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.match(read('pages/data-map/DataMapPage.tsx'), /Tushare 诊断/);
   assert.match(read('pages/status/StatusPage.tsx'), /checkpoint/i);
 });
+
+test('task progress and topbar popover avoid false running states', () => {
+  const button = read('design/Button.tsx');
+  assert.match(button, /forwardRef/);
+  assert.match(button, /ref=\{ref\}/);
+
+  const progress = read('design/Progress.tsx');
+  assert.match(progress, /state\?:/);
+  assert.match(progress, /terminalProgressStates/);
+  assert.match(progress, /indeterminateProgressStates/);
+  assert.match(progress, /failed/);
+
+  const queue = read('pages/status/TaskQueue.tsx');
+  assert.match(queue, /taskProgressValue/);
+  assert.match(queue, /state=\{task\.status\}/);
+
+  const statusPage = read('pages/status/StatusPage.tsx');
+  assert.match(statusPage, /dagProgress/);
+  assert.match(statusPage, /progressByTaskId/);
+
+  const metrics = read('utils/metrics.ts');
+  assert.match(metrics, /isTerminalTaskStatus/);
+  assert.match(metrics, /taskProgressValue/);
+  assert.match(metrics, /dagProgress/);
+});
+
+test('scanner exposes editable universe, built-in indicators, and explicit resonance selection', () => {
+  const universe = read('pages/scanner/UniversePanel.tsx');
+  assert.match(universe, /onPatchConfig/);
+  for (const key of [
+    'min_price',
+    'min_amount',
+    'min_float_market_value',
+    'max_float_market_value',
+    'min_turnover',
+    'max_turnover',
+    'min_rps20',
+    'min_rps60',
+    'min_rps120',
+    'candidate_limit',
+    'sort_by',
+    'include_bj',
+    'exclude_star_board',
+  ]) {
+    assert.match(universe, new RegExp(key));
+  }
+
+  const picker = read('pages/scanner/FactorPicker.tsx');
+  assert.match(picker, /显示内置指标/);
+  assert.match(picker, /paired_strategy_ids/);
+  assert.match(picker, /编辑参数/);
+  assert.match(picker, /转为显式规则/);
+
+  const canvas = read('pages/scanner/RuleCanvas.tsx');
+  assert.doesNotMatch(canvas, /slice\(0,\s*2\)/);
+  assert.match(canvas, /selectedResonanceRuleIds/);
+  assert.match(canvas, /platform_lookback_days/);
+  assert.match(canvas, /trend_macd_fast/);
+  assert.match(canvas, /onPatchConfig/);
+
+  const strategyUtils = read('utils/strategy.ts');
+  assert.match(strategyUtils, /includePaired/);
+  assert.match(strategyUtils, /indicatorParameterKeys/);
+  assert.match(strategyUtils, /indicatorParameterScope/);
+});

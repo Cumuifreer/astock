@@ -12,6 +12,7 @@ type StrategyDraftState = {
   setName: (name: string) => void;
   setRules: (rules: StrategyRule[]) => void;
   setResonances: (resonances: StrategyResonance[]) => void;
+  patchConfig: (patch: Partial<StrategyConfig>) => void;
 };
 
 export const useStrategyDraft = create<StrategyDraftState>((set) => ({
@@ -39,4 +40,12 @@ export const useStrategyDraft = create<StrategyDraftState>((set) => ({
       resonances,
       config: state.config ? composeStrategyConfig(state.config, state.rules, resonances) : state.config,
     })),
+  patchConfig: (patch) =>
+    set((state) => {
+      if (!state.config) return {};
+      const nextConfig = { ...state.config, ...patch };
+      return {
+        config: composeStrategyConfig(nextConfig, state.rules, state.resonances),
+      };
+    }),
 }));

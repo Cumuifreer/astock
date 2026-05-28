@@ -60,14 +60,42 @@ export function composeStrategyConfig(
   };
 }
 
-export function usableRuleIndicators(library?: IndicatorLibrary): IndicatorDefinition[] {
+export function usableRuleIndicators(library?: IndicatorLibrary, options: { includePaired?: boolean } = {}): IndicatorDefinition[] {
   return (library?.indicators || [])
     .filter((indicator) => indicator.kind === 'data' && indicator.status !== 'planned')
-    .filter((indicator) => !indicator.paired_strategy_ids?.length)
+    .filter((indicator) => options.includePaired || !indicator.paired_strategy_ids?.length)
     .filter((indicator) => indicator.operator_semantics !== 'market_context')
     .filter((indicator) => indicator.data_status !== 'display_only' || indicator.display_scope === 'candidate')
     .filter((indicator) => supportedRuleActions(indicator).length > 0)
     .sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN'));
+}
+
+export function indicatorParameterKeys(indicator: IndicatorDefinition): string[] {
+  const paired = indicator.paired_strategy_ids || [];
+  if (paired.length) return paired.map(String);
+  if (indicator.strategy_key) return [String(indicator.strategy_key)];
+  return [];
+}
+
+export function indicatorParameterScope(indicator: IndicatorDefinition): 'Universe' | 'Advanced' | 'Strategy' {
+  const universeKeys = new Set([
+    'min_price',
+    'min_amount',
+    'min_float_market_value',
+    'max_float_market_value',
+    'min_turnover',
+    'max_turnover',
+    'min_rps20',
+    'min_rps60',
+    'min_rps120',
+    'candidate_limit',
+    'sort_by',
+    'include_bj',
+    'exclude_star_board',
+  ]);
+  const keys = indicatorParameterKeys(indicator);
+  if (keys.some((key) => universeKeys.has(key))) return 'Universe';
+  return keys.length ? 'Advanced' : 'Strategy';
 }
 
 export function supportedRuleActions(indicator: IndicatorDefinition): RuleAction[] {

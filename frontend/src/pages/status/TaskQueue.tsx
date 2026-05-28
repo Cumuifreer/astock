@@ -2,9 +2,14 @@ import type { TaskRun } from '../../types';
 import { Badge } from '../../design/Badge';
 import { Progress } from '../../design/Progress';
 import { formatDateTime } from '../../utils/date';
-import { taskProgress } from '../../utils/metrics';
+import { taskProgressValue } from '../../utils/metrics';
 
-export function TaskQueue({ tasks }: { tasks: TaskRun[] }) {
+type TaskQueueProps = {
+  tasks: TaskRun[];
+  progressByTaskId?: Record<string, number | null | undefined>;
+};
+
+export function TaskQueue({ tasks, progressByTaskId = {} }: TaskQueueProps) {
   if (!tasks.length) {
     return (
       <div className="empty-state">
@@ -23,7 +28,7 @@ export function TaskQueue({ tasks }: { tasks: TaskRun[] }) {
           <p className="card-copy">
             {task.stage || '等待阶段'} · {task.source || '本地仓库'} · 心跳 {formatDateTime(task.updated_at)}
           </p>
-          <Progress value={taskProgress(task.processed, task.total)} />
+          <Progress label={`${task.kind} ${task.status}`} state={task.status} value={taskProgressValue(task, progressByTaskId[task.id])} />
           <div className="rule-chip-grid">
             <Badge>processed {task.processed}</Badge>
             <Badge>success {task.success}</Badge>

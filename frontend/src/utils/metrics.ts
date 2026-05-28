@@ -1,9 +1,32 @@
-import type { Capability } from '../types';
+import type { Capability, TaskRun } from '../types';
 import { toNumber } from './format';
+
+const terminalTaskStatuses = new Set(['completed_full', 'completed_partial', 'failed', 'skipped']);
+const terminalDagStatuses = new Set(['completed', 'skipped', 'partial', 'failed']);
 
 export function taskProgress(processed?: number, total?: number): number | null {
   if (!total || total <= 0) return null;
   return Math.max(0, Math.min(100, ((processed || 0) / total) * 100));
+}
+
+export function isTerminalTaskStatus(status?: string | null): boolean {
+  return terminalTaskStatuses.has(String(status || ''));
+}
+
+export function taskProgressValue(
+  task: Pick<TaskRun, 'processed' | 'total' | 'status'>,
+  override?: number | null,
+): number | null {
+  if (typeof override === 'number' && Number.isFinite(override)) return Math.max(0, Math.min(100, override));
+  const value = taskProgress(task.processed, task.total);
+  if (value !== null) return value;
+  return isTerminalTaskStatus(task.status) ? 100 : null;
+}
+
+export function dagProgress(nodes: Array<{ status?: string | null }> | null | undefined): number | null {
+  if (!nodes?.length) return null;
+  const processed = nodes.filter((node) => terminalDagStatuses.has(String(node.status || ''))).length;
+  return taskProgress(processed, nodes.length);
 }
 
 export function capabilityHealth(capability: Capability): 'normal' | 'stale' | 'low' | 'missing' | 'partial' {

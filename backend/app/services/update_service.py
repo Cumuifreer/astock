@@ -183,6 +183,7 @@ DEFAULT_DATA_DAG: List[Dict[str, Any]] = [
         "request_policy": {"source": "local", "rate_limit_group": "local"},
     },
 ]
+DAG_PROGRESS_TERMINAL_STATUSES = {"completed", "skipped", "partial", "failed"}
 HISTORY_BACKFILL_CAPABILITIES = {
     "历史 K 线",
     "RPS",
@@ -905,6 +906,9 @@ class UpdateService:
         if options.get("mode") == "capability_backfill":
             self._run_capability_backfill(task_id, options)
             return
+        if options.get("mode") == "market_environment":
+            self._run_market_environment_update(task_id)
+            return
 
         force = bool(options.get("force"))
         light = options.get("mode") == "daily_light" or bool(options.get("daily_light"))
@@ -1091,6 +1095,78 @@ class UpdateService:
                 failed=failed_sources + 1,
                 error_message=str(exc),
                 warning=str(exc),
+                finished_at=datetime.utcnow(),
+            )
+
+    def _run_market_environment_update(self, task_id: str) -> None:
+        target_history_date = self._target_history_date()
+        try:
+            self._patch_task(
+                task_id,
+                stage="重算市场环境",
+                source="Tushare 指数 / 本地宽度",
+                processed=0,
+                total=len(DEFAULT_DATA_DAG),
+            )
+            self.record_checkpoint(task_id, "market_environment", "市场环境", target_history_date, "all", "running")
+            market_environment_count = self._update_market_environment(target_history_date)
+            self.record_checkpoint(
+                task_id,
+                "market_environment",
+                "市场环境",
+                target_history_date,
+                "all",
+                "completed" if market_environment_count else "partial",
+                rows_written=market_environment_count,
+            )
+
+            self.record_checkpoint(task_id, "capability_refresh", "数据能力", target_history_date, "all", "running")
+            self.data_service.refresh_capabilities()
+            capability_count = len(self.data_service.capabilities())
+            self.record_checkpoint(
+                task_id,
+                "capability_refresh",
+                "数据能力",
+                target_history_date,
+                "all",
+                "completed",
+                rows_written=capability_count,
+            )
+            self._patch_task(
+                task_id,
+                status="completed_full" if market_environment_count else "completed_partial",
+                stage="市场环境已重算",
+                source="Tushare 指数 / 本地宽度",
+                processed=len(DEFAULT_DATA_DAG),
+                total=len(DEFAULT_DATA_DAG),
+                success=1 if market_environment_count else 0,
+                failed=0,
+                skipped=0,
+                summary={
+                    "mode": "market_environment",
+                    "target_history_date": target_history_date.isoformat(),
+                    "market_environment_count": market_environment_count,
+                    "capability_count": capability_count,
+                },
+                finished_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            self.record_checkpoint(
+                task_id,
+                "market_environment",
+                "市场环境",
+                target_history_date,
+                "all",
+                "failed",
+                error_message=str(exc),
+            )
+            self._patch_task(
+                task_id,
+                status="failed",
+                stage="市场环境重算失败",
+                failed=1,
+                warning=str(exc),
+                error_message=str(exc),
                 finished_at=datetime.utcnow(),
             )
 
@@ -1941,6 +2017,31 @@ class UpdateService:
             ],
             ["id"],
         )
+        self._sync_task_progress_from_checkpoints(task_id)
+
+    def _sync_task_progress_from_checkpoints(self, task_id: str) -> None:
+        task_rows = self.db.query("SELECT kind, payload_json FROM task_runs WHERE id = ?", [task_id])
+        if not task_rows or task_rows[0].get("kind") != "update":
+            return
+        try:
+            payload = json.loads(task_rows[0].get("payload_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            payload = {}
+        if payload.get("mode") == "capability_backfill":
+            return
+
+        dag_ids = [node["id"] for node in DEFAULT_DATA_DAG]
+        checkpoints = self.db.query(
+            """
+            SELECT job_id, status
+            FROM update_checkpoints
+            WHERE task_id = ?
+            """,
+            [task_id],
+        )
+        status_by_job = {row["job_id"]: str(row.get("status") or "") for row in checkpoints if row.get("job_id") in dag_ids}
+        processed = sum(1 for job_id in dag_ids if status_by_job.get(job_id) in DAG_PROGRESS_TERMINAL_STATUSES)
+        self._patch_task(task_id, processed=processed, total=len(dag_ids))
 
     def _record_tushare_enrichment_skips(self, task_id: str, target_date: date, reason: str) -> None:
         for job_id, capability in [

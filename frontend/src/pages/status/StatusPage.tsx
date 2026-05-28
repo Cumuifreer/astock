@@ -6,7 +6,7 @@ import { DataTable } from '../../design/DataTable';
 import { LoadingState } from '../../design/LoadingState';
 import { useBootstrap } from '../../hooks/useBootstrap';
 import { formatDateTime } from '../../utils/date';
-import { normalizeRows } from '../../utils/metrics';
+import { dagProgress, normalizeRows } from '../../utils/metrics';
 import { TaskQueue } from './TaskQueue';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { TaskRun } from '../../types';
@@ -28,6 +28,11 @@ export function StatusPage() {
   });
   const checkpointRows = normalizeRows<UpdateCheckpoint>(checkpoints.data);
   const dagRows = normalizeRows<TaskDagNode>(dag.data);
+  const progressByTaskId = useMemo(() => {
+    if (!activeTask || activeTask.kind !== 'update') return {};
+    if (!['queued', 'running'].includes(activeTask.status)) return {};
+    return { [activeTask.id]: dagProgress(dagRows) };
+  }, [activeTask, dagRows]);
   const checkpointColumns = useMemo<Array<ColumnDef<UpdateCheckpoint, unknown>>>(
     () => [
       { header: 'job', accessorKey: 'job_id' },
@@ -52,7 +57,7 @@ export function StatusPage() {
           </div>
           <Badge tone={activeTask ? 'info' : 'neutral'}>{activeTask?.id || 'idle'}</Badge>
         </div>
-        <TaskQueue tasks={tasks} />
+        <TaskQueue tasks={tasks} progressByTaskId={progressByTaskId} />
       </section>
 
       <section className="grid-2">
