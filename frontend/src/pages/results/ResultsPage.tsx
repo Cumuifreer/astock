@@ -57,7 +57,7 @@ export function ResultsPage() {
     mutationFn: () =>
       addWatchlistItems({
         source_type: 'strategy',
-        source_label: '分析结果',
+        source_label: activeStrategyName || '未命名策略',
         source_ref: activeReport?.id || selectedRunId || null,
         items: filteredCandidates.slice(0, 50).map((candidate) => ({
           code: candidate.code,
@@ -156,7 +156,7 @@ export function ResultsPage() {
           <EmptyState title="暂无候选" description="运行策略后，这里会展示候选表和结构化证据。" />
         )}
       </section>
-      <CandidateEvidencePanel candidate={selected || filteredCandidates[0] || null} runId={selectedRunId || latestRunId} />
+      <CandidateEvidencePanel candidate={selected || filteredCandidates[0] || null} runId={selectedRunId || latestRunId} strategyName={activeStrategyName} />
     </div>
   );
 }

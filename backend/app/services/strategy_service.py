@@ -720,8 +720,6 @@ class StrategyService:
         now = datetime.utcnow()
         target_id = preset_id or f"custom-{uuid.uuid4().hex[:12]}"
         existing = self.get_preset(target_id)
-        if existing and existing.get("is_system"):
-            target_id = f"custom-{uuid.uuid4().hex[:12]}"
         if set_default:
             self.db.execute("UPDATE strategy_presets SET is_default = FALSE", write=True)
         normalized_config = normalize_strategy_config(config)
@@ -741,7 +739,7 @@ class StrategyService:
 
     def delete_preset(self, preset_id: str) -> bool:
         preset = self.get_preset(preset_id)
-        if not preset or preset.get("is_system"):
+        if not preset:
             return False
         self.db.execute(
             """
@@ -752,12 +750,22 @@ class StrategyService:
             [datetime.utcnow(), datetime.utcnow(), preset_id],
             write=True,
         )
+        remaining_count = self.db.scalar("SELECT COUNT(*) FROM strategy_presets WHERE deleted_at IS NULL")
+        if not remaining_count:
+            self.save_preset("未命名策略1", DEFAULT_STRATEGY_CONFIG, set_default=True)
+            return True
         if preset.get("is_default"):
             self.db.execute(
                 """
                 UPDATE strategy_presets
-                SET is_default = TRUE, deleted_at = NULL, updated_at = ?
-                WHERE id = 'system-momentum'
+                SET is_default = TRUE, updated_at = ?
+                WHERE id = (
+                    SELECT id
+                    FROM strategy_presets
+                    WHERE deleted_at IS NULL
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                )
                 """,
                 [datetime.utcnow()],
                 write=True,

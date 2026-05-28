@@ -77,7 +77,7 @@ export function indicatorParameterKeys(indicator: IndicatorDefinition): string[]
   return [];
 }
 
-export function indicatorParameterScope(indicator: IndicatorDefinition): '股票池' | '高级参数' | '策略参数' {
+export function indicatorParameterScope(indicator: IndicatorDefinition): '股票池' | '更多设置' | '策略参数' {
   const universeKeys = new Set([
     'min_price',
     'min_amount',
@@ -95,7 +95,7 @@ export function indicatorParameterScope(indicator: IndicatorDefinition): '股票
   ]);
   const keys = indicatorParameterKeys(indicator);
   if (keys.some((key) => universeKeys.has(key))) return '股票池';
-  return keys.length ? '高级参数' : '策略参数';
+  return keys.length ? '更多设置' : '策略参数';
 }
 
 export function supportedRuleActions(indicator: IndicatorDefinition): RuleAction[] {

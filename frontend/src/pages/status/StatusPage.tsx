@@ -32,6 +32,7 @@ export function StatusPage() {
   const queuedTasks = effectiveActiveRows.filter((task) => task.status === 'queued');
   const failedTasks = recentRows.filter((task) => task.status === 'failed');
   const activeTask = runningTasks[0] || queuedTasks[0] || fallbackTasks.find((task) => ['queued', 'running'].includes(task.status)) || fallbackTasks[0];
+  const scheduler = bootstrap.data?.runtime_health?.scheduler;
   const taskFlow = useQuery({
     queryKey: ['task-flow', activeTask?.id],
     queryFn: () => getTaskFlow(activeTask?.id || ''),
@@ -73,14 +74,14 @@ export function StatusPage() {
           </div>
           <Badge tone={activeTask ? 'info' : 'neutral'}>{activeTask ? '有任务' : '系统待命'}</Badge>
         </div>
-        <div className="grid-4">
+        <div className="grid-4 status-summary-grid">
           <Metric label="系统状态" value={systemLabel(activeTask)} />
           <Metric label="任务队列" value={`运行 ${runningTasks.length} · 排队 ${queuedTasks.length}`} />
-          <Metric label="定时任务" value="最近暂无 · 下次 09:35 · 今日还剩 25 次" />
+          <Metric label="定时计划" value={schedulerLabel(scheduler)} />
           <Metric label="最近失败" value={failedTasks[0]?.error_message || failedTasks[0]?.warning || '无'} tone={failedTasks.length ? 'risk' : 'neutral'} />
         </div>
         {activeTask && ['queued', 'running'].includes(activeTask.status) ? (
-          <article className="rule-card" style={{ marginTop: 16 }}>
+          <article className="task-progress-card" style={{ marginTop: 16 }}>
             <div className="rule-card-header">
               <strong>当前任务：{kindLabel(activeTask.kind)}</strong>
               <Badge tone={activeTask.status === 'running' ? 'info' : 'watch'}>{taskStatusLabel(activeTask.status)}</Badge>
@@ -147,11 +148,19 @@ function progressStatusLabel(status?: string | null) {
 
 function Metric({ label, value, tone = 'neutral' }: { label: string; value: string; tone?: 'neutral' | 'risk' }) {
   return (
-    <article className="metric-pill">
+    <article className={tone === 'risk' ? 'metric-pill status-metric-card risk' : 'metric-pill status-metric-card'}>
       <span className="metric-label">{label}</span>
       <div className={tone === 'risk' ? 'metric-value text-risk' : 'metric-value'}>{value}</div>
     </article>
   );
+}
+
+function schedulerLabel(scheduler?: { enabled?: boolean; next_slot?: { time?: string | null; sample_at?: string | null } | null; remaining_count?: number; latest_slot?: { sample_at?: string | null; status?: string | null } | null } | null) {
+  if (!scheduler?.enabled) return '未开启';
+  const next = scheduler.next_slot?.time || scheduler.next_slot?.sample_at;
+  const latest = scheduler.latest_slot?.sample_at;
+  const remaining = scheduler.remaining_count ?? 0;
+  return `${latest ? `最近 ${formatDateTime(latest)}` : '最近暂无'} · ${next ? `下次 ${next}` : '下次待定'} · 今日还剩 ${remaining} 次`;
 }
 
 function systemLabel(task?: TaskRun | null) {

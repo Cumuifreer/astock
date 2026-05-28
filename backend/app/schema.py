@@ -463,6 +463,16 @@ MIGRATIONS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS candidate_ai_summaries (
+        run_id TEXT,
+        code TEXT,
+        summary_json TEXT,
+        llm_model TEXT,
+        generated_at TIMESTAMP,
+        PRIMARY KEY (run_id, code)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS backtest_runs (
         id TEXT PRIMARY KEY,
         status TEXT,
@@ -691,6 +701,7 @@ MIGRATIONS = [
       limit_up_count INTEGER,
       limit_up_count_status TEXT,
       strong_count INTEGER,
+      strong_count_status TEXT,
       leader_code TEXT,
       leader_name TEXT,
       leader_pct_chg DOUBLE,
@@ -702,6 +713,9 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE market_sector_daily ADD COLUMN IF NOT EXISTS limit_up_count_status TEXT
+    """,
+    """
+    ALTER TABLE market_sector_daily ADD COLUMN IF NOT EXISTS strong_count_status TEXT
     """,
     """
     ALTER TABLE market_sector_daily ADD COLUMN IF NOT EXISTS leader_pct_chg DOUBLE

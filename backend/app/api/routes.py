@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -10,6 +9,7 @@ from backend.app.schema import migrate
 from backend.app.config import settings
 from backend.app.services.analysis_service import AnalysisService
 from backend.app.services.backtest_service import BacktestService
+from backend.app.services.candidate_summary_service import CandidateSummaryService
 from backend.app.services.data_service import DataService
 from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.indicator_registry import indicator_library
@@ -29,6 +29,7 @@ update_service = UpdateService(db)
 backtest_service = BacktestService(db, analysis_service)
 intraday_service = IntradayRadarService(db)
 watchlist_service = WatchlistService(db)
+candidate_summary_service = CandidateSummaryService(db)
 update_service.configure_runners(analysis_service, backtest_service)
 update_service.recover_interrupted_tasks()
 update_service.kick_queue()
@@ -385,33 +386,18 @@ def analysis_report(
 
 @router.post("/analysis/candidates/{run_id}/{code}/ai-summary")
 def candidate_ai_summary(run_id: str, code: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    generated_at = datetime.utcnow().isoformat(timespec="seconds")
-    if not settings.daily_brief_api_key:
-        return {
-            "enabled": False,
-            "summary": "AI 解读暂未启用。请在系统配置中填写模型密钥。",
-            "opportunities": [],
-            "risks": [],
-            "watch_plan": [],
-            "generated_at": generated_at,
-        }
     report = data_service.analysis_report(run_id=run_id, limit=300)
     rows = (report.get("candidates") or {}).get("rows") or []
     candidate = next((row for row in rows if str(row.get("code")) == str(code)), None)
     if candidate is None:
         candidate = (payload or {}).get("candidate") or {"code": code, "name": code, "reasons": []}
-    reasons = [str(item) for item in candidate.get("reasons") or []][:3]
-    metrics = candidate.get("metrics") if isinstance(candidate.get("metrics"), dict) else {}
-    risks = [str(item) for item in candidate.get("risk_tags") or []][:3] or [str(item) for item in metrics.get("risk_flags") or []][:3]
-    name = candidate.get("name") or code
-    return {
-        "enabled": True,
-        "summary": f"{name} 入选主要来自策略规则命中和相对强度表现，适合作为观察候选而非直接交易指令。",
-        "opportunities": reasons or ["入选规则较完整，等待后续走势确认。"],
-        "risks": risks or ["需关注放量回落、跌破平台或市场环境转弱。"],
-        "watch_plan": ["观察 1-3 个交易日的量价延续。", "跌破关键平台或风险项重新命中时移出观察池。", "复盘 T+1、T+3、T+5 收益。"],
-        "generated_at": generated_at,
-    }
+    return candidate_summary_service.summarize(
+        run_id=run_id,
+        code=code,
+        candidate=candidate,
+        matched_rules=((payload or {}).get("matched_rules") if isinstance(payload, dict) else None),
+        risk_items=((payload or {}).get("risk_items") if isinstance(payload, dict) else None),
+    )
 
 
 @router.get("/backtests")
@@ -520,7 +506,7 @@ def duplicate_strategy(preset_id: str) -> Dict[str, Any]:
 @router.delete("/strategies/{preset_id}")
 def delete_strategy(preset_id: str) -> Dict[str, Any]:
     if not strategy_service.delete_preset(preset_id):
-        raise HTTPException(status_code=400, detail="系统预设不能删除，或预设不存在。")
+        raise HTTPException(status_code=400, detail="策略不存在或已经删除。")
     return {"ok": True}
 
 

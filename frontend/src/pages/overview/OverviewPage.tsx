@@ -76,15 +76,18 @@ function DailyBriefPanel({ brief, busy, onRegenerate }: { brief: DailyBrief | nu
           ))}
         </div>
       ) : null}
-      <details className="maintenance-details">
+      <details className="maintenance-details brief-sources-details" open>
         <summary>查看引用来源</summary>
         <div className="brief-list-grid">
           {rows.length ? (
             rows.map((item) => (
               <a className="brief-mini-card" href={item.url} key={`${item.url}-${item.title}`} rel="noreferrer" target="_blank">
                 <strong>{item.title}</strong>
-                <span>{item.source}</span>
+                <span>
+                  {item.source || '新闻来源'} · {formatDateTime(item.published_at)}
+                </span>
                 <p>{item.summary}</p>
+                <small>打开原文</small>
               </a>
             ))
           ) : (

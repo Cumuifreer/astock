@@ -2168,7 +2168,14 @@ class UpdateService:
                     SELECT COUNT(*)
                     FROM market_sector_daily
                     WHERE trade_date = ?
-                      AND limit_up_count_status IS NULL
+                      AND (
+                        limit_up_count_status IS NULL
+                        OR limit_up_count_status IN ('not_computed', 'missing', 'missing_limit_data', 'missing_members', 'missing_quote')
+                        OR strong_count_status IS NULL
+                        OR strong_count_status IN ('not_computed', 'missing', 'missing_members', 'missing_quote')
+                        OR limit_up_count IS NULL
+                        OR strong_count IS NULL
+                      )
                     """,
                     [trade_date],
                 )
@@ -2242,10 +2249,20 @@ class UpdateService:
             if not sector_codes:
                 continue
             placeholders = ",".join(["?"] * len(sector_codes))
-            limit_data_available = bool(
-                self.db.scalar("SELECT COUNT(*) FROM tushare_limit_list_d WHERE trade_date = ?", [trade_date])
+            limit_date = _date_option(
+                self.db.scalar("SELECT MAX(trade_date) FROM tushare_limit_list_d WHERE trade_date <= ?", [trade_date])
             )
-            params: List[Any] = [trade_date, trade_date, trade_date, *sector_codes]
+            snapshot_date = _date_option(
+                self.db.scalar("SELECT MAX(date) FROM daily_snapshots WHERE date <= ?", [trade_date])
+            )
+            history_date = _date_option(
+                self.db.scalar("SELECT MAX(date) FROM historical_bars WHERE date <= ?", [trade_date])
+            )
+            limit_join_date = limit_date or trade_date
+            snapshot_join_date = snapshot_date or trade_date
+            history_join_date = history_date or trade_date
+            quote_available = bool(snapshot_date or history_date)
+            params: List[Any] = [limit_join_date, snapshot_join_date, history_join_date, *sector_codes]
             count_rows = self.db.query(
                 f"""
                 SELECT m.con_code AS sector_code,
@@ -2282,7 +2299,7 @@ class UpdateService:
                   AND COALESCE(s.pct_chg, h.pct_chg) IS NOT NULL
                 ORDER BY m.con_code, COALESCE(s.pct_chg, h.pct_chg) DESC
                 """,
-                [trade_date, trade_date, *sector_codes],
+                [snapshot_join_date, history_join_date, *sector_codes],
             )
             leaders: Dict[str, Dict[str, Any]] = {}
             for leader in leader_rows:
@@ -2292,9 +2309,16 @@ class UpdateService:
                 count = counts.get(code, {})
                 leader = leaders.get(code, {})
                 member_count = int(count.get("member_count") or 0)
-                row["limit_up_count_status"] = "computed" if limit_data_available and member_count else "missing"
-                row["limit_up_count"] = int(count.get("limit_up_count") or 0) if row["limit_up_count_status"] == "computed" else None
-                row["strong_count"] = int(count.get("strong_count") or 0) if member_count else None
+                if not member_count:
+                    limit_status = "missing_members"
+                    strong_status = "missing_members"
+                else:
+                    limit_status = "computed" if limit_date else "missing_limit_data"
+                    strong_status = "computed" if quote_available else "missing_quote"
+                row["limit_up_count_status"] = limit_status
+                row["strong_count_status"] = strong_status
+                row["limit_up_count"] = int(count.get("limit_up_count") or 0) if limit_status == "computed" else None
+                row["strong_count"] = int(count.get("strong_count") or 0) if strong_status == "computed" else None
                 row["leader_code"] = row.get("leader_code") or leader.get("code")
                 row["leader_name"] = row.get("leader_name") or leader.get("name")
                 row["leader_pct_chg"] = leader.get("pct_chg")

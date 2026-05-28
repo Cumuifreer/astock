@@ -222,5 +222,5 @@ def test_watchlist_statuses_are_normalized_to_final_product_values(tmp_path):
     item = batch["items"][0]
 
     assert batch["review_status"] == "观察中"
-    assert item["review_status"] == "已归档"
+    assert item["review_status"] == "观察中"
     assert service.update_item(created["batch_id"], "000001.SZ", {"review_status": "已放弃"})["item"]["review_status"] == "误报"

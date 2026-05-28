@@ -11,14 +11,15 @@ from backend.app.db import Database
 from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
 
 
-REVIEW_STATUSES = {"观察中", "有效", "误报", "已归档"}
+REVIEW_STATUSES = {"观察中", "有效", "误报"}
 BATCH_REVIEW_STATUSES = REVIEW_STATUSES
 LEGACY_REVIEW_STATUS_MAP = {
     "已验证": "有效",
     "一般": "观察中",
     "已放弃": "误报",
-    "已错过": "已归档",
-    "归档": "已归档",
+    "已归档": "观察中",
+    "已错过": "观察中",
+    "归档": "观察中",
 }
 
 

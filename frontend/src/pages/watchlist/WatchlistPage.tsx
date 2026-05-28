@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
+import type { WatchlistItem } from '../../types';
 import { deleteWatchlistItem, getWatchlist, updateWatchlistItem } from '../../api/watchlist';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
@@ -14,21 +15,25 @@ import { Switch } from '../../design/Switch';
 import { useToast } from '../../design/Toast';
 import { formatDate } from '../../utils/date';
 import { formatNumber, formatPercent, toNumber } from '../../utils/format';
-import { HypothesisCard, type HypothesisItem } from './HypothesisCard';
 
-type WatchStatus = '观察中' | '有效' | '误报' | '已归档';
+type HypothesisItem = WatchlistItem & {
+  hypothesis?: string | null;
+  invalidation_rule?: string | null;
+  trigger_rules?: string[];
+  tags?: string[];
+};
+
+type WatchStatus = '观察中' | '有效' | '误报';
 type StatusFilter = '全部' | WatchStatus;
-type ViewMode = 'card' | 'table';
 type EditField = 'note' | 'invalidation_rule' | 'review_status';
 
-const WATCH_STATUSES: WatchStatus[] = ['观察中', '有效', '误报', '已归档'];
+const WATCH_STATUSES: WatchStatus[] = ['观察中', '有效', '误报'];
 
 export function WatchlistPage() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const watchlist = useQuery({ queryKey: ['watchlist'], queryFn: getWatchlist });
   const [status, setStatus] = useState<StatusFilter>('全部');
-  const [view, setView] = useState<ViewMode>('card');
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [editing, setEditing] = useState<{ item: HypothesisItem; field: EditField } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<HypothesisItem | null>(null);
@@ -120,18 +125,9 @@ export function WatchlistPage() {
             { value: '观察中', label: '观察中' },
             { value: '有效', label: '有效' },
             { value: '误报', label: '误报' },
-            { value: '已归档', label: '已归档' },
-          ]}
+            ]}
         />
         <div className="data-toolbar" style={{ marginTop: 12 }}>
-          <Segmented
-            value={view}
-            onChange={setView}
-            options={[
-              { value: 'card', label: '卡片视图' },
-              { value: 'table', label: '表格视图' },
-            ]}
-          />
           {selectedItems.length ? (
             <>
               <Badge tone="info">已选 {selectedItems.length} 项</Badge>
@@ -141,9 +137,6 @@ export function WatchlistPage() {
               <Button onClick={() => bulkUpdateMutation.mutate({ items: selectedItems, review_status: '误报' })} variant="secondary">
                 批量标记误报
               </Button>
-              <Button onClick={() => bulkUpdateMutation.mutate({ items: selectedItems, review_status: '已归档' })} variant="secondary">
-                批量归档
-              </Button>
               <Button onClick={() => setBulkDeleteOpen(true)} variant="danger">
                 批量删除
               </Button>
@@ -152,15 +145,7 @@ export function WatchlistPage() {
         </div>
       </section>
       {items.length ? (
-        view === 'card' ? (
-          <div className="grid-2">
-            {items.map((item) => (
-              <HypothesisCard item={item} key={`${item.batch_id}-${item.code}`} onDelete={deleteItem} onEdit={editItem} />
-            ))}
-          </div>
-        ) : (
-          <WatchlistTable items={items} onDelete={deleteItem} onEdit={editItem} selectedKeys={selectedKeys} onSelect={toggleSelected} />
-        )
+        <WatchlistTable items={items} onDelete={deleteItem} onEdit={editItem} selectedKeys={selectedKeys} onSelect={toggleSelected} />
       ) : (
         <EmptyState title="没有匹配观察项" description="从策略结果或盘中雷达加入观察池后，会自动记录交易假设和后验表现。" />
       )}
@@ -240,7 +225,7 @@ function WatchlistTable({
       { header: 'T+3', cell: ({ row }) => formatPercentStatus(row.original.return_3d) },
       { header: 'T+5', cell: ({ row }) => formatPercentStatus(row.original.return_5d) },
       { header: '最新收益', cell: ({ row }) => formatPercentStatus(row.original.return_latest) },
-      { header: '触发来源', cell: ({ row }) => sourceLabel(row.original.source_type, row.original.source_label) },
+      { header: '来源', cell: ({ row }) => sourceLabel(row.original.source_type, row.original.source_label) },
       { header: '失效条件', cell: ({ row }) => row.original.invalidation_rule || '未设置' },
       {
         header: '操作',
@@ -273,8 +258,9 @@ function itemKey(item: HypothesisItem) {
 }
 
 function normalizeStatus(value?: string | null): WatchStatus {
-  if (value === '有效' || value === '误报' || value === '已归档') return value;
-  if (value === '归档' || value === '已放弃' || value === '已验证' || value === '已错过') return '已归档';
+  if (value === '有效' || value === '误报') return value;
+  if (value === '已放弃') return '误报';
+  if (value === '已验证') return '有效';
   return '观察中';
 }
 
@@ -286,7 +272,6 @@ function statusTone(item: HypothesisItem): 'good' | 'watch' | 'risk' | 'neutral'
   const status = itemStatus(item);
   if (status === '有效') return 'good';
   if (status === '误报') return 'risk';
-  if (status === '已归档') return 'neutral';
   return 'watch';
 }
 
@@ -312,8 +297,8 @@ function formatPercentStatus(value: unknown) {
 
 function sourceLabel(sourceType?: string | null, sourceLabel?: string | null) {
   const label = String(sourceLabel || '').trim();
-  if (/scanner/i.test(label)) return '策略选股候选';
-  if (label) return label;
+  if (/scanner|策略选股候选|分析结果/i.test(label)) return '未命名策略';
+  if (label && !/scanner|策略选股候选|分析结果/i.test(label)) return label;
   if (sourceType === 'intraday') return '盘中雷达';
   if (sourceType === 'manual') return '手动';
   return '策略选股';

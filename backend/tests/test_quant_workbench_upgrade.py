@@ -145,6 +145,76 @@ def test_market_overview_uses_environment_and_sector_heatmap(tmp_path):
     assert heatmap[0]["heat_score"] == 86.5
 
 
+def test_market_actions_do_not_warn_when_freshness_is_normal(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    _seed_market(db)
+    trade_date = date(2026, 5, 22)
+    db.upsert(
+        "daily_snapshots",
+        [
+            {
+                "code": "000001.SZ",
+                "date": trade_date,
+                "name": "平安银行",
+                "latest_price": 10.0,
+                "pct_chg": 1.0,
+                "high": 10.2,
+                "low": 9.8,
+                "volume": 1_000_000,
+                "amount": 30_000_000,
+                "turnover_rate": 2.0,
+                "float_market_value": 100_000_000,
+                "source": "test",
+                "updated_at": "2026-05-22T16:00:00",
+            }
+        ],
+        ["code", "date"],
+    )
+    db.upsert(
+        "tushare_daily_basic",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": trade_date,
+                "close": 10.0,
+                "turnover_rate": 2.0,
+                "updated_at": "2026-05-22T16:00:00",
+            }
+        ],
+        ["code", "trade_date"],
+    )
+    db.upsert(
+        "market_sector_daily",
+        [
+            {
+                "sector_code": "885800.TI",
+                "sector_name": "半导体设备",
+                "sector_type": "concept",
+                "trade_date": trade_date,
+                "pct_chg": 3.2,
+                "amount": 1_200_000_000.0,
+                "net_amount": 210_000_000.0,
+                "company_count": 42,
+                "limit_up_count": 3,
+                "limit_up_count_status": "computed",
+                "strong_count": 9,
+                "strong_count_status": "computed",
+                "leader_code": "000001.SZ",
+                "leader_name": "平安银行",
+                "heat_score": 86.5,
+                "source": "test",
+                "updated_at": "2026-05-22T16:00:00",
+            }
+        ],
+        ["sector_code", "sector_type", "trade_date"],
+    )
+
+    actions = DataService(db).market_overview()["action_items"]
+
+    assert all(action["id"] != "data-stale" for action in actions)
+
+
 def test_sector_persist_fills_limit_and_strong_counts(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -306,11 +376,155 @@ def test_sector_persist_fills_limit_and_strong_counts(tmp_path):
     assert row["limit_up_count"] == 1
     assert row["limit_up_count_status"] == "computed"
     assert row["strong_count"] == 2
+    assert row["strong_count_status"] == "computed"
     assert row["leader_code"] == "000001.SZ"
     assert row["leader_pct_chg"] == 9.8
     assert industry["limit_up_count"] == 1
     assert industry["limit_up_count_status"] == "computed"
+    assert industry["strong_count_status"] == "computed"
     assert DataService(db).sector_heatmap("industry")[0]["limit_up_count_status"] == "computed"
+
+
+def test_existing_sector_rows_refresh_not_computed_counts_with_recent_available_dates(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    sector_date = date(2026, 5, 28)
+    quote_date = date(2026, 5, 27)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行"), _stock("000002.SZ", "万科A")], ["code"])
+    db.upsert(
+        "tushare_ths_member",
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "con_code": "885800.TI",
+                "con_name": "半导体设备",
+                "weight": None,
+                "in_date": "2020-01-01",
+                "out_date": None,
+                "is_new": "Y",
+                "source": "test",
+                "updated_at": "2026-05-28T09:00:00",
+            },
+            {
+                "code": "000002.SZ",
+                "name": "万科A",
+                "con_code": "885800.TI",
+                "con_name": "半导体设备",
+                "weight": None,
+                "in_date": "2020-01-01",
+                "out_date": None,
+                "is_new": "Y",
+                "source": "test",
+                "updated_at": "2026-05-28T09:00:00",
+            },
+        ],
+        ["code", "con_code"],
+    )
+    db.upsert(
+        "historical_bars",
+        [
+            _bar("000001.SZ", quote_date, 10.0, pct_chg=10.0),
+            _bar("000002.SZ", quote_date, 11.0, pct_chg=5.5),
+        ],
+        ["code", "date"],
+    )
+    db.upsert(
+        "tushare_limit_list_d",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": quote_date,
+                "name": "平安银行",
+                "close": 10.0,
+                "pct_chg": 10.0,
+                "limit_type": "U",
+                "up_stat": None,
+                "fd_amount": 1_000_000.0,
+                "first_time": "09:45",
+                "last_time": "14:55",
+                "open_times": 0,
+                "source": "test",
+                "updated_at": "2026-05-27T15:00:00",
+            }
+        ],
+        ["code", "trade_date"],
+    )
+    db.upsert(
+        "market_sector_daily",
+        [
+            {
+                "sector_code": "885800.TI",
+                "sector_name": "半导体设备",
+                "sector_type": "concept",
+                "trade_date": sector_date,
+                "pct_chg": 2.5,
+                "amount": None,
+                "net_amount": 100_000_000.0,
+                "company_count": 2,
+                "limit_up_count": None,
+                "limit_up_count_status": "not_computed",
+                "strong_count": None,
+                "strong_count_status": "not_computed",
+                "leader_code": None,
+                "leader_name": None,
+                "leader_pct_chg": None,
+                "heat_score": 80.0,
+                "source": "test",
+                "updated_at": "2026-05-28T15:00:00",
+            }
+        ],
+        ["sector_code", "sector_type", "trade_date"],
+    )
+
+    UpdateService(db)._update_market_sector_daily(sector_date, object(), [])
+
+    row = db.query("SELECT * FROM market_sector_daily WHERE sector_code = '885800.TI'")[0]
+    assert row["limit_up_count_status"] == "computed"
+    assert row["limit_up_count"] == 1
+    assert row["strong_count_status"] == "computed"
+    assert row["strong_count"] == 2
+    assert row["leader_code"] == "000001.SZ"
+
+
+def test_sector_breadth_reports_missing_members_instead_of_zero_counts(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    sector_date = date(2026, 5, 28)
+    db.upsert(
+        "market_sector_daily",
+        [
+            {
+                "sector_code": "881100.TI",
+                "sector_name": "银行",
+                "sector_type": "industry",
+                "trade_date": sector_date,
+                "pct_chg": 1.5,
+                "amount": None,
+                "net_amount": 80_000_000.0,
+                "company_count": 25,
+                "limit_up_count": None,
+                "limit_up_count_status": "not_computed",
+                "strong_count": None,
+                "strong_count_status": "not_computed",
+                "leader_code": None,
+                "leader_name": None,
+                "leader_pct_chg": None,
+                "heat_score": 70.0,
+                "source": "test",
+                "updated_at": "2026-05-28T15:00:00",
+            }
+        ],
+        ["sector_code", "sector_type", "trade_date"],
+    )
+
+    UpdateService(db)._update_market_sector_daily(sector_date, object(), [])
+    row = DataService(db).sector_heatmap("industry")[0]
+
+    assert row["limit_up_count"] is None
+    assert row["limit_up_count_status"] == "missing_members"
+    assert row["strong_count"] is None
+    assert row["strong_count_status"] == "missing_members"
 
 
 def test_update_checkpoints_and_dag_are_queryable(tmp_path):

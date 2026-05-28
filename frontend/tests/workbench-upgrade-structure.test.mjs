@@ -129,17 +129,18 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.match(read('pages/overview/OverviewPage.tsx'), /SectorHeatmap/);
   assert.doesNotMatch(read('pages/overview/OverviewPage.tsx'), /DailyActionList/);
   assert.match(read('pages/overview/OverviewPage.tsx'), /市场简报/);
-  assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /为什么入选/);
-  assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /买点质量/);
+  assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /AI 解读 \/ 规则解释/);
+  assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /入选理由/);
+  assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /风险提示/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /可操作动作/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /异动榜/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /低吸榜/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /风险榜/);
-  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /卡片视图/);
-  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /表格视图/);
+  assert.doesNotMatch(read('pages/watchlist/WatchlistPage.tsx'), /卡片视图|表格视图/);
+  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /DataTable/);
   assert.match(read('pages/watchlist/WatchlistPage.tsx'), /删除观察项/);
   assert.match(read('pages/backtest/BacktestPage.tsx'), /信号评估/);
-  assert.match(read('pages/backtest/BacktestPage.tsx'), /组合回测/);
+  assert.match(`${read('pages/backtest/BacktestPage.tsx')}\n${read('pages/backtest/PortfolioBacktest.tsx')}`, /组合回测|简化组合模拟/);
   assert.match(read('pages/backtest/SignalEvaluation.tsx'), /mutation\.data\?\.runId/);
   assert.match(read('pages/backtest/SignalEvaluation.tsx'), /run\?\.summary/);
   assert.doesNotMatch(read('pages/backtest/SignalEvaluation.tsx'), /2024-01-01/);
@@ -169,7 +170,7 @@ test('task progress and topbar popover avoid false running states', () => {
   assert.match(statusPage, /flowProgress/);
   assert.match(statusPage, /progressByTaskId/);
   assert.match(statusPage, /getTasks/);
-  for (const label of ['系统状态', '任务队列', '定时任务', '最近失败']) {
+  for (const label of ['系统状态', '任务队列', '定时计划', '最近失败']) {
     assert.match(statusPage, new RegExp(label));
   }
 
@@ -179,41 +180,19 @@ test('task progress and topbar popover avoid false running states', () => {
   assert.match(metrics, /dagProgress/);
 });
 
-test('scanner exposes editable universe, built-in indicators, and explicit resonance selection', () => {
-  const universe = read('pages/scanner/UniversePanel.tsx');
-  assert.match(universe, /onPatchConfig/);
-  for (const key of [
-    'min_price',
-    'min_amount',
-    'min_float_market_value',
-    'max_float_market_value',
-    'min_turnover',
-    'max_turnover',
-    'min_rps20',
-    'min_rps60',
-    'min_rps120',
-    'candidate_limit',
-    'sort_by',
-    'include_bj',
-    'exclude_star_board',
-  ]) {
-    assert.match(universe, new RegExp(key));
-  }
-
+test('scanner exposes a unified indicator matrix and panel-based combination bonus', () => {
   const matrix = read('pages/scanner/IndicatorMatrix.tsx');
-  for (const label of ['全指标矩阵', '股票池', '行情流动性', '技术强弱', '题材板块', '资金流向', '启用']) {
+  for (const label of ['指标配置矩阵', '基础股票池', '流动性与成交', '相对强弱', '题材与板块', '资金流向', '开关']) {
     assert.match(matrix, new RegExp(label));
   }
   assert.match(matrix, /indicatorParameterKeys/);
-  assert.match(matrix, /调整参数/);
+  assert.doesNotMatch(matrix, /调整参数|高级参数|规则配置/);
   assert.match(matrix, /Switch/);
 
-  const canvas = read('pages/scanner/RuleCanvas.tsx');
-  assert.doesNotMatch(canvas, /slice\(0,\s*2\)/);
-  assert.match(canvas, /selectedResonanceRuleIds/);
-  assert.match(canvas, /platform_lookback_days/);
-  assert.match(canvas, /trend_macd_fast/);
-  assert.match(canvas, /onPatchConfig/);
+  const combination = read('pages/scanner/CombinationBonusPanel.tsx');
+  assert.match(combination, /选择组合指标/);
+  assert.match(combination, /selectableResonanceRules/);
+  assert.match(combination, /combo-choice-grid/);
 
   const strategyUtils = read('utils/strategy.ts');
   assert.match(strategyUtils, /includePaired/);

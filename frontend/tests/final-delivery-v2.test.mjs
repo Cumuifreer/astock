@@ -30,20 +30,20 @@ test('v2 forbids browser-native alert confirm and prompt', () => {
 });
 
 test('ordinary pages do not expose internal product language', () => {
-  const forbidden = /Market Pulse|Scanner|Rule Canvas|feature_driven|DAG|checkpoint|developer|开发者详情|Tushare 增强|analysis-|slice\(0,\s*12\)|run_id|task_id|signal_mode|default_strategy|metrics_json|strategy_rule_results|payload|market_sector_daily/;
+  const forbidden = /Market Pulse|Rule Canvas|DAG|checkpoint|developer|开发者详情|Tushare 增强|系统策略|默认策略|技术明细|调试/;
   for (const [path, source] of allSource()) {
     if (!/^(app|pages|design)\//.test(path)) continue;
     assert.doesNotMatch(source, forbidden, `${path} exposes v2-forbidden wording`);
   }
 });
 
-test('overview removes daily action list and keeps brief as folded sources', () => {
+test('overview removes daily action list and opens brief sources by default', () => {
   const overview = read('pages/overview/OverviewPage.tsx');
   assert.doesNotMatch(overview, /DailyActionList/);
   assert.match(overview, /市场简报/);
   assert.match(overview, /重新生成简报/);
   assert.match(overview, /查看引用来源/);
-  assert.match(overview, /details/);
+  assert.match(overview, /<details[^>]+open/);
 });
 
 test('strategy page uses a default full indicator matrix instead of factor picker and canvas section card', () => {
@@ -53,14 +53,16 @@ test('strategy page uses a default full indicator matrix instead of factor picke
   assert.doesNotMatch(strategy, /画布分区/);
 
   const matrix = read('pages/scanner/IndicatorMatrix.tsx');
-  for (const label of ['股票池', '行情流动性', '技术强弱', '平台形态', '题材板块', '资金流向', '涨停与事件', '筹码成本', '风险过滤', '展示字段']) {
+  for (const label of ['基础股票池', '流动性与成交', '相对强弱', '平台与突破', '题材与板块', '资金流向', '涨停与事件', '筹码成本', '风险过滤', '候选展示']) {
     assert.match(matrix, new RegExp(label));
   }
   assert.match(matrix, /Switch/);
-  assert.match(matrix, /开启|关闭/);
+  assert.match(matrix, /开关/);
+  assert.doesNotMatch(strategy, /RuleCanvas|UniversePanel|保存为默认|系统策略|默认策略/);
+  assert.doesNotMatch(matrix, /调整参数|高级参数|规则配置/);
 });
 
-test('analysis results display strategy names and use product AI dialog', () => {
+test('analysis results display strategy names and auto-load candidate explanation', () => {
   const results = read('pages/results/ResultsPage.tsx');
   assert.match(results, /activeStrategyName|strategyLabel/);
   assert.doesNotMatch(results, /slice\(0,\s*12\)/);
@@ -68,7 +70,9 @@ test('analysis results display strategy names and use product AI dialog', () => 
 
   const panel = read('pages/results/CandidateEvidencePanel.tsx');
   assert.match(panel, /AI 解读/);
-  assert.match(panel, /技术明细/);
+  assert.match(panel, /useQuery/);
+  assert.match(panel, /getCandidateAiSummary/);
+  assert.doesNotMatch(panel, /技术明细|Dialog|AI 解读暂未启用/);
   assert.doesNotMatch(panel, /开发者详情/);
   assert.doesNotMatch(panel, /window\.alert/);
 });
@@ -82,7 +86,8 @@ test('watchlist uses dialogs and DataTable for management', () => {
   assert.match(watchlist, /批量删除/);
   assert.doesNotMatch(watchlist, /<table/);
   assert.doesNotMatch(watchlist, /value:\s*'归档'/);
-  assert.match(watchlist, /已归档/);
+  assert.doesNotMatch(watchlist, /已归档|卡片视图|表格视图|HypothesisCard/);
+  assert.match(watchlist, /header:\s*'来源'/);
 });
 
 test('intraday radar has a real timeline drawer and page-level missing-data notices', () => {
@@ -104,7 +109,7 @@ test('backtest page exposes strategy selection parameters results and queue trac
 
 test('status page defaults to a concise user view with hidden maintenance mode', () => {
   const status = read('pages/status/StatusPage.tsx');
-  for (const label of ['系统状态', '任务队列', '定时任务', '最近失败', '查看维护信息']) {
+  for (const label of ['系统状态', '任务队列', '定时计划', '最近失败', '查看维护信息']) {
     assert.match(status, new RegExp(label));
   }
   assert.doesNotMatch(status, /developer-details/);

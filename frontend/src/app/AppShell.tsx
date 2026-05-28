@@ -44,7 +44,7 @@ export function AppShell() {
     mutationFn: async () => {
       const draft = useStrategyDraft.getState();
       const baseConfig = draft.config || ((bootstrap.data as Record<string, unknown> | undefined)?.[defaultStrategyKey] as StrategyConfig | undefined);
-      if (!baseConfig) throw new Error('默认策略尚未加载');
+      if (!baseConfig) throw new Error('策略配置尚未加载');
       const config = composeStrategyConfig(baseConfig, draft.rules, draft.resonances);
       return runStrategy(config);
     },

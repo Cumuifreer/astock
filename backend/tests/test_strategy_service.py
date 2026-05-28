@@ -352,6 +352,34 @@ def test_delete_preset_soft_deletes_and_hides_from_lists(tmp_path):
     assert service.default_config()["signal_mode"] == "feature_driven"
 
 
+def test_visible_seed_strategy_can_be_edited_and_deleted(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = StrategyService(db)
+
+    edited = service.save_preset("我改过的策略", {"signal_mode": "platform_setup", "candidate_limit": 25}, preset_id="system-momentum")
+
+    assert edited["id"] == "system-momentum"
+    assert edited["name"] == "我改过的策略"
+    assert edited["is_system"] is False
+    assert edited["config"]["candidate_limit"] == 25
+    assert service.delete_preset("system-momentum") is True
+    assert service.get_preset("system-momentum") is None
+
+
+def test_delete_last_strategy_recreates_unnamed_strategy(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = StrategyService(db)
+    for preset in service.list_presets():
+        assert service.delete_preset(preset["id"]) is True
+
+    presets = service.list_presets()
+
+    assert len(presets) == 1
+    assert presets[0]["name"] == "未命名策略1"
+
+
 def test_list_presets_ignores_rows_deleted_before_migration(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

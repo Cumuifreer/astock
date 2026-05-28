@@ -384,7 +384,8 @@ class DataService:
                    company_count,
                    limit_up_count,
                    COALESCE(limit_up_count_status, CASE WHEN limit_up_count IS NULL THEN 'not_computed' ELSE 'computed' END) AS limit_up_count_status,
-                   COALESCE(strong_count, 0) AS strong_count,
+                   strong_count,
+                   COALESCE(strong_count_status, CASE WHEN strong_count IS NULL THEN 'not_computed' ELSE 'computed' END) AS strong_count_status,
                    leader_code,
                    leader_name,
                    leader_pct_chg,
@@ -1522,7 +1523,7 @@ class DataService:
                     "action": "review",
                 }
             )
-        stale = [item for item in self._data_freshness() if item["status"] != "fresh"]
+        stale = [item for item in self._data_freshness() if item["status"] != "normal"]
         if stale:
             items.append(
                 {
@@ -1530,7 +1531,7 @@ class DataService:
                     "priority": "medium",
                     "category": "data",
                     "title": "存在数据待同步",
-                    "description": "打开任务状态页检查同步 DAG 和失败原因。",
+                    "description": "今日关键数据还未完全更新，部分结果可能不是最新。",
                     "target_type": "system",
                     "action": "sync_data",
                 }
@@ -1541,7 +1542,7 @@ class DataService:
                 "priority": "low",
                 "category": "strategy",
                 "title": "运行策略刷新候选",
-                "description": "市场状态已更新，可以运行 Scanner 查看今日候选。",
+                "description": "市场状态已更新，可以运行策略查看今日候选。",
                 "target_type": "strategy",
                 "action": "run_strategy",
             }

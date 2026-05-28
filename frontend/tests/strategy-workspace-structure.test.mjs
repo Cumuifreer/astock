@@ -7,7 +7,7 @@ import test from 'node:test';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const scannerSource = readFileSync(resolve(__dirname, '../src/pages/scanner/StrategyPage.tsx'), 'utf8');
 const indicatorMatrixSource = readFileSync(resolve(__dirname, '../src/pages/scanner/IndicatorMatrix.tsx'), 'utf8');
-const ruleCanvasSource = readFileSync(resolve(__dirname, '../src/pages/scanner/RuleCanvas.tsx'), 'utf8');
+const combinationSource = readFileSync(resolve(__dirname, '../src/pages/scanner/CombinationBonusPanel.tsx'), 'utf8');
 const ruleCardSource = readFileSync(resolve(__dirname, '../src/pages/scanner/RuleCard.tsx'), 'utf8');
 const universeSource = readFileSync(resolve(__dirname, '../src/pages/scanner/UniversePanel.tsx'), 'utf8');
 const draftSource = readFileSync(resolve(__dirname, '../src/hooks/useStrategyDraft.ts'), 'utf8');
@@ -16,23 +16,25 @@ const capabilityCardSource = readFileSync(resolve(__dirname, '../src/pages/data-
 const marketFlowSource = readFileSync(resolve(__dirname, '../src/pages/overview/MarketFlowPanel.tsx'), 'utf8');
 const shellSource = readFileSync(resolve(__dirname, '../src/app/AppShell.tsx'), 'utf8');
 
-test('scanner page is organized as a professional rule canvas', () => {
-  assert.match(scannerSource, /UniversePanel/);
+test('scanner page is organized as one indicator matrix plus combination panel', () => {
   assert.match(scannerSource, /IndicatorMatrix/);
-  assert.match(scannerSource, /RuleCanvas/);
+  assert.match(scannerSource, /CombinationBonusPanel/);
   assert.match(scannerSource, /StrategySummary/);
-  const combined = `${scannerSource}\n${indicatorMatrixSource}\n${ruleCanvasSource}`;
-  for (const label of ['股票池', '硬性筛选', '评分因子', '风险控制', '展示字段', '组合加分', '高级参数']) {
+  assert.doesNotMatch(scannerSource, /UniversePanel|RuleCanvas/);
+  const combined = `${scannerSource}\n${indicatorMatrixSource}\n${combinationSource}`;
+  for (const label of ['基础股票池', '流动性与成交', '相对强弱', '平台与突破', '组合加分']) {
     assert.match(combined, new RegExp(label));
   }
+  assert.doesNotMatch(combined, /高级参数|规则配置|调整参数/);
   assert.doesNotMatch(scannerSource, /StrategyRuleBuilder/);
   assert.doesNotMatch(scannerSource, /StrategyResonanceBuilder/);
 });
 
-test('resonance can only reference filter and score rule chips', () => {
+test('combination bonus can only reference enabled filter and score indicators', () => {
   assert.match(scannerSource, /selectableResonanceRules/);
+  assert.match(scannerSource, /rule\.enabled/);
   assert.match(scannerSource, /rule\.action === 'filter' \|\| rule\.action === 'score'/);
-  assert.match(ruleCanvasSource, /resonance-chip-grid/);
+  assert.match(combinationSource, /combo-choice-grid/);
   assert.doesNotMatch(scannerSource, /risk.*resonance/i);
   assert.doesNotMatch(scannerSource, /display.*resonance/i);
 });
@@ -40,13 +42,10 @@ test('resonance can only reference filter and score rule chips', () => {
 test('scanner supports adding editing saving and running current draft', () => {
   assert.match(indicatorMatrixSource, /onAddRule/);
   assert.match(indicatorMatrixSource, /onPatchRule/);
-  assert.match(ruleCardSource, /onPatch/);
-  assert.match(ruleCardSource, /operator/);
-  assert.match(ruleCardSource, /missing_policy/);
-  assert.match(ruleCardSource, /删除规则/);
-  assert.match(ruleCanvasSource, /onSetResonances/);
-  assert.match(scannerSource, /保存策略/);
-  assert.match(scannerSource, /保存为默认/);
+  assert.match(indicatorMatrixSource, /onRemoveRule/);
+  assert.match(combinationSource, /onSetResonances/);
+  assert.match(scannerSource, /保存/);
+  assert.doesNotMatch(scannerSource, /保存为默认|系统策略|默认策略/);
   assert.match(scannerSource, /运行当前策略/);
   assert.match(shellSource, /useStrategyDraft\.getState/);
   assert.match(shellSource, /composeStrategyConfig/);
@@ -54,18 +53,14 @@ test('scanner supports adding editing saving and running current draft', () => {
 });
 
 test('scanner has explicit preset management instead of only saving a single strategy name', () => {
-  for (const label of ['新建', '复制', '保存', '另存为', '保存为默认', '删除']) {
+  for (const label of ['新建', '复制', '保存', '另存为', '删除']) {
     assert.match(scannerSource, new RegExp(label));
   }
-  assert.match(scannerSource, /duplicateStrategy/);
+  assert.doesNotMatch(scannerSource, /duplicateStrategy|保存为默认|系统策略|默认策略/);
   assert.match(scannerSource, /deleteStrategy/);
   assert.match(scannerSource, /presetId/);
-  assert.match(scannerSource, /isSystem/);
-  assert.match(scannerSource, /isDefault/);
   assert.match(draftSource, /presetId/);
-  assert.match(draftSource, /isSystem/);
-  assert.match(draftSource, /isDefault/);
-  assert.match(draftSource, /未命名策略/);
+  assert.match(scannerSource, /nextUnnamedName/);
 });
 
 test('top actions and data health use precise update semantics', () => {
@@ -80,7 +75,7 @@ test('top actions and data health use precise update semantics', () => {
 test('market overview reads the backend field names actually returned today', () => {
   assert.doesNotMatch(marketFlowSource, /risk_score/);
   assert.match(marketFlowSource, /latest_date/);
-  assert.match(marketFlowSource, /status === 'fresh'/);
+  assert.match(marketFlowSource, /status === 'normal'/);
 });
 
 test('checkbox UI uses polished check tiles without native browser checkboxes', () => {
@@ -88,8 +83,8 @@ test('checkbox UI uses polished check tiles without native browser checkboxes', 
   assert.doesNotMatch(universeSource, /type="checkbox"/);
   assert.match(indicatorMatrixSource, /Switch/);
   assert.doesNotMatch(indicatorMatrixSource, /type="checkbox"/);
-  assert.match(ruleCanvasSource, /CheckTile/);
-  assert.doesNotMatch(ruleCanvasSource, /type="checkbox"/);
+  assert.match(combinationSource, /CheckTile/);
+  assert.doesNotMatch(combinationSource, /type="checkbox"/);
   assert.match(ruleCardSource, /CheckTile/);
   assert.doesNotMatch(ruleCardSource, /type="checkbox"/);
 });

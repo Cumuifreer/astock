@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Copy, Play, PlusCircle, Save, Star, Trash2 } from 'lucide-react';
+import { Copy, Play, PlusCircle, Save, Trash2 } from 'lucide-react';
 import type { IndicatorDefinition, IndicatorLibrary, StrategyConfig, StrategyPreset, StrategyRule } from '../../types';
-import { deleteStrategy, duplicateStrategy, runStrategy, saveStrategy } from '../../api/strategy';
+import { deleteStrategy, runStrategy, saveStrategy } from '../../api/strategy';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
 import { EmptyState } from '../../design/EmptyState';
@@ -10,11 +10,10 @@ import { LoadingState } from '../../design/LoadingState';
 import { Select } from '../../design/Select';
 import { useBootstrap } from '../../hooks/useBootstrap';
 import { useStrategyDraft } from '../../hooks/useStrategyDraft';
-import { composeStrategyConfig, defaultStrategyRule, indicatorParameterKeys } from '../../utils/strategy';
-import { UniversePanel } from './UniversePanel';
-import { RuleCanvas } from './RuleCanvas';
+import { composeStrategyConfig, defaultStrategyRule } from '../../utils/strategy';
 import { IndicatorMatrix } from './IndicatorMatrix';
 import { StrategySummary } from './StrategySummary';
+import { CombinationBonusPanel } from './CombinationBonusPanel';
 
 const defaultStrategyKey = ['default', 'strategy'].join('_');
 
@@ -26,15 +25,12 @@ export function StrategyPage() {
   const draftConfig = useStrategyDraft((state) => state.config);
   const draftRules = useStrategyDraft((state) => state.rules);
   const draftResonances = useStrategyDraft((state) => state.resonances);
-  const isSystem = useStrategyDraft((state) => state.isSystem);
-  const isDefault = useStrategyDraft((state) => state.isDefault);
   const initialized = useStrategyDraft((state) => state.initialized);
   const setDraft = useStrategyDraft((state) => state.setDraft);
   const setName = useStrategyDraft((state) => state.setName);
   const setRules = useStrategyDraft((state) => state.setRules);
   const setResonances = useStrategyDraft((state) => state.setResonances);
   const patchConfig = useStrategyDraft((state) => state.patchConfig);
-  const [focusedParameter, setFocusedParameter] = useState<string | null>(null);
   const data = bootstrap.data;
   const library = (data as typeof data & { indicator_library?: IndicatorLibrary })?.indicator_library;
   const strategies = data?.strategies || [];
@@ -44,12 +40,12 @@ export function StrategyPage() {
     if (!defaultConfig || initialized) return;
     setDraft({
       presetId: null,
-      name: '未命名策略',
+      name: nextUnnamedName(strategies),
       config: cloneConfig(defaultConfig),
       isSystem: false,
       isDefault: false,
     });
-  }, [defaultConfig, initialized, setDraft]);
+  }, [defaultConfig, initialized, setDraft, strategies]);
 
   const config = draftConfig || defaultConfig;
   const rules = initialized ? draftRules : fallbackRules(config);
@@ -59,7 +55,7 @@ export function StrategyPage() {
     () => [...(library?.indicators || [])].sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN')),
     [library],
   );
-  const selectableResonanceRules = rules.filter((rule) => rule.action === 'filter' || rule.action === 'score');
+  const selectableResonanceRules = rules.filter((rule) => rule.enabled && (rule.action === 'filter' || rule.action === 'score'));
   const currentConfig = useMemo(() => composeStrategyConfig(config, rules, resonances), [config, rules, resonances]);
   const invalidate = () => {
     void queryClient.invalidateQueries();
@@ -69,15 +65,15 @@ export function StrategyPage() {
       presetId: preset.id,
       name: preset.name,
       config: cloneConfig(preset.config),
-      isSystem: preset.is_system,
-      isDefault: preset.is_default,
+      isSystem: false,
+      isDefault: false,
     });
   };
   const createNewDraft = () => {
     if (!defaultConfig) return;
     setDraft({
       presetId: null,
-      name: '未命名策略',
+      name: nextUnnamedName(strategies),
       config: cloneConfig(defaultConfig),
       isSystem: false,
       isDefault: false,
@@ -92,12 +88,11 @@ export function StrategyPage() {
     if (preset) applyPreset(preset);
   };
   const saveMutation = useMutation({
-    mutationFn: ({ setDefault, saveAs }: { setDefault: boolean; saveAs: boolean }) =>
+    mutationFn: ({ saveAs }: { saveAs: boolean }) =>
       saveStrategy({
-        id: !saveAs && !isSystem ? presetId || undefined : undefined,
-        name: draftName || '未命名策略',
+        id: !saveAs ? presetId || undefined : undefined,
+        name: draftName || nextUnnamedName(strategies),
         config: currentConfig,
-        set_default: setDefault,
       }),
     onSuccess: (result) => {
       applyPreset(result.preset);
@@ -106,12 +101,10 @@ export function StrategyPage() {
   });
   const duplicateMutation = useMutation({
     mutationFn: () =>
-      presetId && isSystem
-        ? duplicateStrategy(presetId)
-        : saveStrategy({
-            name: `${draftName || '未命名策略'} 副本`,
-            config: currentConfig,
-          }),
+      saveStrategy({
+        name: `${draftName || nextUnnamedName(strategies)} 副本`,
+        config: currentConfig,
+      }),
     onSuccess: (result) => {
       applyPreset(result.preset);
       invalidate();
@@ -138,17 +131,9 @@ export function StrategyPage() {
   const addRule = (indicator: IndicatorDefinition) => {
     setRules([...rules, defaultStrategyRule(indicator)]);
   };
-  const focusIndicatorParameter = (indicator: IndicatorDefinition) => {
-    const key = indicatorParameterKeys(indicator)[0];
-    if (!key) return;
-    setFocusedParameter(key);
-    window.setTimeout(() => {
-      document.getElementById(`strategy-field-${key}`)?.focus();
-    }, 0);
-  };
 
   if (bootstrap.isLoading) return <LoadingState label="加载策略能力" />;
-  if (!config) return <EmptyState title="策略选股暂无默认配置" description="默认策略加载后会自动进入规则配置。" />;
+  if (!config) return <EmptyState title="策略选股暂不可用" description="策略基础配置加载后会自动进入配置界面。" />;
 
   return (
     <div className="grid-aside">
@@ -157,11 +142,10 @@ export function StrategyPage() {
           <div className="section-heading">
             <div>
               <h2>当前策略</h2>
-              <p>选择策略、复制为自定义策略，或保存当前配置后运行。</p>
+              <p>选择、命名、保存并运行你的选股方法。</p>
               <div className="rule-chip-grid" style={{ marginTop: 8 }}>
                 <Badge tone={presetId ? 'info' : 'neutral'}>{presetId ? '已保存策略' : '未保存策略'}</Badge>
-                {isSystem ? <Badge tone="watch">系统策略只能复制</Badge> : <Badge tone="good">自定义可保存</Badge>}
-                {isDefault ? <Badge tone="purple">默认策略</Badge> : null}
+                <Badge tone="good">可编辑</Badge>
               </div>
             </div>
             <div className="button-row">
@@ -171,16 +155,13 @@ export function StrategyPage() {
               <Button disabled={duplicateMutation.isPending} icon={<Copy size={16} />} onClick={() => duplicateMutation.mutate()} variant="secondary">
                 复制
               </Button>
-              <Button disabled={saveMutation.isPending || isSystem} icon={<Save size={16} />} onClick={() => saveMutation.mutate({ setDefault: false, saveAs: false })} variant="secondary">
-                保存策略
+              <Button disabled={saveMutation.isPending} icon={<Save size={16} />} onClick={() => saveMutation.mutate({ saveAs: false })} variant="secondary">
+                保存
               </Button>
-              <Button disabled={saveMutation.isPending} icon={<Save size={16} />} onClick={() => saveMutation.mutate({ setDefault: false, saveAs: true })} variant="secondary">
+              <Button disabled={saveMutation.isPending} icon={<Save size={16} />} onClick={() => saveMutation.mutate({ saveAs: true })} variant="secondary">
                 另存为
               </Button>
-              <Button disabled={saveMutation.isPending} icon={<Star size={16} />} onClick={() => saveMutation.mutate({ setDefault: true, saveAs: isSystem })} variant="secondary">
-                保存为默认
-              </Button>
-              <Button disabled={deleteMutation.isPending || isSystem || !presetId} icon={<Trash2 size={16} />} onClick={() => deleteMutation.mutate()} variant="danger">
+              <Button disabled={deleteMutation.isPending || !presetId} icon={<Trash2 size={16} />} onClick={() => deleteMutation.mutate()} variant="danger">
                 删除
               </Button>
               <Button disabled={runMutation.isPending} icon={<Play size={16} />} onClick={() => runMutation.mutate()} variant="primary">
@@ -196,32 +177,30 @@ export function StrategyPage() {
               { value: 'draft-new', label: '未命名策略' },
               ...strategies.map((preset) => ({
                 value: preset.id,
-                label: `${preset.name}${preset.is_system ? ' · 系统' : ''}${preset.is_default ? ' · 默认' : ''}`,
+                label: preset.name,
               })),
             ]}
           />
-          <input className="strategy-name-input" value={draftName} onChange={(event) => setName(event.target.value)} />
+          <div className="strategy-identity-grid">
+            <label className="parameter-field">
+              <span>策略名称</span>
+              <input className="strategy-name-input" value={draftName} onChange={(event) => setName(event.target.value)} />
+            </label>
+          </div>
         </section>
-        <UniversePanel config={currentConfig} focusedParameter={focusedParameter} onPatchConfig={patchConfig} />
         <IndicatorMatrix
           config={currentConfig}
           indicators={matrixIndicators}
           onAddRule={addRule}
-          onFocusParameter={focusIndicatorParameter}
-          onPatchConfig={patchConfig}
-          onPatchRule={patchRule}
-          rules={rules}
-        />
-        <RuleCanvas
-          config={currentConfig}
-          focusedParameter={focusedParameter}
-          indicators={indicators}
           onPatchConfig={patchConfig}
           onPatchRule={patchRule}
           onRemoveRule={removeRule}
+          rules={rules}
+        />
+        <CombinationBonusPanel
+          indicators={indicators}
           onSetResonances={setResonances}
           resonances={resonances}
-          rules={rules}
           selectableResonanceRules={selectableResonanceRules}
         />
       </main>
@@ -250,4 +229,13 @@ export function groupRulesByAction(rules: StrategyRule[]): Record<string, Strate
 
 export function executableIndicators(library?: IndicatorLibrary): IndicatorDefinition[] {
   return (library?.indicators || []).filter((indicator) => indicator.data_status === 'executable');
+}
+
+function nextUnnamedName(strategies: StrategyPreset[]) {
+  const names = new Set(strategies.map((strategy) => strategy.name));
+  for (let index = 1; index < 999; index += 1) {
+    const name = `未命名策略${index}`;
+    if (!names.has(name)) return name;
+  }
+  return `未命名策略${strategies.length + 1}`;
 }

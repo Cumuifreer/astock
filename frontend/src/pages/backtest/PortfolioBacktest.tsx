@@ -65,12 +65,15 @@ export function PortfolioBacktest({ config, strategyName }: { config: StrategyCo
     <section className="surface pad">
       <div className="section-heading">
         <div>
-          <h2>组合回测</h2>
+          <h2>简化组合模拟</h2>
           <p>{strategyName} · {strategySummary(config)}</p>
         </div>
         <Button disabled={mutation.isPending || !config} icon={<Play size={16} />} onClick={() => mutation.mutate()} variant="primary">
           运行组合回测
         </Button>
+      </div>
+      <div className="notice-card" style={{ marginBottom: 14 }}>
+        当前为简化组合模拟，适合快速比较策略，不等同真实交易账户回测。
       </div>
       <div className="backtest-form">
         <label>

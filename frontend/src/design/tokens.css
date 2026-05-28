@@ -218,12 +218,36 @@ button {
   gap: var(--space-3);
 }
 
+.market-state-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .metric-pill {
   min-width: 0;
   padding: var(--space-3);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--bg-soft);
+}
+
+.status-metric-card {
+  min-height: 110px;
+  align-content: space-between;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.07);
+}
+
+.status-metric-card.risk {
+  border-color: rgba(239, 68, 68, 0.24);
+  background: #fff7f7;
+}
+
+.task-progress-card {
+  padding: var(--space-4);
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, #ffffff 0%, #eff6ff 100%);
+  box-shadow: 0 16px 34px rgba(37, 99, 235, 0.1);
 }
 
 .metric-label {
@@ -235,6 +259,13 @@ button {
   margin-top: 4px;
   font-size: 20px;
   font-weight: 800;
+}
+
+.metric-note {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .section-heading {
@@ -553,6 +584,12 @@ button {
 
 .scanner-runbar .section-heading {
   align-items: flex-start;
+}
+
+.strategy-identity-grid {
+  display: grid;
+  max-width: 440px;
+  margin-top: var(--space-3);
 }
 
 .strategy-name-input,
@@ -927,9 +964,9 @@ button {
 
 .indicator-row {
   display: grid;
-  grid-template-columns: 76px minmax(160px, 1.2fr) minmax(92px, 0.7fr) minmax(220px, 1.5fr) minmax(72px, 0.5fr) minmax(96px, 0.7fr) minmax(92px, 0.6fr);
+  grid-template-columns: 74px minmax(150px, 1fr) minmax(140px, 0.9fr) minmax(260px, 1.7fr) minmax(120px, 0.8fr) minmax(180px, 1.1fr);
   gap: var(--space-3);
-  min-width: 920px;
+  min-width: 1040px;
   align-items: center;
   padding: 11px var(--space-4);
   border-top: 1px solid var(--border-subtle);
@@ -953,6 +990,79 @@ button {
   font-size: 11px;
 }
 
+.indicator-note {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.matrix-control-stack {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.matrix-control-inline {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.compact-field {
+  display: grid;
+  min-width: 118px;
+  gap: 4px;
+}
+
+.compact-field.tiny {
+  min-width: 88px;
+}
+
+.compact-field span {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.compact-field input {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: white;
+  color: var(--text-primary);
+}
+
+.field-readonly {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.text-button {
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.text-button.danger {
+  color: var(--danger);
+}
+
 .rule-editor label,
 .backtest-form label {
   display: grid;
@@ -967,6 +1077,68 @@ button {
 
 .resonance-editor {
   grid-template-columns: 1fr;
+}
+
+.combination-panel {
+  overflow: hidden;
+}
+
+.combination-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.combination-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: white;
+}
+
+.combination-card.disabled {
+  opacity: 0.62;
+}
+
+.combo-dialog {
+  width: min(720px, 94vw);
+}
+
+.combo-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.combo-choice {
+  display: grid;
+  gap: 4px;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: white;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.combo-choice span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.combo-choice.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.combo-dialog-footer {
+  margin-top: var(--space-4);
 }
 
 .backtest-form {
@@ -1102,6 +1274,16 @@ button {
   background: var(--bg-soft);
 }
 
+.notice-card {
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .surface-subtle h3 {
   margin: 0 0 var(--space-3);
 }
@@ -1147,6 +1329,12 @@ button {
   margin: 0;
   color: var(--text-secondary);
   font-size: 13px;
+}
+
+.brief-mini-card small {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .drawer-overlay {
@@ -1399,7 +1587,8 @@ button {
   .hero-panel,
   .parameter-grid,
   .rule-editor,
-  .brief-list-grid {
+  .brief-list-grid,
+  .combo-choice-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1429,7 +1618,12 @@ button {
     justify-content: flex-start;
   }
 
-  .metric-row {
+  .combination-card {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-row,
+  .market-state-grid {
     grid-template-columns: 1fr;
   }
 

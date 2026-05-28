@@ -995,7 +995,7 @@ def _matching_strategy_resonances(row: Dict[str, Any], strategy: Dict[str, Any])
         rules = [rules_by_id.get(rule_id) for rule_id in rule_ids]
         if len([rule for rule in rules if rule is not None]) != len(rule_ids) or len(rules) < 2:
             continue
-        if any(str(rule.get("action") or "") not in {"filter", "score"} for rule in rules if rule is not None):
+        if any((not rule.get("enabled", True)) or str(rule.get("action") or "") not in {"filter", "score"} for rule in rules if rule is not None):
             continue
         if all(_strategy_rule_matches_row(row, rule, str(rule.get("action") or "display")) for rule in rules if rule is not None):
             matches.append(resonance)

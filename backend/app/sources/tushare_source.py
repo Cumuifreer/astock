@@ -814,6 +814,7 @@ class TushareEnrichmentSource:
                     "limit_up_count": None,
                     "limit_up_count_status": "not_computed",
                     "strong_count": None,
+                    "strong_count_status": "not_computed",
                     "leader_code": None,
                     "leader_name": leader_name,
                     "leader_pct_chg": None,

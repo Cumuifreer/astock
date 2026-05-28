@@ -32,7 +32,7 @@ export function BacktestPage() {
     { value: 'draft', label: `${draft.name || '当前策略草稿'} · 当前` },
     ...(bootstrap.data?.strategies || []).map((preset) => ({
       value: preset.id,
-      label: `${preset.name}${preset.is_system ? ' · 系统' : ''}${preset.is_default ? ' · 默认' : ''}`,
+      label: preset.name,
     })),
   ];
   return (

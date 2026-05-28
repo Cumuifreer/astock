@@ -930,6 +930,81 @@ def test_strategy_resonances_apply_visible_score_bonus():
     assert any("题材放量确认 +8分" in reason for reason in candidates[0]["reasons"])
 
 
+def test_disabled_rule_does_not_trigger_resonance_bonus():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "关闭组合",
+                "latest_price": 10.0,
+                "amount": 120_000_000,
+                "float_market_value": 8_000_000_000,
+                "ma_short": 9.8,
+                "ma_long": 9.2,
+                "rps20": 70.0,
+                "turnover_rate": 6.0,
+                "pct_chg": 1.2,
+                "amplitude": 0.05,
+                "volume_ratio": 2.2,
+                "ma_distance": 0.02,
+                "topic_heat": 82.0,
+                "is_st": False,
+                "suspended": False,
+            }
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "trend_filter": "none",
+        "min_price": 0,
+        "min_amount": 0,
+        "min_rps20": None,
+        "max_turnover": None,
+        "min_pct_chg": None,
+        "max_pct_chg": None,
+        "max_amplitude": None,
+        "volume_ratio_min": None,
+        "max_ma_distance": None,
+        "candidate_limit": 10,
+        "strategy_rules": [
+            {
+                "id": "theme-hot",
+                "indicator_id": "topic_heat",
+                "action": "score",
+                "operator": "gte",
+                "value": 70,
+                "weight": 0,
+                "missing_policy": "neutral",
+                "enabled": True,
+            },
+            {
+                "id": "volume-confirm",
+                "indicator_id": "volume_ratio",
+                "action": "score",
+                "operator": "gte",
+                "value": 2,
+                "weight": 0,
+                "missing_policy": "neutral",
+                "enabled": False,
+            },
+        ],
+        "strategy_resonances": [
+            {
+                "id": "hot-volume-confirm",
+                "name": "题材放量确认",
+                "rule_ids": ["theme-hot", "volume-confirm"],
+                "bonus": 8,
+                "enabled": True,
+            }
+        ],
+    }
+
+    candidates, _, zero_reason = apply_strategy_filters(rows, config)
+
+    assert zero_reason is None
+    assert candidates[0]["score_breakdown"]["resonance_bonus"] == 0
+
+
 def test_score_rule_missing_neutral_does_not_add_score_or_trigger_resonance():
     rows = pd.DataFrame(
         [
