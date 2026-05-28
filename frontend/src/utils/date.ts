@@ -1,5 +1,5 @@
 export function formatDate(value: unknown): string {
-  if (!value) return '--';
+  if (!value) return '待同步';
   const raw = String(value);
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
   const parsed = new Date(raw);
@@ -8,7 +8,7 @@ export function formatDate(value: unknown): string {
 }
 
 export function formatDateTime(value: unknown): string {
-  if (!value) return '--';
+  if (!value) return '待同步';
   const parsed = new Date(String(value));
   if (Number.isNaN(parsed.getTime())) return String(value).slice(0, 19);
   return parsed.toLocaleString('zh-CN', {

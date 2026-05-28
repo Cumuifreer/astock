@@ -1,24 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ColumnDef } from '@tanstack/react-table';
 import { Database, Search } from 'lucide-react';
 import { getCapabilities, getSourceDiagnostics, getStockDetail, getStocks, startUpdate } from '../../api/data';
 import type { Capability, SourceDiagnostics, StockDetail, StockRow } from '../../types';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
+import { DataTable } from '../../design/DataTable';
 import { Drawer } from '../../design/Drawer';
 import { EmptyState } from '../../design/EmptyState';
 import { LoadingState } from '../../design/LoadingState';
 import { Select } from '../../design/Select';
 import { Tabs } from '../../design/Tabs';
+import { useToast } from '../../design/Toast';
 import { formatDate } from '../../utils/date';
 import { formatMoney, formatNumber, formatPercent, formatRatio, shortText } from '../../utils/format';
 import { normalizeRows } from '../../utils/metrics';
 import { CapabilityCard } from './CapabilityCard';
 
 const groups: Array<{ title: string; names: string[] }> = [
-  { title: '核心数据', names: ['股票基础信息', '历史 K 线', '当天行情快照', '流通市值', '换手率', 'RPS', '振幅'] },
-  { title: '补充数据', names: ['每日指标', '技术因子', '资金流向', '筹码分布', '概念/行业成分'] },
-  { title: '事件数据', names: ['涨跌停', '龙虎榜/游资'] },
+  { title: '核心数据', names: ['股票基础信息', '历史 K 线', '历史行情', '当天行情快照', '今日行情', '流通市值', '换手率', 'RPS', '振幅'] },
+  { title: '补充数据', names: ['每日指标', '每日交易指标', '技术因子', '资金流向', '筹码分布', '筹码数据', '概念/行业成分', '题材板块'] },
+  { title: '事件数据', names: ['涨跌停', '涨跌停事件', '龙虎榜/游资', '龙虎榜数据'] },
   { title: '市场上下文', names: ['市场环境', '板块热力', '资讯简报'] },
 ];
 
@@ -33,6 +36,7 @@ export function DataMapPage() {
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
   const [backfillingCapability, setBackfillingCapability] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const capabilities = useQuery({ queryKey: ['capabilities'], queryFn: getCapabilities });
   const diagnostics = useQuery({ queryKey: ['source-diagnostics'], queryFn: getSourceDiagnostics });
   const stocks = useQuery({
@@ -50,6 +54,7 @@ export function DataMapPage() {
   const backfillMutation = useMutation({
     mutationFn: (capability: Capability) => startUpdate({ mode: 'capability_backfill', capability: capability.capability }),
     onMutate: (capability) => setBackfillingCapability(capability.capability),
+    onSuccess: (_result, capability) => showToast(`已开始补齐${friendlyCapability(capability.capability)}，可在任务状态查看进度。`, 'success'),
     onSettled: () => {
       setBackfillingCapability(null);
       void queryClient.invalidateQueries({ queryKey: ['capabilities'] });
@@ -114,7 +119,7 @@ export function DataMapPage() {
           },
           {
             value: 'diagnostics',
-            label: '数据源诊断',
+            label: '维护诊断',
             content: <SourceDiagnosticsPanel diagnostics={diagnostics.data} loading={diagnostics.isLoading} />,
           },
         ]}
@@ -155,6 +160,42 @@ function StockWarehouse({
   setSelectedCode: (value: string) => void;
   loading: boolean;
 }) {
+  const columns = useMemo<Array<ColumnDef<StockRow, unknown>>>(
+    () => [
+      {
+        header: '股票',
+        cell: ({ row }) => (
+          <div className="warehouse-stock-cell">
+            <Database size={15} />
+            <div>
+              <strong>
+                {row.original.name}
+                {row.original.status_label === '非活跃' ? <span className="stock-status-badge inactive">非活跃</span> : null}
+              </strong>
+              <span className="mono">
+                {row.original.code} · {row.original.exchange} · {boardLabel(row.original.board)}
+              </span>
+            </div>
+          </div>
+        ),
+      },
+      { header: '最新价', cell: ({ row }) => formatNumber(row.original.latest_price, 2) },
+      { header: '涨跌幅', cell: ({ row }) => <span className={Number(row.original.pct_chg || 0) >= 0 ? 'text-good' : 'text-risk'}>{formatPercent(row.original.pct_chg)}</span> },
+      { header: '成交额', cell: ({ row }) => formatMoney(row.original.amount) },
+      { header: '换手率', cell: ({ row }) => formatPercent(row.original.turnover_rate) },
+      { header: '流通市值', cell: ({ row }) => formatMoney(row.original.float_market_value) },
+      { header: '题材', cell: ({ row }) => formatNumber(row.original.concept_count) },
+      {
+        header: '档案',
+        cell: ({ row }) => (
+          <Button onClick={() => setSelectedCode(row.original.code)} variant={selectedCode === row.original.code ? 'secondary' : 'ghost'}>
+            打开
+          </Button>
+        ),
+      },
+    ],
+    [selectedCode, setSelectedCode],
+  );
   return (
     <section className="surface pad">
       <div className="section-heading">
@@ -208,51 +249,7 @@ function StockWarehouse({
         <LoadingState label="读取股票仓" />
       ) : rows.length ? (
         <>
-          <div className="table-wrap warehouse-table-wrap">
-            <table className="warehouse-table">
-              <thead>
-                <tr>
-                  <th>股票</th>
-                  <th>最新价</th>
-                  <th>涨跌幅</th>
-                  <th>成交额</th>
-                  <th>换手率</th>
-                  <th>流通市值</th>
-                  <th>题材</th>
-                  <th>档案</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr className={selectedCode === row.code ? 'selected-row' : ''} key={row.code} onClick={() => setSelectedCode(row.code)}>
-                    <td>
-                      <div className="warehouse-stock-cell">
-                        <Database size={15} />
-                        <div>
-                          <strong>
-                            {row.name}
-                            {row.status_label === '非活跃' ? <span className="stock-status-badge inactive">非活跃</span> : null}
-                          </strong>
-                          <span className="mono">{row.code} · {row.exchange} · {boardLabel(row.board)}</span>
-                        </div>
-                      </div>
-                    </td>
-                    <td>{formatNumber(row.latest_price, 2)}</td>
-                    <td className={Number(row.pct_chg || 0) >= 0 ? 'text-good' : 'text-risk'}>{formatPercent(row.pct_chg)}</td>
-                    <td>{formatMoney(row.amount)}</td>
-                    <td>{formatPercent(row.turnover_rate)}</td>
-                    <td>{formatMoney(row.float_market_value)}</td>
-                    <td>{formatNumber(row.concept_count)}</td>
-                    <td>
-                      <Button onClick={() => setSelectedCode(row.code)} variant="ghost">
-                        打开
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable data={rows} columns={columns} estimateRowHeight={72} />
           <div className="pager">
             <span>{formatNumber(offset + 1)} - {formatNumber(Math.min(offset + limit, total))} / {formatNumber(total)}</span>
             <Button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - limit))} variant="ghost">
@@ -315,10 +312,10 @@ function DataHealth({
 function SourceDiagnosticsPanel({ diagnostics, loading }: { diagnostics?: SourceDiagnostics; loading: boolean }) {
   const healthCards = useMemo(
     () => [
-      ['Tushare token', diagnostics?.tushare_token_configured ? '已配置' : '未配置', diagnostics?.last_tushare_error],
-      ['实时行情', statusLabel(diagnostics?.realtime_status), diagnostics?.last_snapshot_source],
-      ['历史行情', statusLabel(diagnostics?.history_status), diagnostics?.last_history_source],
-      ['补充数据', statusLabel(diagnostics?.enrichment_status), diagnostics?.tushare_http_url_configured ? diagnostics?.tushare_http_url : '缺少中转地址'],
+      ['数据配置', diagnostics?.tushare_token_configured ? '已配置' : '未配置', diagnostics?.last_tushare_error],
+      ['今日行情', statusLabel(diagnostics?.realtime_status), userSourceLabel(diagnostics?.last_snapshot_source)],
+      ['历史行情', statusLabel(diagnostics?.history_status), userSourceLabel(diagnostics?.last_history_source)],
+      ['补充交易数据', statusLabel(diagnostics?.enrichment_status), diagnostics?.tushare_http_url_configured ? '已配置' : '缺少中转配置'],
     ],
     [diagnostics],
   );
@@ -328,7 +325,7 @@ function SourceDiagnosticsPanel({ diagnostics, loading }: { diagnostics?: Source
       <div className="section-heading">
         <div>
           <h2>数据源诊断</h2>
-          <p>维护者可在这里查看配置、最近失败原因和回退数据源。</p>
+          <p>维护者可在这里查看配置、最近失败原因和数据切换情况。</p>
         </div>
       </div>
       <div className="grid-4">
@@ -392,8 +389,8 @@ function ProfileBlock({ title, rows }: { title: string; rows: Array<[unknown, un
         <div className="profile-row-list">
           {rows.map(([label, value], index) => (
             <div className="split-row" key={`${title}-${index}`}>
-              <span>{String(label || '--')}</span>
-              <strong>{String(value || '--')}</strong>
+              <span>{String(label || '暂无记录')}</span>
+              <strong>{String(value || '暂无记录')}</strong>
             </div>
           ))}
         </div>
@@ -406,11 +403,11 @@ function ProfileBlock({ title, rows }: { title: string; rows: Array<[unknown, un
 
 function boardLabel(value: unknown) {
   const labels: Record<string, string> = { main: '主板', gem: '创业板', star: '科创板', bj: '北交所' };
-  return labels[String(value || '')] || String(value || '--');
+  return labels[String(value || '')] || String(value || '待确认');
 }
 
 function shortValue(value: unknown) {
-  return value === null || value === undefined || value === '' ? '--' : String(value);
+  return value === null || value === undefined || value === '' ? '暂不可用' : String(value);
 }
 
 function statusLabel(value: unknown) {
@@ -421,5 +418,23 @@ function statusLabel(value: unknown) {
     partial: '部分失败',
     unknown: '未知',
   };
-  return labels[String(value || '')] || String(value || '--');
+  return labels[String(value || '')] || String(value || '未知');
+}
+
+function userSourceLabel(value: unknown) {
+  const text = String(value || '');
+  if (!text) return '';
+  if (/daily|snapshot|实时|新浪/i.test(text)) return '今日行情';
+  if (/history|historical|qfq|历史/i.test(text)) return '历史行情';
+  return '数据源切换';
+}
+
+function friendlyCapability(value: string) {
+  return value
+    .replace('历史 K 线', '历史行情')
+    .replace('当天行情快照', '今日行情')
+    .replace('每日指标', '每日交易指标')
+    .replace('概念/行业成分', '题材板块')
+    .replace('龙虎榜/游资', '龙虎榜数据')
+    .replace('涨跌停', '涨跌停事件');
 }

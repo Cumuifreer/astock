@@ -2050,6 +2050,14 @@ def _zero_reason(funnel: List[Dict[str, Any]]) -> str:
     return f"主要卡在“{largest['step_name']}”：该层过滤掉 {largest['removed_count']} 只股票。"
 
 
+def _strategy_name(strategy: Dict[str, Any]) -> str:
+    for key in ("strategy_name", "name", "preset_name"):
+        value = strategy.get(key)
+        if value:
+            return str(value)
+    return "未命名策略"
+
+
 def _emit_analysis_progress(progress: Optional[AnalysisProgress], stage: str, processed: int) -> None:
     if progress:
         progress(stage, processed, ANALYSIS_TOTAL_STEPS)
@@ -2062,6 +2070,9 @@ class AnalysisService:
     def run(self, config: Dict[str, Any], progress: Optional[AnalysisProgress] = None) -> str:
         run_id = f"analysis-{uuid.uuid4().hex[:12]}"
         strategy = normalize_strategy_config(config)
+        strategy_name = _strategy_name(strategy)
+        strategy.setdefault("strategy_name", strategy_name)
+        strategy.setdefault("name", strategy_name)
         now = datetime.utcnow()
         self.db.upsert(
             "analysis_runs",
@@ -2089,6 +2100,7 @@ class AnalysisService:
             self._persist_results(run_id, candidates, funnel, zero_reason)
             status = "completed_full"
             summary = {
+                "strategy_name": strategy_name,
                 "candidate_count": len(candidates),
                 "zero_reason": zero_reason,
                 "analyzed_count": len(rows),

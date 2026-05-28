@@ -29,6 +29,19 @@ export function getAnalysisReport(id: string): Promise<AnalysisReportDetail> {
   return request<AnalysisReportDetail>(`/api/analysis/reports/${encodeURIComponent(id)}?limit=300`);
 }
 
+export type CandidateAiSummary = {
+  enabled?: boolean;
+  summary: string;
+  opportunities?: string[];
+  risks?: string[];
+  watch_plan?: string[];
+  generated_at?: string | null;
+};
+
+export function getCandidateAiSummary(runId: string, code: string, payload: Record<string, unknown>): Promise<CandidateAiSummary> {
+  return post<CandidateAiSummary>(`/api/analysis/candidates/${encodeURIComponent(runId)}/${encodeURIComponent(code)}/ai-summary`, payload);
+}
+
 export function saveStrategy(payload: Record<string, unknown>): Promise<{ preset: StrategyPreset }> {
   return post<{ preset: StrategyPreset }>('/api/strategies', payload);
 }

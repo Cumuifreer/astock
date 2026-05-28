@@ -14,6 +14,7 @@ const pulseLabels: Array<[string, string]> = [
   ['turnover_score', '成交额热度'],
   ['index_score', '指数趋势'],
   ['sector_heat_score', '题材扩散'],
+  ['risk_level', '风险等级'],
 ];
 
 export function MarketFlowPanel({ pulse, freshness }: MarketFlowPanelProps) {
@@ -30,7 +31,13 @@ export function MarketFlowPanel({ pulse, freshness }: MarketFlowPanelProps) {
           {pulseLabels.map(([key, label]) => (
             <div className="metric-pill" key={key}>
               <span className="metric-label">{label}</span>
-              <div className="metric-value">{pulse?.[key] === null || pulse?.[key] === undefined ? '待同步' : formatNumber(pulse?.[key], 0)}</div>
+              <div className="metric-value">
+                {key === 'risk_level'
+                  ? String(pulse?.risk_level || '待同步')
+                  : pulse?.[key] === null || pulse?.[key] === undefined
+                    ? '待同步'
+                    : formatNumber(pulse?.[key], 0)}
+              </div>
             </div>
           ))}
         </div>
@@ -61,8 +68,7 @@ export function MarketFlowPanel({ pulse, freshness }: MarketFlowPanelProps) {
 function friendlyLabel(label: string) {
   return label
     .replace('历史 K 线', '历史行情')
-    .replace('当日快照', '今日行情')
-    .replace('Tushare 增强', '补充交易数据');
+    .replace('当日快照', '今日行情');
 }
 
 function statusText(status?: string) {

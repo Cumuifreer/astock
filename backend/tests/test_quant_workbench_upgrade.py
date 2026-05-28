@@ -138,7 +138,9 @@ def test_market_overview_uses_environment_and_sector_heatmap(tmp_path):
 
     assert overview["state"]["label"] in {"强势", "回暖", "震荡", "偏弱", "退潮", "极端风险"}
     assert overview["state"]["suggested_position"] in {"0%-20%", "20%-40%", "40%-60%", "60%-80%", "80%-100%"}
+    assert overview["pulse"]["risk_level"] in {"低", "中", "高", "极高"}
     assert overview["sector_heatmap"][0]["name"] == "半导体设备"
+    assert overview["sector_heatmap"][0]["limit_up_count_status"] == "computed"
     assert overview["action_items"]
     assert heatmap[0]["heat_score"] == 86.5
 
@@ -164,10 +166,34 @@ def test_sector_persist_fills_limit_and_strong_counts(tmp_path):
                 "updated_at": "2026-05-22T09:00:00",
             },
             {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "con_code": "881100.TI",
+                "con_name": "银行",
+                "weight": None,
+                "in_date": "2020-01-01",
+                "out_date": None,
+                "is_new": "Y",
+                "source": "test",
+                "updated_at": "2026-05-22T09:00:00",
+            },
+            {
                 "code": "000002.SZ",
                 "name": "万科A",
                 "con_code": "885800.TI",
                 "con_name": "半导体设备",
+                "weight": None,
+                "in_date": "2020-01-01",
+                "out_date": None,
+                "is_new": "Y",
+                "source": "test",
+                "updated_at": "2026-05-22T09:00:00",
+            },
+            {
+                "code": "000002.SZ",
+                "name": "万科A",
+                "con_code": "881100.TI",
+                "con_name": "银行",
                 "weight": None,
                 "in_date": "2020-01-01",
                 "out_date": None,
@@ -253,15 +279,38 @@ def test_sector_persist_fills_limit_and_strong_counts(tmp_path):
                 "heat_score": 80.0,
                 "source": "test",
                 "updated_at": "2026-05-22T15:00:00",
-            }
+            },
+            {
+                "sector_code": "881100.TI",
+                "sector_name": "银行",
+                "sector_type": "industry",
+                "trade_date": trade_date,
+                "pct_chg": 1.8,
+                "amount": None,
+                "net_amount": 80_000_000.0,
+                "company_count": 2,
+                "limit_up_count": None,
+                "strong_count": None,
+                "leader_code": None,
+                "leader_name": None,
+                "heat_score": 70.0,
+                "source": "test",
+                "updated_at": "2026-05-22T15:00:00",
+            },
         ]
     )
 
-    assert UpdateService(db)._persist_sector_frames([frame]) == 1
+    assert UpdateService(db)._persist_sector_frames([frame]) == 2
     row = db.query("SELECT * FROM market_sector_daily WHERE sector_code = '885800.TI'")[0]
+    industry = db.query("SELECT * FROM market_sector_daily WHERE sector_code = '881100.TI'")[0]
     assert row["limit_up_count"] == 1
+    assert row["limit_up_count_status"] == "computed"
     assert row["strong_count"] == 2
     assert row["leader_code"] == "000001.SZ"
+    assert row["leader_pct_chg"] == 9.8
+    assert industry["limit_up_count"] == 1
+    assert industry["limit_up_count_status"] == "computed"
+    assert DataService(db).sector_heatmap("industry")[0]["limit_up_count_status"] == "computed"
 
 
 def test_update_checkpoints_and_dag_are_queryable(tmp_path):

@@ -46,7 +46,6 @@ test('frontend is split into app, api, design, pages, hooks, and utils', () => {
     'pages/overview/OverviewPage.tsx',
     'pages/overview/MarketHero.tsx',
     'pages/overview/SectorHeatmap.tsx',
-    'pages/overview/DailyActionList.tsx',
     'pages/scanner/StrategyPage.tsx',
     'pages/results/ResultsPage.tsx',
     'pages/results/CandidateEvidencePanel.tsx',
@@ -128,7 +127,7 @@ test('new API layer exposes market, intraday boards, checkpoints, and backtest e
 test('core pages cover the product-grade workbench requirements', () => {
   assert.match(read('pages/overview/OverviewPage.tsx'), /MarketHero/);
   assert.match(read('pages/overview/OverviewPage.tsx'), /SectorHeatmap/);
-  assert.match(read('pages/overview/OverviewPage.tsx'), /DailyActionList/);
+  assert.doesNotMatch(read('pages/overview/OverviewPage.tsx'), /DailyActionList/);
   assert.match(read('pages/overview/OverviewPage.tsx'), /市场简报/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /为什么入选/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /买点质量/);
@@ -138,17 +137,17 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.match(read('pages/intraday/IntradayPage.tsx'), /风险榜/);
   assert.match(read('pages/watchlist/WatchlistPage.tsx'), /卡片视图/);
   assert.match(read('pages/watchlist/WatchlistPage.tsx'), /表格视图/);
-  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /确认删除这个观察项/);
+  assert.match(read('pages/watchlist/WatchlistPage.tsx'), /删除观察项/);
   assert.match(read('pages/backtest/BacktestPage.tsx'), /信号评估/);
   assert.match(read('pages/backtest/BacktestPage.tsx'), /组合回测/);
-  assert.match(read('pages/backtest/SignalEvaluation.tsx'), /mutation\.data\?\.run_id/);
+  assert.match(read('pages/backtest/SignalEvaluation.tsx'), /mutation\.data\?\.runId/);
   assert.match(read('pages/backtest/SignalEvaluation.tsx'), /run\?\.summary/);
   assert.doesNotMatch(read('pages/backtest/SignalEvaluation.tsx'), /2024-01-01/);
   assert.match(read('pages/data-map/DataMapPage.tsx'), /核心数据/);
   assert.match(read('pages/data-map/DataMapPage.tsx'), /市场上下文/);
   assert.match(read('pages/data-map/DataMapPage.tsx'), /本地股票仓/);
-  assert.match(read('pages/data-map/DataMapPage.tsx'), /数据源诊断/);
-  assert.match(read('pages/status/StatusPage.tsx'), /开发者详情/);
+  assert.match(read('pages/data-map/DataMapPage.tsx'), /维护诊断/);
+  assert.match(read('pages/status/StatusPage.tsx'), /查看维护信息/);
 });
 
 test('task progress and topbar popover avoid false running states', () => {
@@ -167,10 +166,10 @@ test('task progress and topbar popover avoid false running states', () => {
   assert.match(queue, /state=\{task\.status\}/);
 
   const statusPage = read('pages/status/StatusPage.tsx');
-  assert.match(statusPage, /dagProgress/);
+  assert.match(statusPage, /flowProgress/);
   assert.match(statusPage, /progressByTaskId/);
   assert.match(statusPage, /getTasks/);
-  for (const label of ['当前运行', '等待队列', '最近完成', '失败任务']) {
+  for (const label of ['系统状态', '任务队列', '定时任务', '最近失败']) {
     assert.match(statusPage, new RegExp(label));
   }
 
@@ -201,14 +200,13 @@ test('scanner exposes editable universe, built-in indicators, and explicit reson
     assert.match(universe, new RegExp(key));
   }
 
-  const picker = read('pages/scanner/FactorPicker.tsx');
-  for (const label of ['补充规则', '内置参数', '全部指标', '显示更多', '会与已有参数叠加生效']) {
-    assert.match(picker, new RegExp(label));
+  const matrix = read('pages/scanner/IndicatorMatrix.tsx');
+  for (const label of ['全指标矩阵', '股票池', '行情流动性', '技术强弱', '题材板块', '资金流向', '启用']) {
+    assert.match(matrix, new RegExp(label));
   }
-  assert.match(picker, /paired_strategy_ids/);
-  assert.match(picker, /编辑参数/);
-  assert.match(picker, /转为显式规则/);
-  assert.doesNotMatch(picker, /slice\(0,\s*24\)/);
+  assert.match(matrix, /indicatorParameterKeys/);
+  assert.match(matrix, /调整参数/);
+  assert.match(matrix, /Switch/);
 
   const canvas = read('pages/scanner/RuleCanvas.tsx');
   assert.doesNotMatch(canvas, /slice\(0,\s*2\)/);

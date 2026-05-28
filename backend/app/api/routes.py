@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -253,6 +254,12 @@ def daily_brief() -> Dict[str, Any]:
     return {"brief": data_service.latest_daily_brief(), "task": data_service.latest_task("brief")}
 
 
+@router.post("/daily-brief/regenerate")
+def regenerate_daily_brief(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    task_id = update_service.start_daily_brief({**(payload or {}), "reason": "manual"})
+    return {"task_id": task_id, "status": "queued"}
+
+
 @router.get("/watchlist")
 def watchlist() -> Dict[str, Any]:
     return watchlist_service.result()
@@ -374,6 +381,37 @@ def analysis_report(
     if not report.get("analysis"):
         raise HTTPException(status_code=404, detail="分析报告不存在。")
     return report
+
+
+@router.post("/analysis/candidates/{run_id}/{code}/ai-summary")
+def candidate_ai_summary(run_id: str, code: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    generated_at = datetime.utcnow().isoformat(timespec="seconds")
+    if not settings.daily_brief_api_key:
+        return {
+            "enabled": False,
+            "summary": "AI 解读暂未启用。请在系统配置中填写模型密钥。",
+            "opportunities": [],
+            "risks": [],
+            "watch_plan": [],
+            "generated_at": generated_at,
+        }
+    report = data_service.analysis_report(run_id=run_id, limit=300)
+    rows = (report.get("candidates") or {}).get("rows") or []
+    candidate = next((row for row in rows if str(row.get("code")) == str(code)), None)
+    if candidate is None:
+        candidate = (payload or {}).get("candidate") or {"code": code, "name": code, "reasons": []}
+    reasons = [str(item) for item in candidate.get("reasons") or []][:3]
+    metrics = candidate.get("metrics") if isinstance(candidate.get("metrics"), dict) else {}
+    risks = [str(item) for item in candidate.get("risk_tags") or []][:3] or [str(item) for item in metrics.get("risk_flags") or []][:3]
+    name = candidate.get("name") or code
+    return {
+        "enabled": True,
+        "summary": f"{name} 入选主要来自策略规则命中和相对强度表现，适合作为观察候选而非直接交易指令。",
+        "opportunities": reasons or ["入选规则较完整，等待后续走势确认。"],
+        "risks": risks or ["需关注放量回落、跌破平台或市场环境转弱。"],
+        "watch_plan": ["观察 1-3 个交易日的量价延续。", "跌破关键平台或风险项重新命中时移出观察池。", "复盘 T+1、T+3、T+5 收益。"],
+        "generated_at": generated_at,
+    }
 
 
 @router.get("/backtests")

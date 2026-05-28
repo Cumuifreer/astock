@@ -6,7 +6,7 @@ import test from 'node:test';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const scannerSource = readFileSync(resolve(__dirname, '../src/pages/scanner/StrategyPage.tsx'), 'utf8');
-const factorPickerSource = readFileSync(resolve(__dirname, '../src/pages/scanner/FactorPicker.tsx'), 'utf8');
+const indicatorMatrixSource = readFileSync(resolve(__dirname, '../src/pages/scanner/IndicatorMatrix.tsx'), 'utf8');
 const ruleCanvasSource = readFileSync(resolve(__dirname, '../src/pages/scanner/RuleCanvas.tsx'), 'utf8');
 const ruleCardSource = readFileSync(resolve(__dirname, '../src/pages/scanner/RuleCard.tsx'), 'utf8');
 const universeSource = readFileSync(resolve(__dirname, '../src/pages/scanner/UniversePanel.tsx'), 'utf8');
@@ -18,10 +18,12 @@ const shellSource = readFileSync(resolve(__dirname, '../src/app/AppShell.tsx'), 
 
 test('scanner page is organized as a professional rule canvas', () => {
   assert.match(scannerSource, /UniversePanel/);
+  assert.match(scannerSource, /IndicatorMatrix/);
   assert.match(scannerSource, /RuleCanvas/);
   assert.match(scannerSource, /StrategySummary/);
+  const combined = `${scannerSource}\n${indicatorMatrixSource}\n${ruleCanvasSource}`;
   for (const label of ['股票池', '硬性筛选', '评分因子', '风险控制', '展示字段', '组合加分', '高级参数']) {
-    assert.match(scannerSource, new RegExp(label));
+    assert.match(combined, new RegExp(label));
   }
   assert.doesNotMatch(scannerSource, /StrategyRuleBuilder/);
   assert.doesNotMatch(scannerSource, /StrategyResonanceBuilder/);
@@ -30,14 +32,14 @@ test('scanner page is organized as a professional rule canvas', () => {
 test('resonance can only reference filter and score rule chips', () => {
   assert.match(scannerSource, /selectableResonanceRules/);
   assert.match(scannerSource, /rule\.action === 'filter' \|\| rule\.action === 'score'/);
-  assert.match(scannerSource, /resonance-chip-grid/);
+  assert.match(ruleCanvasSource, /resonance-chip-grid/);
   assert.doesNotMatch(scannerSource, /risk.*resonance/i);
   assert.doesNotMatch(scannerSource, /display.*resonance/i);
 });
 
 test('scanner supports adding editing saving and running current draft', () => {
-  assert.match(factorPickerSource, /onAddRule/);
-  assert.match(factorPickerSource, /加入规则/);
+  assert.match(indicatorMatrixSource, /onAddRule/);
+  assert.match(indicatorMatrixSource, /onPatchRule/);
   assert.match(ruleCardSource, /onPatch/);
   assert.match(ruleCardSource, /operator/);
   assert.match(ruleCardSource, /missing_policy/);
@@ -84,8 +86,8 @@ test('market overview reads the backend field names actually returned today', ()
 test('checkbox UI uses polished check tiles without native browser checkboxes', () => {
   assert.match(universeSource, /CheckTile/);
   assert.doesNotMatch(universeSource, /type="checkbox"/);
-  assert.match(factorPickerSource, /Segmented/);
-  assert.doesNotMatch(factorPickerSource, /type="checkbox"/);
+  assert.match(indicatorMatrixSource, /Switch/);
+  assert.doesNotMatch(indicatorMatrixSource, /type="checkbox"/);
   assert.match(ruleCanvasSource, /CheckTile/);
   assert.doesNotMatch(ruleCanvasSource, /type="checkbox"/);
   assert.match(ruleCardSource, /CheckTile/);

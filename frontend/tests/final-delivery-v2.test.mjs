@@ -1,0 +1,112 @@
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+import test from 'node:test';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const root = resolve(__dirname, '../src');
+
+function read(path) {
+  return readFileSync(resolve(root, path), 'utf8');
+}
+
+function files(dir = root) {
+  return readdirSync(dir).flatMap((entry) => {
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) return files(path);
+    return path.endsWith('.ts') || path.endsWith('.tsx') ? [path] : [];
+  });
+}
+
+function allSource() {
+  return files().map((path) => [path.replace(`${root}/`, ''), readFileSync(path, 'utf8')]);
+}
+
+test('v2 forbids browser-native alert confirm and prompt', () => {
+  for (const [path, source] of allSource()) {
+    assert.doesNotMatch(source, /window\.(alert|confirm|prompt)/, `${path} must use product dialogs instead of browser dialogs`);
+  }
+});
+
+test('ordinary pages do not expose internal product language', () => {
+  const forbidden = /Market Pulse|Scanner|Rule Canvas|feature_driven|DAG|checkpoint|developer|开发者详情|Tushare 增强|analysis-|slice\(0,\s*12\)|run_id|task_id|signal_mode|default_strategy|metrics_json|strategy_rule_results|payload|market_sector_daily/;
+  for (const [path, source] of allSource()) {
+    if (!/^(app|pages|design)\//.test(path)) continue;
+    assert.doesNotMatch(source, forbidden, `${path} exposes v2-forbidden wording`);
+  }
+});
+
+test('overview removes daily action list and keeps brief as folded sources', () => {
+  const overview = read('pages/overview/OverviewPage.tsx');
+  assert.doesNotMatch(overview, /DailyActionList/);
+  assert.match(overview, /市场简报/);
+  assert.match(overview, /重新生成简报/);
+  assert.match(overview, /查看引用来源/);
+  assert.match(overview, /details/);
+});
+
+test('strategy page uses a default full indicator matrix instead of factor picker and canvas section card', () => {
+  const strategy = read('pages/scanner/StrategyPage.tsx');
+  assert.match(strategy, /IndicatorMatrix/);
+  assert.doesNotMatch(strategy, /FactorPicker/);
+  assert.doesNotMatch(strategy, /画布分区/);
+
+  const matrix = read('pages/scanner/IndicatorMatrix.tsx');
+  for (const label of ['股票池', '行情流动性', '技术强弱', '平台形态', '题材板块', '资金流向', '涨停与事件', '筹码成本', '风险过滤', '展示字段']) {
+    assert.match(matrix, new RegExp(label));
+  }
+  assert.match(matrix, /Switch/);
+  assert.match(matrix, /开启|关闭/);
+});
+
+test('analysis results display strategy names and use product AI dialog', () => {
+  const results = read('pages/results/ResultsPage.tsx');
+  assert.match(results, /activeStrategyName|strategyLabel/);
+  assert.doesNotMatch(results, /slice\(0,\s*12\)/);
+  assert.doesNotMatch(results, /analysis-/);
+
+  const panel = read('pages/results/CandidateEvidencePanel.tsx');
+  assert.match(panel, /AI 解读/);
+  assert.match(panel, /技术明细/);
+  assert.doesNotMatch(panel, /开发者详情/);
+  assert.doesNotMatch(panel, /window\.alert/);
+});
+
+test('watchlist uses dialogs and DataTable for management', () => {
+  const watchlist = read('pages/watchlist/WatchlistPage.tsx');
+  assert.match(watchlist, /ConfirmDialog/);
+  assert.match(watchlist, /EditDialog/);
+  assert.match(watchlist, /DataTable/);
+  assert.match(watchlist, /批量标记有效/);
+  assert.match(watchlist, /批量删除/);
+  assert.doesNotMatch(watchlist, /<table/);
+  assert.doesNotMatch(watchlist, /value:\s*'归档'/);
+  assert.match(watchlist, /已归档/);
+});
+
+test('intraday radar has a real timeline drawer and page-level missing-data notices', () => {
+  const board = read('pages/intraday/IntradayBoard.tsx');
+  const page = read('pages/intraday/IntradayPage.tsx');
+  assert.match(page, /Drawer/);
+  assert.match(page, /getIntradayTimeline/);
+  assert.match(page, /已完成 1 次采样/);
+  assert.match(page, /题材联动数据未同步/);
+  assert.doesNotMatch(board, /window\.location\.hash/);
+});
+
+test('backtest page exposes strategy selection parameters results and queue tracking', () => {
+  const backtest = `${read('pages/backtest/BacktestPage.tsx')}\n${read('pages/backtest/SignalEvaluation.tsx')}\n${read('pages/backtest/PortfolioBacktest.tsx')}`;
+  for (const label of ['回测策略', '调仓频率', '候选数量', '持仓数量', '交易成本', '滑点', '资金曲线', '交易明细', '查看任务状态']) {
+    assert.match(backtest, new RegExp(label));
+  }
+});
+
+test('status page defaults to a concise user view with hidden maintenance mode', () => {
+  const status = read('pages/status/StatusPage.tsx');
+  for (const label of ['系统状态', '任务队列', '定时任务', '最近失败', '查看维护信息']) {
+    assert.match(status, new RegExp(label));
+  }
+  assert.doesNotMatch(status, /developer-details/);
+  assert.doesNotMatch(status, /开发者详情/);
+});

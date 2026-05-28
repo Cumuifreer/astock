@@ -2,8 +2,10 @@ import type { BacktestResult, BacktestRunsResponse, StrategyConfig } from '../ty
 import { post, request } from './client';
 
 export type BacktestJob = {
-  task_id: string;
-  run_id: string;
+  task_id?: string;
+  run_id?: string;
+  taskId: string;
+  runId: string;
   status: string;
 };
 
@@ -20,7 +22,7 @@ export function runLegacyBacktest(payload: Record<string, unknown>, config: Stra
 }
 
 export function runSignalEvaluation(payload: Record<string, unknown>): Promise<BacktestJob> {
-  return post<BacktestJob>('/api/backtest/signal-evaluation', payload);
+  return post<BacktestJob>('/api/backtest/signal-evaluation', payload).then(normalizeBacktestJob);
 }
 
 export function getSignalEvaluation(runId: string): Promise<BacktestResult> {
@@ -28,9 +30,17 @@ export function getSignalEvaluation(runId: string): Promise<BacktestResult> {
 }
 
 export function runPortfolioBacktest(payload: Record<string, unknown>): Promise<BacktestJob> {
-  return post<BacktestJob>('/api/backtest/portfolio', payload);
+  return post<BacktestJob>('/api/backtest/portfolio', payload).then(normalizeBacktestJob);
 }
 
 export function getPortfolioBacktest(runId: string): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>(`/api/backtest/portfolio/${encodeURIComponent(runId)}`);
+}
+
+function normalizeBacktestJob(job: BacktestJob): BacktestJob {
+  return {
+    ...job,
+    taskId: job.taskId || job.task_id || '',
+    runId: job.runId || job.run_id || '',
+  };
 }

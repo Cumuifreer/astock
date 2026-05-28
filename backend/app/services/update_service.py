@@ -2162,6 +2162,22 @@ class UpdateService:
     ) -> int:
         if self.db.scalar("SELECT COUNT(*) FROM market_sector_daily WHERE trade_date = ?", [trade_date]):
             existing = int(self.db.scalar("SELECT COUNT(*) FROM market_sector_daily WHERE trade_date = ?", [trade_date]) or 0)
+            needs_breadth_refresh = int(
+                self.db.scalar(
+                    """
+                    SELECT COUNT(*)
+                    FROM market_sector_daily
+                    WHERE trade_date = ?
+                      AND limit_up_count_status IS NULL
+                    """,
+                    [trade_date],
+                )
+                or 0
+            )
+            if needs_breadth_refresh:
+                rows = self.db.query("SELECT * FROM market_sector_daily WHERE trade_date = ?", [trade_date])
+                self._attach_sector_breadth_counts(rows)
+                existing = self.db.upsert("market_sector_daily", rows, ["sector_code", "sector_type", "trade_date"])
             if task_id:
                 self.record_checkpoint(
                     task_id,
@@ -2226,10 +2242,14 @@ class UpdateService:
             if not sector_codes:
                 continue
             placeholders = ",".join(["?"] * len(sector_codes))
+            limit_data_available = bool(
+                self.db.scalar("SELECT COUNT(*) FROM tushare_limit_list_d WHERE trade_date = ?", [trade_date])
+            )
             params: List[Any] = [trade_date, trade_date, trade_date, *sector_codes]
             count_rows = self.db.query(
                 f"""
                 SELECT m.con_code AS sector_code,
+                       COUNT(DISTINCT m.code) AS member_count,
                        COUNT(DISTINCT CASE WHEN UPPER(COALESCE(l.limit_type, '')) LIKE 'U%' THEN m.code END) AS limit_up_count,
                        COUNT(DISTINCT CASE WHEN COALESCE(s.pct_chg, h.pct_chg) >= 5 THEN m.code END) AS strong_count
                 FROM tushare_ths_member m
@@ -2271,10 +2291,13 @@ class UpdateService:
                 code = str(row.get("sector_code") or "")
                 count = counts.get(code, {})
                 leader = leaders.get(code, {})
-                row["limit_up_count"] = int(count.get("limit_up_count") or 0)
-                row["strong_count"] = int(count.get("strong_count") or 0)
+                member_count = int(count.get("member_count") or 0)
+                row["limit_up_count_status"] = "computed" if limit_data_available and member_count else "missing"
+                row["limit_up_count"] = int(count.get("limit_up_count") or 0) if row["limit_up_count_status"] == "computed" else None
+                row["strong_count"] = int(count.get("strong_count") or 0) if member_count else None
                 row["leader_code"] = row.get("leader_code") or leader.get("code")
                 row["leader_name"] = row.get("leader_name") or leader.get("name")
+                row["leader_pct_chg"] = leader.get("pct_chg")
 
     def _update_tushare_daily_basic(
         self,

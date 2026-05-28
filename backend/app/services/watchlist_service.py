@@ -11,8 +11,15 @@ from backend.app.db import Database
 from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
 
 
-REVIEW_STATUSES = {"观察中", "有效", "误报", "已验证", "已放弃", "已错过", "归档"}
-BATCH_REVIEW_STATUSES = {"观察中", "有效", "一般", "误报", "已归档"}
+REVIEW_STATUSES = {"观察中", "有效", "误报", "已归档"}
+BATCH_REVIEW_STATUSES = REVIEW_STATUSES
+LEGACY_REVIEW_STATUS_MAP = {
+    "已验证": "有效",
+    "一般": "观察中",
+    "已放弃": "误报",
+    "已错过": "已归档",
+    "归档": "已归档",
+}
 
 
 class WatchlistService:
@@ -479,11 +486,13 @@ def _first_number(row: Dict[str, Any], keys: List[str]) -> Optional[float]:
 
 def _review_status(value: Any) -> str:
     status = str(value or "观察中")
+    status = LEGACY_REVIEW_STATUS_MAP.get(status, status)
     return status if status in REVIEW_STATUSES else "观察中"
 
 
 def _batch_review_status(value: Any) -> str:
     status = str(value or "观察中")
+    status = LEGACY_REVIEW_STATUS_MAP.get(status, status)
     return status if status in BATCH_REVIEW_STATUSES else "观察中"
 
 

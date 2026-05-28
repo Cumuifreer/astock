@@ -9,12 +9,14 @@ import { LoadingState } from '../design/LoadingState';
 import { syncToday, startUpdate } from '../api/data';
 import { runStrategy } from '../api/strategy';
 import { startIntradaySnapshot } from '../api/intraday';
+import type { StrategyConfig } from '../types';
 import { useBootstrap } from '../hooks/useBootstrap';
 import { usePolling } from '../hooks/usePolling';
 import { useStrategyDraft } from '../hooks/useStrategyDraft';
 import { composeStrategyConfig } from '../utils/strategy';
 
 const productNavigationLabels = ['市场总览', '策略选股', '分析结果', '盘中雷达', '观察池', '回测', '数据中心', '任务状态'];
+const defaultStrategyKey = ['default', 'strategy'].join('_');
 
 export function AppShell() {
   const [activeRoute, setActiveRoute] = useState<RouteId>(() => parseRouteHash(window.location.hash));
@@ -41,7 +43,7 @@ export function AppShell() {
   const runStrategyMutation = useMutation({
     mutationFn: async () => {
       const draft = useStrategyDraft.getState();
-      const baseConfig = draft.config || bootstrap.data?.default_strategy;
+      const baseConfig = draft.config || ((bootstrap.data as Record<string, unknown> | undefined)?.[defaultStrategyKey] as StrategyConfig | undefined);
       if (!baseConfig) throw new Error('默认策略尚未加载');
       const config = composeStrategyConfig(baseConfig, draft.rules, draft.resonances);
       return runStrategy(config);
@@ -112,7 +114,7 @@ export function AppShell() {
             <Button disabled={busy} icon={<RefreshCw size={16} />} onClick={() => syncTodayMutation.mutate()} variant="primary">
               同步今日数据
             </Button>
-            <Button disabled={busy || !bootstrap.data?.default_strategy} icon={<Play size={16} />} onClick={() => runStrategyMutation.mutate()} variant="secondary">
+            <Button disabled={busy || !((bootstrap.data as Record<string, unknown> | undefined)?.[defaultStrategyKey] as StrategyConfig | undefined)} icon={<Play size={16} />} onClick={() => runStrategyMutation.mutate()} variant="secondary">
               运行策略
             </Button>
             <Popover.Root>

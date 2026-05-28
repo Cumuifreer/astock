@@ -1,21 +1,31 @@
-import { useQuery } from '@tanstack/react-query';
-import { getMarketOverview } from '../../api/market';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { getMarketOverview, regenerateMarketBrief } from '../../api/market';
 import type { DailyBrief } from '../../types';
 import { Badge } from '../../design/Badge';
+import { Button } from '../../design/Button';
 import { LoadingState } from '../../design/LoadingState';
 import { EmptyState } from '../../design/EmptyState';
+import { useToast } from '../../design/Toast';
 import { useBootstrap } from '../../hooks/useBootstrap';
 import { formatDate, formatDateTime } from '../../utils/date';
 import { MarketHero } from './MarketHero';
 import { SectorHeatmap } from './SectorHeatmap';
-import { DailyActionList } from './DailyActionList';
 import { MarketFlowPanel } from './MarketFlowPanel';
 
 export function OverviewPage() {
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const bootstrap = useBootstrap();
   const overview = useQuery({
     queryKey: ['market-overview'],
     queryFn: getMarketOverview,
+  });
+  const briefMutation = useMutation({
+    mutationFn: regenerateMarketBrief,
+    onSuccess: () => {
+      showToast('市场简报已加入生成队列，可在任务状态查看进度。', 'success');
+      void queryClient.invalidateQueries({ queryKey: ['bootstrap'] });
+    },
   });
 
   if (overview.isLoading) return <LoadingState label="读取市场总览" />;
@@ -29,15 +39,14 @@ export function OverviewPage() {
       <MarketHero state={data.state} tradeDate={data.trade_date} />
       <MarketFlowPanel pulse={data.pulse} freshness={data.data_freshness || []} />
       <SectorHeatmap sectors={data.sector_heatmap || []} />
-      <DailyActionList items={data.action_items || []} />
-      <DailyBriefPanel brief={bootstrap.data?.daily_brief || bootstrap.data?.overview?.latest_brief || null} />
+      <DailyBriefPanel brief={bootstrap.data?.daily_brief || bootstrap.data?.overview?.latest_brief || null} onRegenerate={() => briefMutation.mutate()} busy={briefMutation.isPending} />
     </div>
   );
 }
 
-function DailyBriefPanel({ brief }: { brief: DailyBrief | null }) {
+function DailyBriefPanel({ brief, busy, onRegenerate }: { brief: DailyBrief | null; busy?: boolean; onRegenerate: () => void }) {
   if (!brief) {
-    return <EmptyState title="今日资讯简报生成中" description="后台会用现有 daily brief 任务自动补齐，生成后会回到市场总览。" />;
+    return <EmptyState title="市场简报生成中" description="系统会根据市场状态、板块热力和候选变化生成摘要。" />;
   }
   const rows = [
     ...(brief.article_flow?.tech || []),
@@ -54,22 +63,12 @@ function DailyBriefPanel({ brief }: { brief: DailyBrief | null }) {
         <div className="button-row">
           <Badge tone="info">{formatDate(brief.brief_date)}</Badge>
           <Badge>{formatDateTime(brief.generated_at)}</Badge>
+          <Button disabled={busy} onClick={onRegenerate} variant="secondary">
+            重新生成简报
+          </Button>
         </div>
       </div>
       <p className="card-copy">{brief.daily_overview}</p>
-      <div className="brief-list-grid">
-        {rows.length ? (
-          rows.map((item) => (
-            <a className="brief-mini-card" href={item.url} key={`${item.url}-${item.title}`} rel="noreferrer" target="_blank">
-              <strong>{item.title}</strong>
-              <span>{item.source}</span>
-              <p>{item.summary}</p>
-            </a>
-          ))
-        ) : (
-          <p className="card-copy">暂无可展示条目。</p>
-        )}
-      </div>
       {brief.keywords?.length ? (
         <div className="rule-chip-grid" style={{ marginTop: 14 }}>
           {brief.keywords.slice(0, 8).map((keyword) => (
@@ -77,6 +76,22 @@ function DailyBriefPanel({ brief }: { brief: DailyBrief | null }) {
           ))}
         </div>
       ) : null}
+      <details className="maintenance-details">
+        <summary>查看引用来源</summary>
+        <div className="brief-list-grid">
+          {rows.length ? (
+            rows.map((item) => (
+              <a className="brief-mini-card" href={item.url} key={`${item.url}-${item.title}`} rel="noreferrer" target="_blank">
+                <strong>{item.title}</strong>
+                <span>{item.source}</span>
+                <p>{item.summary}</p>
+              </a>
+            ))
+          ) : (
+            <p className="card-copy">暂无可展示条目。</p>
+          )}
+        </div>
+      </details>
     </section>
   );
 }

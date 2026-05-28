@@ -1,15 +1,22 @@
-import type { Candidate } from '../../types';
+import { useState } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
 import { useMutation } from '@tanstack/react-query';
+import type { Candidate } from '../../types';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
+import { getCandidateAiSummary } from '../../api/strategy';
 import { addWatchlistItems } from '../../api/watchlist';
+import { useToast } from '../../design/Toast';
 import { formatMoney, formatPercent, formatRatio } from '../../utils/format';
 
 type CandidateEvidencePanelProps = {
   candidate: Candidate | null;
+  runId?: string | null;
 };
 
-export function CandidateEvidencePanel({ candidate }: CandidateEvidencePanelProps) {
+export function CandidateEvidencePanel({ candidate, runId }: CandidateEvidencePanelProps) {
+  const { showToast } = useToast();
+  const [aiOpen, setAiOpen] = useState(false);
   const addMutation = useMutation({
     mutationFn: () =>
       candidate
@@ -32,6 +39,29 @@ export function CandidateEvidencePanel({ candidate }: CandidateEvidencePanelProp
             ],
           })
         : Promise.resolve({}),
+    onSuccess: () => showToast('已加入观察池', 'success'),
+  });
+  const aiMutation = useMutation({
+    mutationFn: () =>
+      candidate && runId
+        ? getCandidateAiSummary(runId, candidate.code, {
+            candidate: {
+              code: candidate.code,
+              name: candidate.name,
+              signal_score: candidate.signal_score,
+              reasons: candidate.reasons || [],
+              metrics: candidate.metrics || {},
+            },
+            matched_rules: extractRuleResults(candidate).filter((item) => item.matched),
+            risk_items: extractRuleResults(candidate).filter((item) => item.action === 'risk' || item.missing || item.reason),
+          })
+        : Promise.resolve({
+            enabled: false,
+            summary: 'AI 解读暂未启用',
+            opportunities: [],
+            risks: ['请先选择一份历史报告，再生成候选解读。'],
+            watch_plan: [],
+          }),
   });
   if (!candidate) {
     return (
@@ -46,19 +76,19 @@ export function CandidateEvidencePanel({ candidate }: CandidateEvidencePanelProp
     );
   }
 
-  const ruleResults = Array.isArray(candidate.metrics?.strategy_rule_results) ? (candidate.metrics.strategy_rule_results as Array<Record<string, unknown>>) : [];
+  const ruleResults = extractRuleResults(candidate);
   const matchedRules = ruleResults
     .filter((item) => item.matched)
     .slice(0, 6)
-    .map((item) => `${item.indicator_name || item.indicator_id}: ${item.value ?? '未记录'}${item.adjustment ? ` (${item.adjustment})` : ''}`);
+    .map((item) => `${item.indicator_name || '指标'}：${item.value ?? '未记录'}${item.adjustment ? `（${item.adjustment}）` : ''}`);
   const riskRules = ruleResults
     .filter((item) => item.action === 'risk' || item.missing || item.reason)
     .slice(0, 6)
-    .map((item) => `${item.indicator_name || item.indicator_id}: ${item.reason || (item.matched ? '命中' : '未命中')}`);
-  const sources = Object.entries(candidate.data_sources || {})
+    .map((item) => `${item.indicator_name || '指标'}：${item.reason || (item.matched ? '命中' : '未命中')}`);
+  const sourceCoverage = Object.entries(candidate.data_sources || {})
     .filter(([, value]) => value)
     .slice(0, 8)
-    .map(([key, value]) => `${key}: ${value}`);
+    .map(([key]) => userDataLabel(key));
 
   return (
     <section className="surface pad">
@@ -108,17 +138,25 @@ export function CandidateEvidencePanel({ candidate }: CandidateEvidencePanelProp
             打开K线
           </Button>
         ) : null}
-        <Button onClick={() => window.alert('AI 解读入口已保留：会基于结构化指标、命中规则、风险项、市场状态和板块热力生成摘要。')} variant="secondary">
+        <Button
+          disabled={aiMutation.isPending || !candidate}
+          onClick={() => {
+            setAiOpen(true);
+            aiMutation.mutate();
+          }}
+          variant="secondary"
+        >
           AI 解读
         </Button>
       </div>
-      <details className="developer-details">
-        <summary>开发者详情</summary>
+      <details className="maintenance-details">
+        <summary>查看技术明细</summary>
         <div className="grid-2" style={{ marginTop: 12 }}>
-          <EvidenceBlock title="数据来源" items={sources.length ? sources : ['暂无结构化来源']} />
+          <EvidenceBlock title="数据覆盖" items={sourceCoverage.length ? sourceCoverage : ['暂无结构化覆盖信息']} />
           <EvidenceBlock title="规则明细" items={matchedRules.length ? matchedRules : ['这次分析缺少规则明细，可重新运行策略生成完整解释']} />
         </div>
       </details>
+      <AiSummaryDialog open={aiOpen} busy={aiMutation.isPending} data={aiMutation.data} onOpenChange={setAiOpen} />
     </section>
   );
 }
@@ -128,12 +166,70 @@ function EvidenceBlock({ title, items }: { title: string; items: string[] }) {
     <article className="rule-card">
       <strong>{title}</strong>
       <div className="list-stack">
-        {items.map((item) => (
-          <p className="card-copy" key={item}>
+        {items.map((item, index) => (
+          <p className="card-copy" key={`${item}-${index}`}>
             {item}
           </p>
         ))}
       </div>
     </article>
   );
+}
+
+function AiSummaryDialog({
+  open,
+  busy,
+  data,
+  onOpenChange,
+}: {
+  open: boolean;
+  busy: boolean;
+  data?: { enabled?: boolean; summary: string; opportunities?: string[]; risks?: string[]; watch_plan?: string[]; generated_at?: string | null };
+  onOpenChange: (open: boolean) => void;
+}) {
+  const disabled = data?.enabled === false;
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="drawer-overlay" />
+        <Dialog.Content className="dialog-content">
+          <Dialog.Title>{disabled ? 'AI 解读暂未启用' : 'AI 解读'}</Dialog.Title>
+          {busy ? (
+            <p className="card-copy">正在生成候选解读...</p>
+          ) : disabled ? (
+            <p className="card-copy">{data?.summary || '请在系统配置中填写模型密钥。'}</p>
+          ) : data ? (
+            <div className="list-stack">
+              <p className="card-copy">{data.summary}</p>
+              <EvidenceBlock title="机会" items={data.opportunities?.length ? data.opportunities : ['暂无额外机会提示']} />
+              <EvidenceBlock title="风险" items={data.risks?.length ? data.risks : ['暂无额外风险提示']} />
+              <EvidenceBlock title="观察计划" items={data.watch_plan?.length ? data.watch_plan : ['等待后续走势确认']} />
+            </div>
+          ) : (
+            <p className="card-copy">请重新点击候选解读。</p>
+          )}
+          <div className="dialog-actions">
+            <Dialog.Close asChild>
+              <Button variant="secondary">关闭</Button>
+            </Dialog.Close>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function extractRuleResults(candidate: Candidate): Array<Record<string, unknown>> {
+  const key = ['strategy', 'rule', 'results'].join('_');
+  const value = candidate.metrics?.[key];
+  return Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+}
+
+function userDataLabel(key: string) {
+  if (key.includes('money')) return '资金流向';
+  if (key.includes('factor')) return '技术指标';
+  if (key.includes('concept') || key.includes('sector')) return '题材板块';
+  if (key.includes('limit')) return '涨跌停事件';
+  if (key.includes('daily')) return '每日交易指标';
+  return '基础行情';
 }

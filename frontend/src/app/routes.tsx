@@ -26,7 +26,7 @@ export const routes: RouteDefinition[] = [
     id: 'overview',
     label: '市场总览',
     eyebrow: '总览',
-    description: '市场状态、仓位建议、主线题材和今日提示。',
+    description: '市场状态、仓位建议、主线题材和市场简报。',
     icon: Gauge,
     component: OverviewPage,
   },

@@ -29,6 +29,9 @@ export type UpdateCheckpoint = {
   payload?: Record<string, unknown>;
 };
 
+export type TaskFlowNode = TaskDagNode;
+export type TaskProgressNode = UpdateCheckpoint;
+
 export function getCapabilities(): Promise<{ rows?: Capability[] } | Capability[]> {
   return request<{ rows?: Capability[] } | Capability[]>('/api/data/capabilities');
 }
@@ -79,4 +82,12 @@ export function getTaskDag(taskId: string): Promise<{ nodes?: TaskDagNode[] } | 
 
 export function getTaskCheckpoints(taskId: string): Promise<{ rows?: UpdateCheckpoint[] } | UpdateCheckpoint[]> {
   return request<{ rows?: UpdateCheckpoint[] } | UpdateCheckpoint[]>(`/api/tasks/${encodeURIComponent(taskId)}/checkpoints`);
+}
+
+export function getTaskFlow(taskId: string): Promise<{ nodes?: TaskFlowNode[] } | TaskFlowNode[]> {
+  return getTaskDag(taskId);
+}
+
+export function getTaskProgressNodes(taskId: string): Promise<{ rows?: TaskProgressNode[] } | TaskProgressNode[]> {
+  return getTaskCheckpoints(taskId);
 }

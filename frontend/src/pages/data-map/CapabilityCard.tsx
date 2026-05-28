@@ -17,7 +17,7 @@ export function CapabilityCard({
   return (
     <article className="card">
       <div className="split-row">
-        <h3 className="card-title">{capability.capability}</h3>
+        <h3 className="card-title">{friendlyCapability(capability.capability)}</h3>
         <Badge tone={health === 'normal' ? 'good' : health === 'missing' || health === 'partial' ? 'risk' : 'watch'}>{labelFor(health)}</Badge>
       </div>
       <p className="card-copy">
@@ -44,4 +44,14 @@ function labelFor(health: ReturnType<typeof capabilityHealth>) {
   if (health === 'low') return '低覆盖';
   if (health === 'partial') return '部分完成';
   return '过期';
+}
+
+function friendlyCapability(value: string) {
+  return value
+    .replace('历史 K 线', '历史行情')
+    .replace('当天行情快照', '今日行情')
+    .replace('每日指标', '每日交易指标')
+    .replace('概念/行业成分', '题材板块')
+    .replace('龙虎榜/游资', '龙虎榜数据')
+    .replace('涨跌停', '涨跌停事件');
 }

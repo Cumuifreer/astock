@@ -1,18 +1,20 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getTaskCheckpoints, getTaskDag, getTasks } from '../../api/data';
+import { getTaskFlow, getTaskProgressNodes, getTasks } from '../../api/data';
 import { Badge } from '../../design/Badge';
+import { Button } from '../../design/Button';
 import { DataTable } from '../../design/DataTable';
 import { LoadingState } from '../../design/LoadingState';
+import { Progress } from '../../design/Progress';
 import { useBootstrap } from '../../hooks/useBootstrap';
 import { formatDateTime } from '../../utils/date';
-import { dagProgress, normalizeRows } from '../../utils/metrics';
-import { TaskQueue } from './TaskQueue';
+import { flowProgress, normalizeRows, taskProgressValue } from '../../utils/metrics';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { TaskRun } from '../../types';
-import type { TaskDagNode, UpdateCheckpoint } from '../../api/data';
+import type { TaskFlowNode, TaskProgressNode } from '../../api/data';
 
 export function StatusPage() {
+  const [showMaintenance, setShowMaintenance] = useState(false);
   const bootstrap = useBootstrap();
   const activeTasks = useQuery({
     queryKey: ['tasks', 'queued,running'],
@@ -29,31 +31,30 @@ export function StatusPage() {
   const runningTasks = effectiveActiveRows.filter((task) => task.status === 'running');
   const queuedTasks = effectiveActiveRows.filter((task) => task.status === 'queued');
   const failedTasks = recentRows.filter((task) => task.status === 'failed');
-  const completedTasks = recentRows.filter((task) => task.status !== 'failed');
   const activeTask = runningTasks[0] || queuedTasks[0] || fallbackTasks.find((task) => ['queued', 'running'].includes(task.status)) || fallbackTasks[0];
-  const dag = useQuery({
-    queryKey: ['task-dag', activeTask?.id],
-    queryFn: () => getTaskDag(activeTask?.id || ''),
+  const taskFlow = useQuery({
+    queryKey: ['task-flow', activeTask?.id],
+    queryFn: () => getTaskFlow(activeTask?.id || ''),
     enabled: Boolean(activeTask?.id),
   });
-  const checkpoints = useQuery({
-    queryKey: ['task-checkpoints', activeTask?.id],
-    queryFn: () => getTaskCheckpoints(activeTask?.id || ''),
+  const progressNodes = useQuery({
+    queryKey: ['task-progress-nodes', activeTask?.id],
+    queryFn: () => getTaskProgressNodes(activeTask?.id || ''),
     enabled: Boolean(activeTask?.id),
   });
-  const checkpointRows = normalizeRows<UpdateCheckpoint>(checkpoints.data);
-  const dagRows = normalizeRows<TaskDagNode>(dag.data);
+  const progressRows = normalizeRows<TaskProgressNode>(progressNodes.data);
+  const flowRows = normalizeRows<TaskFlowNode>(taskFlow.data);
   const progressByTaskId = useMemo(() => {
     if (!activeTask || activeTask.kind !== 'update') return {};
     if (!['queued', 'running'].includes(activeTask.status)) return {};
-    return { [activeTask.id]: dagProgress(dagRows) };
-  }, [activeTask, dagRows]);
-  const checkpointColumns = useMemo<Array<ColumnDef<UpdateCheckpoint, unknown>>>(
+    return { [activeTask.id]: flowProgress(flowRows) };
+  }, [activeTask, flowRows]);
+  const progressColumns = useMemo<Array<ColumnDef<TaskProgressNode, unknown>>>(
     () => [
       { header: '节点', accessorKey: 'job_id' },
       { header: '数据类别', accessorKey: 'capability' },
       { header: '批次', accessorKey: 'batch_key' },
-      { header: '状态', accessorKey: 'status', cell: ({ row }) => <Badge>{checkpointStatusLabel(row.original.status)}</Badge> },
+      { header: '状态', accessorKey: 'status', cell: ({ row }) => <Badge>{progressStatusLabel(row.original.status)}</Badge> },
       { header: '写入行数', accessorKey: 'rows_written' },
       { header: '完成时间', accessorKey: 'finished_at', cell: ({ row }) => formatDateTime(row.original.finished_at) },
     ],
@@ -67,21 +68,38 @@ export function StatusPage() {
       <section className="surface pad">
         <div className="section-heading">
           <div>
-            <h2>当前运行任务</h2>
-            <p>任务队列、今日已完成任务、失败任务和定时计划统一在这里。</p>
+            <h2>任务状态</h2>
+            <p>查看当前任务、等待队列、定时计划和最近失败原因。</p>
           </div>
           <Badge tone={activeTask ? 'info' : 'neutral'}>{activeTask ? '有任务' : '系统待命'}</Badge>
         </div>
-        <section className="task-status-grid">
-          <TaskQueue emptyLabel="当前没有运行中的任务" title="当前运行" tasks={runningTasks} progressByTaskId={progressByTaskId} />
-          <TaskQueue emptyLabel="等待队列为空" title="等待队列" tasks={queuedTasks} progressByTaskId={progressByTaskId} />
-          <TaskQueue emptyLabel="暂无最近完成任务" title="最近完成" tasks={completedTasks.slice(0, 6)} />
-          <TaskQueue emptyLabel="暂无失败任务" title="失败任务" tasks={failedTasks.slice(0, 6)} />
-        </section>
+        <div className="grid-4">
+          <Metric label="系统状态" value={systemLabel(activeTask)} />
+          <Metric label="任务队列" value={`运行 ${runningTasks.length} · 排队 ${queuedTasks.length}`} />
+          <Metric label="定时任务" value="最近暂无 · 下次 09:35 · 今日还剩 25 次" />
+          <Metric label="最近失败" value={failedTasks[0]?.error_message || failedTasks[0]?.warning || '无'} tone={failedTasks.length ? 'risk' : 'neutral'} />
+        </div>
+        {activeTask && ['queued', 'running'].includes(activeTask.status) ? (
+          <article className="rule-card" style={{ marginTop: 16 }}>
+            <div className="rule-card-header">
+              <strong>当前任务：{kindLabel(activeTask.kind)}</strong>
+              <Badge tone={activeTask.status === 'running' ? 'info' : 'watch'}>{taskStatusLabel(activeTask.status)}</Badge>
+            </div>
+            <Progress label="当前任务进度" state={activeTask.status} value={taskProgressValue(activeTask, progressByTaskId[activeTask.id])} />
+            <p className="card-copy">
+              当前步骤：{activeTask.stage || '等待开始'} · 已完成 {activeTask.processed} / 共 {activeTask.total || progressRows.length || 0}
+            </p>
+          </article>
+        ) : null}
+        <div className="button-row" style={{ marginTop: 16 }}>
+          <Button onClick={() => setShowMaintenance((value) => !value)} variant="secondary">
+            {showMaintenance ? '收起维护信息' : '查看维护信息'}
+          </Button>
+        </div>
       </section>
 
-      <details className="developer-details surface pad">
-        <summary>开发者详情</summary>
+      {showMaintenance ? (
+      <section className="maintenance-details surface pad">
         <section className="grid-2" style={{ marginTop: 16 }}>
           <div>
             <div className="section-heading">
@@ -91,13 +109,13 @@ export function StatusPage() {
               </div>
             </div>
             <div className="list-stack">
-              {dagRows.map((node) => (
+              {flowRows.map((node) => (
                 <div className="split-row" key={node.id}>
                   <span>{node.label || node.id}</span>
-                  <Badge>{checkpointStatusLabel(node.status)}</Badge>
+                  <Badge>{progressStatusLabel(node.status)}</Badge>
                 </div>
               ))}
-              {!dagRows.length ? <p className="card-copy">暂无流程数据。</p> : null}
+              {!flowRows.length ? <p className="card-copy">暂无流程数据。</p> : null}
             </div>
           </div>
 
@@ -108,20 +126,53 @@ export function StatusPage() {
                 <p>读取真实进度节点，不只依赖任务摘要。</p>
               </div>
             </div>
-            <DataTable data={checkpointRows} columns={checkpointColumns} />
+            <DataTable data={progressRows} columns={progressColumns} />
           </div>
         </section>
-      </details>
+      </section>
+      ) : null}
     </div>
   );
 }
 
-function checkpointStatusLabel(status?: string | null) {
+function progressStatusLabel(status?: string | null) {
   if (status === 'queued') return '排队中';
   if (status === 'running') return '运行中';
   if (status === 'completed') return '已完成';
   if (status === 'partial') return '部分完成';
   if (status === 'failed') return '失败';
   if (status === 'skipped') return '已跳过';
+  return status || '待更新';
+}
+
+function Metric({ label, value, tone = 'neutral' }: { label: string; value: string; tone?: 'neutral' | 'risk' }) {
+  return (
+    <article className="metric-pill">
+      <span className="metric-label">{label}</span>
+      <div className={tone === 'risk' ? 'metric-value text-risk' : 'metric-value'}>{value}</div>
+    </article>
+  );
+}
+
+function systemLabel(task?: TaskRun | null) {
+  if (!task || !['queued', 'running'].includes(task.status)) return '系统待命';
+  if (task.kind === 'update') return task.status === 'queued' ? '等待同步' : '正在同步';
+  if (task.kind === 'analyze') return task.status === 'queued' ? '等待分析' : '正在分析';
+  if (task.kind === 'backtest') return task.status === 'queued' ? '等待回测' : '正在回测';
+  return task.status === 'queued' ? '等待任务' : '正在运行';
+}
+
+function kindLabel(kind?: string | null) {
+  if (kind === 'update') return '同步今日数据';
+  if (kind === 'analyze') return '运行策略';
+  if (kind === 'backtest') return '回测';
+  if (kind === 'intraday') return '盘中采样';
+  if (kind === 'brief') return '市场简报';
+  return kind || '任务';
+}
+
+function taskStatusLabel(status?: string | null) {
+  if (status === 'queued') return '已排队';
+  if (status === 'running') return '运行中';
   return status || '待更新';
 }

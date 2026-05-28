@@ -689,14 +689,22 @@ MIGRATIONS = [
       net_amount DOUBLE,
       company_count INTEGER,
       limit_up_count INTEGER,
+      limit_up_count_status TEXT,
       strong_count INTEGER,
       leader_code TEXT,
       leader_name TEXT,
+      leader_pct_chg DOUBLE,
       heat_score DOUBLE,
       source TEXT,
       updated_at TIMESTAMP,
       PRIMARY KEY (sector_code, sector_type, trade_date)
     )
+    """,
+    """
+    ALTER TABLE market_sector_daily ADD COLUMN IF NOT EXISTS limit_up_count_status TEXT
+    """,
+    """
+    ALTER TABLE market_sector_daily ADD COLUMN IF NOT EXISTS leader_pct_chg DOUBLE
     """,
     """
     CREATE TABLE IF NOT EXISTS factor_values (

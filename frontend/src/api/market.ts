@@ -1,4 +1,4 @@
-import { request } from './client';
+import { post, request } from './client';
 
 export type MarketState = {
   trade_date?: string;
@@ -25,9 +25,11 @@ export type SectorHeatNode = {
   net_amount?: number | null;
   company_count?: number | null;
   limit_up_count?: number | null;
+  limit_up_count_status?: 'computed' | 'not_computed' | 'missing' | string | null;
   strong_count?: number | null;
   leader_code?: string | null;
   leader_name?: string | null;
+  leader_pct_chg?: number | null;
   heat_score?: number | null;
 };
 
@@ -71,4 +73,8 @@ export function getMarketOverview(): Promise<MarketOverview> {
 export function getSectorHeatmap(type = 'concept', metric = 'heat', limit = 80): Promise<{ rows?: SectorHeatNode[] } | SectorHeatNode[]> {
   const params = new URLSearchParams({ type, metric, limit: String(limit) });
   return request<{ rows?: SectorHeatNode[] } | SectorHeatNode[]>(`/api/market/sector-heatmap?${params.toString()}`);
+}
+
+export function regenerateMarketBrief(): Promise<Record<string, unknown>> {
+  return post('/api/daily-brief/regenerate', {});
 }

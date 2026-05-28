@@ -200,3 +200,27 @@ def test_watchlist_updates_batch_review_and_highlights_best_worst(tmp_path):
     assert batch["best_item"]["code"] == "000001.SZ"
     assert batch["worst_item"]["code"] == "000002.SZ"
     assert batch["avg_return_5d"] == pytest.approx(-0.01)
+
+
+def test_watchlist_statuses_are_normalized_to_final_product_values(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    _seed_stock_with_bars(db)
+    service = WatchlistService(db)
+    created = service.add_items(
+        {
+            "source_type": "analysis",
+            "source_label": "平台临界",
+            "batch_date": "2026-05-20",
+            "review_status": "一般",
+            "items": [{"code": "000001.SZ", "entry_price": 10.0, "review_status": "归档"}],
+        }
+    )
+
+    result = service.result()
+    batch = result["batches"][0]
+    item = batch["items"][0]
+
+    assert batch["review_status"] == "观察中"
+    assert item["review_status"] == "已归档"
+    assert service.update_item(created["batch_id"], "000001.SZ", {"review_status": "已放弃"})["item"]["review_status"] == "误报"

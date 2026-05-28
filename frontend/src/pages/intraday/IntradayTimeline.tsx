@@ -12,7 +12,7 @@ export function IntradayTimeline({ themes }: { themes: ThemePulse[] }) {
         </div>
       </div>
       <div className="rule-chip-grid">
-        {themes.slice(0, 12).map((theme, index) => (
+        {themes.slice(0, 10).map((theme, index) => (
           <Badge key={`${theme.name || theme.sector_name}-${index}`} tone="purple">
             {theme.name || theme.sector_name || '题材'} · {formatRatio(theme.heat_score)} · {formatPercent(theme.pct_chg)} · {formatMoney(theme.net_amount)}
           </Badge>

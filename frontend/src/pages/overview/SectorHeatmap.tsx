@@ -30,10 +30,11 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
         formatter: (params: { data?: { raw?: SectorHeatNode } }) => {
           const raw = params.data?.raw || {};
           return [
-            `<strong>${raw.name || raw.sector_name || '--'}</strong>`,
+            `<strong>${raw.name || raw.sector_name || '板块'}</strong>`,
             `涨跌幅：${formatPercent(raw.pct_chg)}`,
             `主力净流入：${formatMoney(raw.net_amount)}`,
-            `涨停家数：${raw.limit_up_count ?? 0}`,
+            `涨停家数：${limitText(raw)}`,
+            `强势家数：${raw.strong_count ?? '待同步'}`,
             `领涨股：${raw.leader_name || raw.leader_code || '待同步'}`,
           ].join('<br/>');
         },
@@ -48,9 +49,14 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
           upperLabel: { show: false },
           data: filtered.map((sector) => {
             const heat = toNumber(sector.heat_score) || 0;
-            const value = mode === 'money' ? Math.abs(toNumber(sector.net_amount) || 1) : mode === 'limit' ? toNumber(sector.limit_up_count) || 1 : toNumber(sector.amount) || toNumber(sector.company_count) || 1;
+            const value =
+              mode === 'money'
+                ? Math.abs(toNumber(sector.net_amount) || 1)
+                : mode === 'limit'
+                  ? Math.max(1, toNumber(sector.limit_up_count) || toNumber(sector.strong_count) || toNumber(sector.company_count) || 1)
+                  : toNumber(sector.amount) || toNumber(sector.company_count) || 1;
             return {
-              name: sector.name || sector.sector_name || sector.code || sector.sector_code || '--',
+              name: sector.name || sector.sector_name || sector.code || sector.sector_code || '板块',
               value,
               raw: sector,
               itemStyle: {
@@ -90,17 +96,32 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
           <div className="heatmap-grid" style={{ marginTop: 12 }}>
             {filtered.slice(0, 8).map((sector) => (
               <div className="heat-tile" key={`${sector.sector_code || sector.code}-${sector.sector_type || sector.type}`}>
-                <strong>{sector.name || sector.sector_name || '--'}</strong>
+                <strong>{sector.name || sector.sector_name || '板块'}</strong>
                 <span className="card-copy">
-                  {formatPercent(sector.pct_chg)} · {formatMoney(sector.net_amount)}
+                  {mode === 'limit'
+                    ? `涨停 ${limitText(sector)} · 强势 ${sector.strong_count ?? '待同步'}`
+                    : `${formatPercent(sector.pct_chg)} · ${formatMoney(sector.net_amount)}`}
                 </span>
               </div>
             ))}
           </div>
         </>
       ) : (
-        <EmptyState title="板块热力暂未更新" description="请先同步今日数据；若已同步，说明当前类别暂无可展示样本。" />
+        <EmptyState title={emptyTitle(mode)} description="请先同步今日数据，或稍后重新打开。" />
       )}
     </section>
   );
+}
+
+function limitText(sector: SectorHeatNode) {
+  if (sector.limit_up_count_status === 'missing') return '待同步';
+  if (sector.limit_up_count_status === 'not_computed' || sector.limit_up_count === null || sector.limit_up_count === undefined) return '未统计';
+  return String(sector.limit_up_count);
+}
+
+function emptyTitle(mode: HeatMode) {
+  if (mode === 'industry') return '行业热力暂未生成';
+  if (mode === 'money') return '资金流向暂未生成';
+  if (mode === 'limit') return '涨停扩散暂未统计';
+  return '板块热力暂未更新';
 }

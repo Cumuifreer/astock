@@ -29,6 +29,10 @@ export function dagProgress(nodes: Array<{ status?: string | null }> | null | un
   return taskProgress(processed, nodes.length);
 }
 
+export function flowProgress(nodes: Array<{ status?: string | null }> | null | undefined): number | null {
+  return dagProgress(nodes);
+}
+
 export function capabilityHealth(capability: Capability): 'normal' | 'stale' | 'low' | 'missing' | 'partial' {
   const coverage = toNumber(capability.coverage_count) || 0;
   const missing = toNumber(capability.missing_count) || 0;

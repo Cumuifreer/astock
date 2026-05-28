@@ -9,9 +9,12 @@ import { formatMoney, formatPercent, formatRatio } from '../../utils/format';
 type IntradayBoardProps = {
   rows: IntradayCandidate[];
   tone: 'info' | 'good' | 'risk';
+  hideSampleMetrics?: boolean;
+  hideThemeMetrics?: boolean;
+  onOpenTimeline: (row: IntradayCandidate) => void;
 };
 
-export function IntradayBoard({ rows, tone }: IntradayBoardProps) {
+export function IntradayBoard({ rows, tone, hideSampleMetrics, hideThemeMetrics, onOpenTimeline }: IntradayBoardProps) {
   const queryClient = useQueryClient();
   const addMutation = useMutation({
     mutationFn: (row: IntradayCandidate) =>
@@ -58,23 +61,31 @@ export function IntradayBoard({ rows, tone }: IntradayBoardProps) {
               <span className="metric-label">成交额</span>
               <div className="metric-value">{formatMoney(row.amount ?? metrics.amount)}</div>
             </div>
-            <div className="metric-pill">
-              <span className="metric-label">成交速度</span>
-              <div className="metric-value">{amountSpeed == null ? '样本不足' : formatRatio(amountSpeed)}</div>
-            </div>
-            <div className="metric-pill">
-              <span className="metric-label">成交增量</span>
-              <div className="metric-value">{amountDelta == null ? '需要两次采样' : formatMoney(amountDelta)}</div>
-            </div>
-            <div className="metric-pill">
-              <span className="metric-label">题材同步</span>
-              <div className="metric-value">{themeSync == null ? '题材数据待同步' : formatRatio(themeSync)}</div>
-              {row.strong_theme_name || metrics.strong_theme_name ? <small>{String(row.strong_theme_name || metrics.strong_theme_name)}</small> : null}
-            </div>
-            <div className="metric-pill">
-              <span className="metric-label">日内回落</span>
-              <div className="metric-value">{drawdown == null ? '样本不足' : formatPercent(Number(drawdown) * 100)}</div>
-            </div>
+            {!hideSampleMetrics && amountSpeed != null ? (
+              <div className="metric-pill">
+                <span className="metric-label">成交速度</span>
+                <div className="metric-value">{formatRatio(amountSpeed)}</div>
+              </div>
+            ) : null}
+            {!hideSampleMetrics && amountDelta != null ? (
+              <div className="metric-pill">
+                <span className="metric-label">成交增量</span>
+                <div className="metric-value">{formatMoney(amountDelta)}</div>
+              </div>
+            ) : null}
+            {!hideThemeMetrics && themeSync != null ? (
+              <div className="metric-pill">
+                <span className="metric-label">题材同步</span>
+                <div className="metric-value">{formatRatio(themeSync)}</div>
+                {row.strong_theme_name || metrics.strong_theme_name ? <small>{String(row.strong_theme_name || metrics.strong_theme_name)}</small> : null}
+              </div>
+            ) : null}
+            {!hideSampleMetrics && drawdown != null ? (
+              <div className="metric-pill">
+                <span className="metric-label">日内回落</span>
+                <div className="metric-value">{formatPercent(Number(drawdown) * 100)}</div>
+              </div>
+            ) : null}
           </div>
           <div className="rule-chip-grid">
             {(row.signal_tags || row.reasons || []).slice(0, 4).map((tag) => (
@@ -95,7 +106,7 @@ export function IntradayBoard({ rows, tone }: IntradayBoardProps) {
                 打开 K 线
               </Button>
             ) : null}
-            <Button onClick={() => window.location.hash = `#intraday?code=${encodeURIComponent(row.code)}`} variant="ghost">
+            <Button onClick={() => onOpenTimeline(row)} variant="ghost">
               查看分时轨迹
             </Button>
           </div>

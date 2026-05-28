@@ -1,18 +1,18 @@
 export function formatPercent(value: unknown, digits = 2): string {
   const numeric = toNumber(value);
-  if (numeric === null) return '--';
+  if (numeric === null) return '暂无数据';
   return `${numeric.toFixed(digits)}%`;
 }
 
 export function formatRatio(value: unknown, digits = 2): string {
   const numeric = toNumber(value);
-  if (numeric === null) return '--';
+  if (numeric === null) return '暂无数据';
   return numeric.toFixed(digits);
 }
 
 export function formatMoney(value: unknown): string {
   const numeric = toNumber(value);
-  if (numeric === null) return '--';
+  if (numeric === null) return '暂无数据';
   const abs = Math.abs(numeric);
   if (abs >= 100_000_000) return `${(numeric / 100_000_000).toFixed(2)}亿`;
   if (abs >= 10_000) return `${(numeric / 10_000).toFixed(1)}万`;
@@ -21,7 +21,7 @@ export function formatMoney(value: unknown): string {
 
 export function formatNumber(value: unknown, digits = 0): string {
   const numeric = toNumber(value);
-  if (numeric === null) return '--';
+  if (numeric === null) return '暂无数据';
   return numeric.toLocaleString('zh-CN', {
     maximumFractionDigits: digits,
     minimumFractionDigits: digits,

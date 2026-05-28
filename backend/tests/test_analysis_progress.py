@@ -1,3 +1,5 @@
+import json
+
 from backend.app.db import Database
 from backend.app.schema import migrate
 from backend.app.services.analysis_service import AnalysisService
@@ -11,14 +13,16 @@ def test_analysis_service_reports_fine_grained_progress(tmp_path):
     migrate(db)
     events = []
 
-    AnalysisService(db).run(
-        DEFAULT_STRATEGY_CONFIG,
+    run_id = AnalysisService(db).run(
+        {**DEFAULT_STRATEGY_CONFIG, "name": "突破回踩"},
         progress=lambda stage, processed, total: events.append((stage, processed, total)),
     )
+    summary = json.loads(db.scalar("SELECT summary_json FROM analysis_runs WHERE id = ?", [run_id]) or "{}")
 
     assert events[0] == ("读取本地行情", 1, 7)
     assert ("应用策略条件", 5, 7) in events
     assert ("保存分析报告", 6, 7) in events
+    assert summary["strategy_name"] == "突破回踩"
 
 
 def test_update_service_analysis_task_uses_progress_callback(tmp_path):

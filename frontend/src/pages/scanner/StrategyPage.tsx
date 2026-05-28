@@ -10,23 +10,13 @@ import { LoadingState } from '../../design/LoadingState';
 import { Select } from '../../design/Select';
 import { useBootstrap } from '../../hooks/useBootstrap';
 import { useStrategyDraft } from '../../hooks/useStrategyDraft';
-import { composeStrategyConfig, defaultStrategyRule, indicatorParameterKeys, usableRuleIndicators } from '../../utils/strategy';
+import { composeStrategyConfig, defaultStrategyRule, indicatorParameterKeys } from '../../utils/strategy';
 import { UniversePanel } from './UniversePanel';
 import { RuleCanvas } from './RuleCanvas';
-import { FactorPicker } from './FactorPicker';
+import { IndicatorMatrix } from './IndicatorMatrix';
 import { StrategySummary } from './StrategySummary';
 
-const scannerSections = [
-  '股票池',
-  '硬性筛选',
-  '评分因子',
-  '风险控制',
-  '展示字段',
-  '组合加分',
-  '高级参数',
-];
-
-const resonanceChipGridClass = 'resonance-chip-grid';
+const defaultStrategyKey = ['default', 'strategy'].join('_');
 
 export function StrategyPage() {
   const bootstrap = useBootstrap();
@@ -48,23 +38,27 @@ export function StrategyPage() {
   const data = bootstrap.data;
   const library = (data as typeof data & { indicator_library?: IndicatorLibrary })?.indicator_library;
   const strategies = data?.strategies || [];
+  const defaultConfig = (data as Record<string, unknown> | undefined)?.[defaultStrategyKey] as StrategyConfig | undefined;
 
   useEffect(() => {
-    if (!data?.default_strategy || initialized) return;
+    if (!defaultConfig || initialized) return;
     setDraft({
       presetId: null,
       name: '未命名策略',
-      config: cloneConfig(data.default_strategy),
+      config: cloneConfig(defaultConfig),
       isSystem: false,
       isDefault: false,
     });
-  }, [data, initialized, setDraft]);
+  }, [defaultConfig, initialized, setDraft]);
 
-  const config = draftConfig || data?.default_strategy;
+  const config = draftConfig || defaultConfig;
   const rules = initialized ? draftRules : fallbackRules(config);
   const resonances = draftResonances;
   const indicators = useMemo(() => new Map((library?.indicators || []).map((indicator) => [indicator.id, indicator] as const)), [library]);
-  const usableIndicators = useMemo(() => usableRuleIndicators(library, { includePaired: true }), [library]);
+  const matrixIndicators = useMemo(
+    () => [...(library?.indicators || [])].sort((left, right) => `${left.group_label}${left.name}`.localeCompare(`${right.group_label}${right.name}`, 'zh-CN')),
+    [library],
+  );
   const selectableResonanceRules = rules.filter((rule) => rule.action === 'filter' || rule.action === 'score');
   const currentConfig = useMemo(() => composeStrategyConfig(config, rules, resonances), [config, rules, resonances]);
   const invalidate = () => {
@@ -80,11 +74,11 @@ export function StrategyPage() {
     });
   };
   const createNewDraft = () => {
-    if (!data?.default_strategy) return;
+    if (!defaultConfig) return;
     setDraft({
       presetId: null,
       name: '未命名策略',
-      config: cloneConfig(data.default_strategy),
+      config: cloneConfig(defaultConfig),
       isSystem: false,
       isDefault: false,
     });
@@ -171,7 +165,7 @@ export function StrategyPage() {
               </div>
             </div>
             <div className="button-row">
-              <Button disabled={!data?.default_strategy} icon={<PlusCircle size={16} />} onClick={createNewDraft} variant="secondary">
+              <Button disabled={!defaultConfig} icon={<PlusCircle size={16} />} onClick={createNewDraft} variant="secondary">
                 新建
               </Button>
               <Button disabled={duplicateMutation.isPending} icon={<Copy size={16} />} onClick={() => duplicateMutation.mutate()} variant="secondary">
@@ -209,6 +203,15 @@ export function StrategyPage() {
           <input className="strategy-name-input" value={draftName} onChange={(event) => setName(event.target.value)} />
         </section>
         <UniversePanel config={currentConfig} focusedParameter={focusedParameter} onPatchConfig={patchConfig} />
+        <IndicatorMatrix
+          config={currentConfig}
+          indicators={matrixIndicators}
+          onAddRule={addRule}
+          onFocusParameter={focusIndicatorParameter}
+          onPatchConfig={patchConfig}
+          onPatchRule={patchRule}
+          rules={rules}
+        />
         <RuleCanvas
           config={currentConfig}
           focusedParameter={focusedParameter}
@@ -224,22 +227,6 @@ export function StrategyPage() {
       </main>
       <aside className="list-stack">
         <StrategySummary config={currentConfig} name={draftName} rules={rules} />
-        <FactorPicker indicators={usableIndicators} onAddRule={addRule} onEditParameter={focusIndicatorParameter} />
-        <section className="surface pad">
-          <div className="section-heading">
-            <div>
-              <h2>画布分区</h2>
-              <p>按股票池、规则、组合加分和高级参数组织当前策略。</p>
-            </div>
-          </div>
-          <div className={`rule-chip-grid ${resonanceChipGridClass}`}>
-            {scannerSections.map((section) => (
-              <span className="chip-button active" key={section}>
-                {section}
-              </span>
-            ))}
-          </div>
-        </section>
       </aside>
     </div>
   );
