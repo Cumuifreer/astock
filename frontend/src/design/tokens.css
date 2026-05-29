@@ -675,6 +675,25 @@ button {
   color: var(--text-secondary);
 }
 
+.watchlist-return-cell {
+  display: inline-block;
+  min-width: 62px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+}
+
+.watchlist-return-cell.up {
+  color: var(--danger);
+}
+
+.watchlist-return-cell.down {
+  color: var(--success);
+}
+
+.watchlist-return-cell.flat {
+  color: var(--text-secondary);
+}
+
 .table-wrap {
   max-width: 100%;
   min-width: 0;

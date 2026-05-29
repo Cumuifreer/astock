@@ -13,7 +13,7 @@ import { LoadingState } from '../../design/LoadingState';
 import { Switch } from '../../design/Switch';
 import { useToast } from '../../design/Toast';
 import { formatDate } from '../../utils/date';
-import { formatNumber, formatPercent, toNumber } from '../../utils/format';
+import { formatNumber, formatReturnPercent, toNumber } from '../../utils/format';
 
 type HypothesisItem = WatchlistItem & {
   hypothesis?: string | null;
@@ -22,6 +22,7 @@ type HypothesisItem = WatchlistItem & {
 };
 
 type EditField = 'note';
+type ReturnField = 'return_1d' | 'return_3d' | 'return_5d' | 'return_10d' | 'return_latest';
 
 export function WatchlistPage() {
   const queryClient = useQueryClient();
@@ -180,11 +181,11 @@ function WatchlistTable({
       { header: '加入日期', cell: ({ row }) => formatDate(row.original.entry_date) },
       { header: '加入价', cell: ({ row }) => formatNumberStatus(row.original.entry_price, '待确认') },
       { header: '当前价', cell: ({ row }) => <CurrentPriceCell item={row.original} /> },
-      { header: 'T+1', cell: ({ row }) => formatPercentStatus(row.original.return_1d) },
-      { header: 'T+3', cell: ({ row }) => formatPercentStatus(row.original.return_3d) },
-      { header: 'T+5', cell: ({ row }) => formatPercentStatus(row.original.return_5d) },
-      { header: 'T+10', cell: ({ row }) => formatPercentStatus(row.original.return_10d) },
-      { header: '最新收益', cell: ({ row }) => formatPercentStatus(row.original.return_latest) },
+      { header: 'T+1', cell: ({ row }) => <ReturnCell item={row.original} field="return_1d" /> },
+      { header: 'T+3', cell: ({ row }) => <ReturnCell item={row.original} field="return_3d" /> },
+      { header: 'T+5', cell: ({ row }) => <ReturnCell item={row.original} field="return_5d" /> },
+      { header: 'T+10', cell: ({ row }) => <ReturnCell item={row.original} field="return_10d" /> },
+      { header: '最新收益', cell: ({ row }) => <ReturnCell item={row.original} field="return_latest" /> },
       { header: '来源', cell: ({ row }) => sourceLabel(row.original.source_type, row.original.source_label) },
       {
         header: '操作',
@@ -227,15 +228,24 @@ function CurrentPriceCell({ item }: { item: HypothesisItem }) {
   return (
     <div className={`watchlist-price-cell ${currentPriceTone(latestReturn)}`}>
       <strong>{formatNumber(latestClose, 2)}</strong>
-      {latestReturn !== null ? <small>{formatPercent(latestReturn)}</small> : null}
+      {latestReturn !== null ? <small>{formatReturnPercent(latestReturn)}</small> : null}
     </div>
   );
 }
 
-function currentPriceTone(value: unknown) {
+function ReturnCell({ item, field }: { item: HypothesisItem; field: ReturnField }) {
+  const value = item[field];
+  return <span className={`watchlist-return-cell ${returnTone(value)}`}>{formatReturnPercent(value)}</span>;
+}
+
+function returnTone(value: unknown) {
   const number = toNumber(value);
   if (number === null || number === 0) return 'flat';
   return number > 0 ? 'up' : 'down';
+}
+
+function currentPriceTone(value: unknown) {
+  return returnTone(value);
 }
 
 function itemKey(item: HypothesisItem) {
@@ -249,10 +259,6 @@ function editValue(item: HypothesisItem, field: EditField) {
 
 function formatNumberStatus(value: unknown, fallback: string) {
   return toNumber(value) === null ? fallback : formatNumber(value, 2);
-}
-
-function formatPercentStatus(value: unknown) {
-  return toNumber(value) === null ? '待复盘' : formatPercent(value);
 }
 
 function sourceLabel(sourceType?: string | null, sourceLabel?: string | null) {

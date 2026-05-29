@@ -4,6 +4,12 @@ export function formatPercent(value: unknown, digits = 2): string {
   return `${numeric.toFixed(digits)}%`;
 }
 
+export function formatReturnPercent(value: unknown, digits = 2, fallback = '待复盘'): string {
+  const numeric = toNumber(value);
+  if (numeric === null) return fallback;
+  return `${(numeric * 100).toFixed(digits)}%`;
+}
+
 export function formatRatio(value: unknown, digits = 2): string {
   const numeric = toNumber(value);
   if (numeric === null) return '暂无数据';
