@@ -26,14 +26,16 @@ LEGACY_REVIEW_STATUS_MAP = {
 class WatchlistService:
     def __init__(self, db: Database):
         self.db = db
+        self._analysis_date_cache: Dict[str, Optional[date]] = {}
 
     def add_items(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         items = [item for item in payload.get("items") or [] if item.get("code")]
-        batch_date = _date_value(payload.get("batch_date")) or _china_today()
         source_type = str(payload.get("source_type") or "manual")
         source_label = str(payload.get("source_label") or "观察池")
         source_ref = str(payload.get("source_ref") or "")
         source_summary = str(payload.get("source_summary") or "")
+        source_entry_date = self._analysis_run_date(source_ref) if source_type in {"analysis", "strategy"} else None
+        batch_date = _date_value(payload.get("batch_date")) or source_entry_date or _china_today()
         batch_id = _batch_id(batch_date, source_type, source_label, source_ref)
         existing_batch = self.db.query("SELECT * FROM watchlist_batches WHERE id = ?", [batch_id])
         existing_batch_row = existing_batch[0] if existing_batch else {}
@@ -71,12 +73,13 @@ class WatchlistService:
                 item,
                 ["entry_price", "latest_price", "latestPrice", "price"],
             )
+            entry_date = _date_value(item.get("entry_date")) or _date_value(item.get("trade_date")) or source_entry_date or batch_date
             rows.append(
                 {
                     "batch_id": batch_id,
                     "code": code,
                     "name": item.get("name") or stock_names.get(code) or code,
-                    "entry_date": _date_value(item.get("entry_date")) or batch_date,
+                    "entry_date": entry_date,
                     "entry_price": entry_price,
                     "source_type": source_type,
                     "source_label": source_label,
@@ -103,7 +106,7 @@ class WatchlistService:
                         "source_id": source_ref,
                         "hypothesis": item.get("hypothesis") or "",
                         "invalidation_rule": item.get("invalidation_rule") or "",
-                        "entry_date": _date_value(item.get("entry_date")) or batch_date,
+                        "entry_date": entry_date,
                         "entry_price": entry_price,
                         "review_status": _review_status(item.get("review_status")),
                         "trigger_rules_json": json.dumps(item.get("trigger_rules") or [], ensure_ascii=False),
@@ -288,6 +291,27 @@ class WatchlistService:
         )
         return {row["code"]: row["name"] for row in rows if row.get("name")}
 
+    def _analysis_run_date(self, run_id: str) -> Optional[date]:
+        if not run_id:
+            return None
+        if run_id in self._analysis_date_cache:
+            return self._analysis_date_cache[run_id]
+        rows = self.db.query(
+            """
+            SELECT finished_at, started_at
+            FROM analysis_runs
+            WHERE id = ?
+            LIMIT 1
+            """,
+            [run_id],
+        )
+        value = None
+        if rows:
+            value = rows[0].get("finished_at") or rows[0].get("started_at")
+        parsed = _date_value(value)
+        self._analysis_date_cache[run_id] = parsed
+        return parsed
+
     def _decode_item(self, row: Dict[str, Any]) -> Dict[str, Any]:
         decoded = dict(row)
         decoded["note"] = decoded.get("note") or ""
@@ -301,7 +325,7 @@ class WatchlistService:
         return decoded
 
     def _with_performance(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        entry_date = _date_value(item.get("entry_date"))
+        entry_date = self._effective_entry_date(item)
         entry_price = safe_float(item.get("entry_price"))
         if entry_date is None:
             return _empty_performance(item)
@@ -330,9 +354,11 @@ class WatchlistService:
             """,
             [item["code"], entry_date],
         )
-        if not future:
+        snapshot = self._latest_snapshot_after(str(item["code"]), entry_date)
+        if not future and not snapshot:
             return {
                 **item,
+                "entry_date": entry_date,
                 "entry_price": entry_price,
                 "days": 0,
                 "latest_date": None,
@@ -345,16 +371,20 @@ class WatchlistService:
                 "max_return": None,
                 "max_drawdown": None,
             }
-        latest = future[-1]
+        latest_date, latest_close = _latest_performance_quote(future, snapshot)
         highs = [safe_float(row.get("high")) for row in future]
         lows = [safe_float(row.get("low")) for row in future]
+        if _should_include_snapshot_extreme(future, snapshot):
+            highs.append(safe_float(snapshot.get("high") if snapshot else None))
+            lows.append(safe_float(snapshot.get("low") if snapshot else None))
         return {
             **item,
+            "entry_date": entry_date,
             "entry_price": entry_price,
             "days": len(future),
-            "latest_date": latest.get("date"),
-            "latest_close": safe_float(latest.get("close")),
-            "return_latest": _return_from(entry_price, latest.get("close")),
+            "latest_date": latest_date,
+            "latest_close": latest_close,
+            "return_latest": _return_from(entry_price, latest_close),
             "return_1d": _return_at(future, entry_price, 1),
             "return_3d": _return_at(future, entry_price, 3),
             "return_5d": _return_at(future, entry_price, 5),
@@ -366,6 +396,30 @@ class WatchlistService:
             if any(value is not None for value in lows)
             else None,
         }
+
+    def _effective_entry_date(self, item: Dict[str, Any]) -> Optional[date]:
+        entry_date = _date_value(item.get("entry_date"))
+        source_type = str(item.get("source_type") or "")
+        source_ref = str(item.get("source_ref") or "")
+        run_date = self._analysis_run_date(source_ref) if source_type in {"analysis", "strategy"} else None
+        if run_date and (entry_date is None or run_date < entry_date):
+            return run_date
+        return entry_date
+
+    def _latest_snapshot_after(self, code: str, entry_date: date) -> Optional[Dict[str, Any]]:
+        rows = self.db.query(
+            """
+            SELECT date, latest_price, high, low
+            FROM daily_snapshots
+            WHERE code = ?
+              AND date >= ?
+              AND latest_price IS NOT NULL
+            ORDER BY date DESC
+            LIMIT 1
+            """,
+            [code, entry_date],
+        )
+        return rows[0] if rows else None
 
     @staticmethod
     def _summary(batches: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -501,6 +555,32 @@ def _return_at(rows: List[Dict[str, Any]], entry_price: float, day: int) -> Opti
     if len(rows) < day:
         return None
     return _return_from(entry_price, rows[day - 1].get("close"))
+
+
+def _latest_performance_quote(
+    future: List[Dict[str, Any]],
+    snapshot: Optional[Dict[str, Any]],
+) -> tuple[Optional[date], Optional[float]]:
+    latest_bar = future[-1] if future else None
+    latest_bar_date = _date_value(latest_bar.get("date")) if latest_bar else None
+    snapshot_date = _date_value(snapshot.get("date")) if snapshot else None
+    if snapshot and (latest_bar_date is None or (snapshot_date is not None and snapshot_date >= latest_bar_date)):
+        return snapshot_date, safe_float(snapshot.get("latest_price"))
+    if latest_bar:
+        return latest_bar_date, safe_float(latest_bar.get("close"))
+    return None, None
+
+
+def _should_include_snapshot_extreme(
+    future: List[Dict[str, Any]],
+    snapshot: Optional[Dict[str, Any]],
+) -> bool:
+    if not snapshot:
+        return False
+    latest_bar = future[-1] if future else None
+    latest_bar_date = _date_value(latest_bar.get("date")) if latest_bar else None
+    snapshot_date = _date_value(snapshot.get("date"))
+    return latest_bar_date is None or (snapshot_date is not None and snapshot_date > latest_bar_date)
 
 
 def _return_from(entry_price: float, value: Any) -> Optional[float]:

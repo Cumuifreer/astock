@@ -179,7 +179,7 @@ function WatchlistTable({
       },
       { header: '加入日期', cell: ({ row }) => formatDate(row.original.entry_date) },
       { header: '加入价', cell: ({ row }) => formatNumberStatus(row.original.entry_price, '待确认') },
-      { header: '当前价', cell: ({ row }) => formatNumberStatus(row.original.latest_close, '待更新') },
+      { header: '当前价', cell: ({ row }) => <CurrentPriceCell item={row.original} /> },
       { header: 'T+1', cell: ({ row }) => formatPercentStatus(row.original.return_1d) },
       { header: 'T+3', cell: ({ row }) => formatPercentStatus(row.original.return_3d) },
       { header: 'T+5', cell: ({ row }) => formatPercentStatus(row.original.return_5d) },
@@ -218,6 +218,24 @@ function WatchlistNoteRow({ item }: { item: HypothesisItem }) {
       <p>{note}</p>
     </div>
   );
+}
+
+function CurrentPriceCell({ item }: { item: HypothesisItem }) {
+  const latestClose = toNumber(item.latest_close);
+  const latestReturn = toNumber(item.return_latest);
+  if (latestClose === null) return <span className="card-copy">待更新</span>;
+  return (
+    <div className={`watchlist-price-cell ${currentPriceTone(latestReturn)}`}>
+      <strong>{formatNumber(latestClose, 2)}</strong>
+      {latestReturn !== null ? <small>{formatPercent(latestReturn)}</small> : null}
+    </div>
+  );
+}
+
+function currentPriceTone(value: unknown) {
+  const number = toNumber(value);
+  if (number === null || number === 0) return 'flat';
+  return number > 0 ? 'up' : 'down';
 }
 
 function itemKey(item: HypothesisItem) {

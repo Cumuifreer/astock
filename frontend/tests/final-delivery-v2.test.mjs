@@ -94,6 +94,8 @@ test('watchlist uses dialogs and DataTable for management', () => {
   assert.doesNotMatch(watchlist, /header:\s*'备注'/);
   assert.match(watchlist, /renderSubRow/);
   assert.match(watchlist, /watchlist-note-row/);
+  assert.match(watchlist, /watchlist-price-cell/);
+  assert.match(watchlist, /currentPriceTone/);
   assert.match(watchlist, /item\.note/);
   assert.match(dataTable, /renderSubRow/);
   assert.doesNotMatch(watchlist, /批量标记有效|批量标记误报|Segmented|失效条件|review_status|观察中|误报|有效/);

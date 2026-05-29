@@ -103,6 +103,159 @@ def test_watchlist_groups_items_and_computes_forward_returns(tmp_path):
     assert batch["worst_drawdown"] == pytest.approx(-0.02)
 
 
+def test_watchlist_uses_analysis_run_date_when_added_from_report_without_batch_date(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    _seed_stock_with_bars(db)
+    db.upsert(
+        "analysis_runs",
+        [
+            {
+                "id": "analysis-old",
+                "status": "completed_full",
+                "started_at": "2026-05-20T07:45:00",
+                "finished_at": "2026-05-20T07:46:00",
+                "config_json": "{}",
+                "summary_json": "{}",
+                "error_message": None,
+            }
+        ],
+        ["id"],
+    )
+    service = WatchlistService(db)
+
+    created = service.add_items(
+        {
+            "source_type": "strategy",
+            "source_label": "平台突破",
+            "source_ref": "analysis-old",
+            "items": [{"code": "000001.SZ", "entry_price": 10.0}],
+        }
+    )
+    result = service.result()
+    batch = result["batches"][0]
+    item = batch["items"][0]
+
+    assert created["batch_id"].startswith("watch-20260520")
+    assert batch["batch_date"] == date(2026, 5, 20)
+    assert item["entry_date"] == date(2026, 5, 20)
+    assert item["return_1d"] == pytest.approx(0.05)
+
+
+def test_watchlist_soft_corrects_existing_report_items_with_late_entry_date(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    _seed_stock_with_bars(db)
+    db.upsert(
+        "analysis_runs",
+        [
+            {
+                "id": "analysis-old",
+                "status": "completed_full",
+                "started_at": "2026-05-20T07:45:00",
+                "finished_at": "2026-05-20T07:46:00",
+                "config_json": "{}",
+                "summary_json": "{}",
+                "error_message": None,
+            }
+        ],
+        ["id"],
+    )
+    db.upsert(
+        "watchlist_batches",
+        [
+            {
+                "id": "watch-20260529-strategy-legacy",
+                "batch_date": "2026-05-29",
+                "source_type": "strategy",
+                "source_label": "平台突破",
+                "source_ref": "analysis-old",
+                "source_summary": "",
+                "note": "",
+                "review_status": "观察中",
+                "name": "平台突破",
+                "status": "active",
+                "created_at": "2026-05-29T01:00:00",
+                "updated_at": "2026-05-29T01:00:00",
+            }
+        ],
+        ["id"],
+    )
+    db.upsert(
+        "watchlist_items",
+        [
+            {
+                "batch_id": "watch-20260529-strategy-legacy",
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "entry_date": "2026-05-29",
+                "entry_price": 10.0,
+                "source_type": "strategy",
+                "source_label": "平台突破",
+                "source_ref": "analysis-old",
+                "signal_score": 88.0,
+                "signal_type": "平台突破",
+                "chart_url": "",
+                "note": "",
+                "review_status": "观察中",
+                "reasons_json": "[]",
+                "metrics_json": "{}",
+                "created_at": "2026-05-29T01:00:00",
+                "updated_at": "2026-05-29T01:00:00",
+            }
+        ],
+        ["batch_id", "code"],
+    )
+
+    item = WatchlistService(db).result()["batches"][0]["items"][0]
+
+    assert item["entry_date"] == date(2026, 5, 20)
+    assert item["return_1d"] == pytest.approx(0.05)
+
+
+def test_watchlist_latest_return_uses_realtime_snapshot_when_history_has_no_future_bar(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    _seed_stock_with_bars(db, closes=[10.0])
+    db.upsert(
+        "daily_snapshots",
+        [
+            {
+                "code": "000001.SZ",
+                "date": "2026-05-21",
+                "name": "平安银行",
+                "latest_price": 10.7,
+                "pct_chg": 7.0,
+                "high": 10.8,
+                "low": 9.9,
+                "volume": 1200,
+                "amount": 12_000,
+                "turnover_rate": 2.1,
+                "float_market_value": 1_000_000,
+                "source": "Tushare 实时日线",
+                "updated_at": "2026-05-21T10:10:00",
+            }
+        ],
+        ["code", "date"],
+    )
+    service = WatchlistService(db)
+    service.add_items(
+        {
+            "source_type": "analysis",
+            "source_label": "平台突破",
+            "batch_date": "2026-05-20",
+            "items": [{"code": "000001.SZ", "entry_price": 10.0}],
+        }
+    )
+
+    item = service.result()["batches"][0]["items"][0]
+
+    assert item["latest_date"] == date(2026, 5, 21)
+    assert item["latest_close"] == pytest.approx(10.7)
+    assert item["return_latest"] == pytest.approx(0.07)
+    assert item["return_1d"] is None
+
+
 def test_watchlist_reuses_batch_and_deletes_items(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

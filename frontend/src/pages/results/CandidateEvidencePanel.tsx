@@ -11,9 +11,10 @@ type CandidateEvidencePanelProps = {
   candidate: Candidate | null;
   runId?: string | null;
   strategyName?: string;
+  analysisDate?: string | null;
 };
 
-export function CandidateEvidencePanel({ candidate, runId, strategyName }: CandidateEvidencePanelProps) {
+export function CandidateEvidencePanel({ candidate, runId, strategyName, analysisDate }: CandidateEvidencePanelProps) {
   const { showToast } = useToast();
   const ruleResults = candidate ? extractRuleResults(candidate) : [];
   const matchedRules = ruleResults
@@ -64,10 +65,12 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName }: Candi
             source_type: 'strategy',
             source_label: strategyName || '未命名策略',
             source_ref: runId || null,
+            batch_date: analysisDate || undefined,
             items: [
               {
                 code: candidate.code,
                 name: candidate.name,
+                entry_date: analysisDate || undefined,
                 entry_price: candidate.latest_price,
                 signal_score: candidate.signal_score,
                 signal_type: candidate.signal_type,

@@ -39,6 +39,7 @@ export function ResultsPage() {
   });
   const activeCandidates = reportDetail.data?.candidates?.rows || bootstrap.data?.candidates?.rows || [];
   const activeReport = reportDetail.data?.analysis || bootstrap.data?.latest_analysis || flattenedReports.find((report) => report.id === selectedRunId) || null;
+  const activeReportDate = reportDateValue(activeReport);
   const observedCodes = useMemo(
     () => new Set((bootstrap.data?.watchlist?.batches || []).flatMap((batch) => batch.items.map((item) => item.code))),
     [bootstrap.data],
@@ -67,9 +68,11 @@ export function ResultsPage() {
         source_type: 'strategy',
         source_label: activeStrategyName || '未命名策略',
         source_ref: activeReport?.id || selectedRunId || null,
+        batch_date: activeReportDate || undefined,
         items: filteredCandidates.slice(0, 50).map((candidate) => ({
           code: candidate.code,
           name: candidate.name,
+          entry_date: activeReportDate || undefined,
           entry_price: candidate.latest_price,
           signal_score: candidate.signal_score,
           signal_type: candidate.signal_type,
@@ -164,7 +167,7 @@ export function ResultsPage() {
           <EmptyState title="暂无候选" description="运行策略后，这里会展示候选表和结构化证据。" />
         )}
       </section>
-      <CandidateEvidencePanel candidate={selected || filteredCandidates[0] || null} runId={selectedRunId || latestRunId} strategyName={activeStrategyName} />
+      <CandidateEvidencePanel candidate={selected || filteredCandidates[0] || null} runId={selectedRunId || latestRunId} strategyName={activeStrategyName} analysisDate={activeReportDate} />
     </div>
   );
 }
@@ -180,6 +183,11 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function reportLabel(report: { started_at?: string; finished_at?: string | null; summary?: Record<string, unknown>; config?: unknown }) {
   return `${formatDateTime(report.finished_at || report.started_at)} · ${strategyLabel(report.summary, report.config)} · ${report.summary?.candidate_count ?? 0} 个候选`;
+}
+
+function reportDateValue(report?: { started_at?: string; finished_at?: string | null } | null): string | null {
+  const value = report?.finished_at || report?.started_at;
+  return value ? String(value).slice(0, 10) : null;
 }
 
 function strategyLabel(summary: unknown, config: unknown): string {
