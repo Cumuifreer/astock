@@ -11,6 +11,7 @@ from backend.app.config import settings
 from backend.app.db import Database
 from backend.app.services.intraday_schedule import parse_intraday_schedule
 from backend.app.services.market_utils import safe_float
+from backend.app.services.sector_filters import concept_theme_filter_sql
 
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
@@ -53,37 +54,6 @@ LEFT JOIN (
 
 ACTIVE_STOCK_FILTER = "b.suspended IS DISTINCT FROM TRUE"
 INACTIVE_STOCK_FILTER = "b.suspended IS TRUE"
-
-NON_THEME_CONCEPT_KEYWORDS = (
-    "同花顺全A",
-    "同花顺沪",
-    "同花顺深",
-    "沪深京",
-    "沪深等权",
-    "上证指数",
-    "深证",
-    "指数",
-    "沪股通",
-    "深股通",
-    "陆股通",
-    "QFII",
-    "融资融券",
-    "昨日",
-    "近期",
-    "百日",
-    "打板",
-    "首板",
-    "涨停表现",
-    "大盘",
-    "小盘",
-    "高估值",
-    "低估值",
-    "高贝塔",
-    "均衡盈利",
-    "业绩预",
-    "减持",
-    "重仓",
-)
 
 
 def _is_blocked_brief_source(item: Dict[str, Any]) -> bool:
@@ -411,9 +381,9 @@ class DataService:
         where_parts = ["sector_type = ?"]
         where_params: List[Any] = [resolved_type]
         if resolved_type == "concept":
-            for keyword in NON_THEME_CONCEPT_KEYWORDS:
-                where_parts.append("sector_name NOT ILIKE ?")
-                where_params.append(f"%{keyword}%")
+            filter_sql, filter_params = concept_theme_filter_sql("sector_name")
+            where_parts.append(filter_sql)
+            where_params.extend(filter_params)
         if metric_key == "moneyflow":
             where_parts.append("net_amount IS NOT NULL")
         elif metric_key == "limit":

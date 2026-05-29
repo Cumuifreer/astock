@@ -18,6 +18,7 @@ from backend.app.services.data_service import DataService
 from backend.app.services.daily_brief_service import DailyBriefService
 from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.market_utils import safe_float
+from backend.app.services.sector_filters import concept_theme_filter_sql
 from backend.app.services.strategy_service import normalize_strategy_config
 from backend.app.sources.akshare_source import AkShareSource
 from backend.app.sources.baostock_source import BaostockSource
@@ -2432,6 +2433,7 @@ class UpdateService:
         )
 
     def _update_realtime_concept_heat(self, trade_date: date) -> int:
+        theme_filter_sql, theme_filter_params = concept_theme_filter_sql("m.con_name")
         rows = self.db.query(
             """
             WITH joined AS (
@@ -2449,6 +2451,7 @@ class UpdateService:
               FROM tushare_ths_member m
               JOIN daily_snapshots s ON s.code = m.code AND s.date = ?
               LEFT JOIN tushare_limit_list_d l ON l.code = s.code AND l.trade_date = ?
+              WHERE {theme_filter_sql}
             )
             SELECT con_code AS sector_code,
                    con_name AS sector_name,
@@ -2465,8 +2468,8 @@ class UpdateService:
             FROM joined
             GROUP BY con_code, con_name
             HAVING COUNT(*) > 0
-            """,
-            [trade_date, trade_date],
+            """.format(theme_filter_sql=theme_filter_sql),
+            [trade_date, trade_date, *theme_filter_params],
         )
         output = []
         for row in rows:

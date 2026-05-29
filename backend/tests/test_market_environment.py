@@ -225,6 +225,40 @@ def test_sector_heatmap_filters_non_theme_concept_rows(tmp_path):
     assert rows[0]["trade_date"] == date(2026, 5, 29)
 
 
+def test_sector_heatmap_filters_style_and_broad_market_pools(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    bad_names = [
+        "同花顺主板",
+        "同花顺激进投资",
+        "同花顺高盈利",
+        "同花顺中盘",
+        "同花顺均衡动量",
+        "信息技术(A股)",
+        "工业(A股)",
+        "社保新进",
+        "最近多板",
+        "高股息",
+    ]
+    rows = [
+        _sector_row(f"BAD{index:03d}.TI", name, date(2026, 5, 29), heat_score=99 - index)
+        for index, name in enumerate(bad_names)
+    ]
+    rows.extend(
+        [
+            _sector_row("885101.TI", "新能源汽车", date(2026, 5, 29), heat_score=88),
+            _sector_row("885102.TI", "储能", date(2026, 5, 29), heat_score=86),
+            _sector_row("885103.TI", "华为概念", date(2026, 5, 29), heat_score=84),
+            _sector_row("885104.TI", "国企改革", date(2026, 5, 29), heat_score=82),
+        ]
+    )
+    db.upsert("market_sector_daily", rows, ["sector_code", "sector_type", "trade_date"])
+
+    names = [row["name"] for row in DataService(db).sector_heatmap("concept", "heat", limit=20)]
+
+    assert names == ["新能源汽车", "储能", "华为概念", "国企改革"]
+
+
 def test_sector_heatmap_uses_latest_eligible_metric_date(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -260,3 +294,54 @@ def test_sector_heatmap_returns_empty_when_metric_has_no_eligible_rows(tmp_path)
 
     assert DataService(db).sector_heatmap("concept", "moneyflow", limit=10) == []
     assert DataService(db).sector_heatmap("concept", "limit", limit=10) == []
+
+
+def _snapshot(code: str, name: str, pct_chg: float, amount: float = 10_000_000) -> dict:
+    return {
+        "code": code,
+        "date": date(2026, 5, 29),
+        "name": name,
+        "latest_price": 10.0,
+        "pct_chg": pct_chg,
+        "high": 10.5,
+        "low": 9.8,
+        "volume": 1_000_000,
+        "amount": amount,
+        "turnover_rate": 2.0,
+        "float_market_value": 5_000_000_000,
+        "source": "test",
+        "updated_at": datetime(2026, 5, 29, 10, 0),
+    }
+
+
+def test_realtime_concept_heat_skips_non_theme_pools(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "daily_snapshots",
+        [
+            _snapshot("000001.SZ", "平安银行", 2.5),
+            _snapshot("000002.SZ", "万科A", 1.2),
+        ],
+        ["code", "date"],
+    )
+    db.upsert(
+        "tushare_ths_member",
+        [
+            {"code": "000001.SZ", "name": "平安银行", "con_code": "885001.TI", "con_name": "同花顺主板", "source": "test"},
+            {"code": "000001.SZ", "name": "平安银行", "con_code": "885002.TI", "con_name": "信息技术(A股)", "source": "test"},
+            {"code": "000002.SZ", "name": "万科A", "con_code": "885003.TI", "con_name": "高股息", "source": "test"},
+            {"code": "000001.SZ", "name": "平安银行", "con_code": "885101.TI", "con_name": "新能源汽车", "source": "test"},
+            {"code": "000002.SZ", "name": "万科A", "con_code": "885101.TI", "con_name": "新能源汽车", "source": "test"},
+        ],
+        ["code", "con_code"],
+    )
+
+    written = UpdateService(db)._update_realtime_concept_heat(date(2026, 5, 29))
+    names = [
+        row["sector_name"]
+        for row in db.query("SELECT sector_name FROM market_sector_daily ORDER BY sector_name")
+    ]
+
+    assert written == 1
+    assert names == ["新能源汽车"]
