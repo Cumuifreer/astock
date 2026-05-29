@@ -119,13 +119,21 @@ test('backtest page exposes strategy selection parameters results and queue trac
   for (const label of ['回测策略', '调仓频率', '候选数量', '持仓数量', '交易成本', '滑点', '资金曲线', '交易明细', '查看任务状态']) {
     assert.match(backtest, new RegExp(label));
   }
+  for (const className of ['backtest-header-grid', 'backtest-tabs', 'backtest-panel', 'backtest-form-grid', 'backtest-results-grid', 'backtest-placeholder-grid']) {
+    assert.match(backtest, new RegExp(className));
+  }
+  assert.match(backtest, /回测任务已开始，可在任务状态查看进度/);
+  assert.match(backtest, /window\.location\.hash = '#status'/);
 });
 
 test('status page defaults to a concise user view with hidden maintenance mode', () => {
   const status = read('pages/status/StatusPage.tsx');
-  for (const label of ['系统状态', '任务队列', '定时计划', 'DeepSeek', '查看维护信息']) {
+  for (const label of ['系统状态', '任务队列', '定时计划', 'DeepSeek', '查看维护信息', '运行中任务', '可能仍在运行']) {
     assert.match(status, new RegExp(label));
   }
+  assert.match(status, /refetchInterval:\s*activeRefreshInterval/);
+  assert.match(status, /effectiveActiveRows\.map/);
+  assert.doesNotMatch(status, /fallbackTasks\[0\]/);
   assert.match(status, /schedule-status-strip/);
   assert.doesNotMatch(status, /Metric label="最近失败"/);
   assert.doesNotMatch(status, /developer-details/);

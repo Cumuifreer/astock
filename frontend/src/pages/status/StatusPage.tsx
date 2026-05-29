@@ -13,16 +13,21 @@ import type { ColumnDef } from '@tanstack/react-table';
 import type { TaskRun } from '../../types';
 import type { TaskFlowNode, TaskProgressNode } from '../../api/data';
 
+const activeRefreshInterval = 2500;
+const staleHeartbeatMs = 60_000;
+
 export function StatusPage() {
   const [showMaintenance, setShowMaintenance] = useState(false);
   const bootstrap = useBootstrap();
   const activeTasks = useQuery({
     queryKey: ['tasks', 'queued,running'],
     queryFn: () => getTasks({ status: 'queued,running', limit: 50 }),
+    refetchInterval: activeRefreshInterval,
   });
   const recentTasks = useQuery({
     queryKey: ['tasks', 'recent'],
     queryFn: () => getTasks({ status: 'completed_full,completed_partial,failed', limit: 50 }),
+    refetchInterval: activeRefreshInterval,
   });
   const fallbackTasks = [bootstrap.data?.update_status, bootstrap.data?.analyze_status, bootstrap.data?.backtest_status, bootstrap.data?.intraday_status, bootstrap.data?.brief_status].filter(Boolean) as TaskRun[];
   const activeRows = normalizeRows<TaskRun>(activeTasks.data);
@@ -31,18 +36,20 @@ export function StatusPage() {
   const runningTasks = effectiveActiveRows.filter((task) => task.status === 'running');
   const queuedTasks = effectiveActiveRows.filter((task) => task.status === 'queued');
   const failedTasks = recentRows.filter((task) => task.status === 'failed');
-  const activeTask = runningTasks[0] || queuedTasks[0] || fallbackTasks.find((task) => ['queued', 'running'].includes(task.status)) || fallbackTasks[0];
+  const activeTask = runningTasks[0] || queuedTasks[0] || null;
   const scheduler = bootstrap.data?.runtime_health?.scheduler;
   const llm = bootstrap.data?.runtime_health?.llm;
   const taskFlow = useQuery({
     queryKey: ['task-flow', activeTask?.id],
     queryFn: () => getTaskFlow(activeTask?.id || ''),
-    enabled: Boolean(activeTask?.id),
+    enabled: Boolean(activeTask?.id && activeTask.kind === 'update'),
+    refetchInterval: activeTask?.kind === 'update' ? activeRefreshInterval : false,
   });
   const progressNodes = useQuery({
     queryKey: ['task-progress-nodes', activeTask?.id],
     queryFn: () => getTaskProgressNodes(activeTask?.id || ''),
-    enabled: Boolean(activeTask?.id),
+    enabled: Boolean(activeTask?.id && activeTask.kind === 'update'),
+    refetchInterval: activeTask?.kind === 'update' ? activeRefreshInterval : false,
   });
   const progressRows = normalizeRows<TaskProgressNode>(progressNodes.data);
   const flowRows = normalizeRows<TaskFlowNode>(taskFlow.data);
@@ -73,7 +80,7 @@ export function StatusPage() {
             <h2>任务状态</h2>
             <p>查看当前任务、等待队列和定时计划。</p>
           </div>
-          <Badge tone={activeTask ? 'info' : 'neutral'}>{activeTask ? '有任务' : '系统待命'}</Badge>
+          <Badge tone={effectiveActiveRows.length ? 'info' : 'neutral'}>{effectiveActiveRows.length ? '有任务' : '系统待命'}</Badge>
         </div>
         <div className="grid-3 status-summary-grid">
           <Metric label="系统状态" value={systemLabel(activeTask)} />
@@ -81,17 +88,13 @@ export function StatusPage() {
           <Metric label="AI 模型" value={llmLabel(llm)} tone={llm?.configured ? 'neutral' : 'risk'} />
         </div>
         <ScheduleStatusStrip scheduler={scheduler} />
-        {activeTask && ['queued', 'running'].includes(activeTask.status) ? (
-          <article className="task-progress-card" style={{ marginTop: 16 }}>
-            <div className="rule-card-header">
-              <strong>当前任务：{kindLabel(activeTask.kind)}</strong>
-              <Badge tone={activeTask.status === 'running' ? 'info' : 'watch'}>{taskStatusLabel(activeTask.status)}</Badge>
-            </div>
-            <Progress label="当前任务进度" state={activeTask.status} value={taskProgressValue(activeTask, progressByTaskId[activeTask.id])} />
-            <p className="card-copy">
-              当前步骤：{activeTask.stage || '等待开始'} · 已完成 {activeTask.processed} / 共 {activeTask.total || progressRows.length || 0}
-            </p>
-          </article>
+        {effectiveActiveRows.length ? (
+          <section className="task-status-list">
+            <h3 className="subsection-title">运行中任务</h3>
+            {effectiveActiveRows.map((task) => (
+              <TaskStatusCard key={task.id} progressValue={progressByTaskId[task.id]} task={task} />
+            ))}
+          </section>
         ) : null}
         <div className="button-row" style={{ marginTop: 16 }}>
           <Button onClick={() => setShowMaintenance((value) => !value)} variant="secondary">
@@ -141,6 +144,31 @@ export function StatusPage() {
       ) : null}
     </div>
   );
+}
+
+function TaskStatusCard({ task, progressValue }: { task: TaskRun; progressValue?: number | null }) {
+  return (
+    <article className="task-progress-card">
+      <div className="rule-card-header">
+        <strong>{kindLabel(task.kind)}</strong>
+        <Badge tone={task.status === 'running' ? 'info' : 'watch'}>{taskStatusLabel(task.status)}</Badge>
+      </div>
+      <Progress label={`${kindLabel(task.kind)}进度`} state={task.status} value={taskProgressValue(task, progressValue)} />
+      <p className="card-copy">
+        当前步骤：{task.stage || '等待开始'} · 已完成 {task.processed} / 共 {task.total || 0}
+      </p>
+      <p className="card-copy">
+        开始于 {formatDateTime(task.started_at)} · {heartbeatLabel(task)}
+      </p>
+    </article>
+  );
+}
+
+function heartbeatLabel(task: TaskRun) {
+  const updated = new Date(task.updated_at).getTime();
+  const stale = Number.isFinite(updated) && task.status === 'running' && Date.now() - updated > staleHeartbeatMs;
+  if (stale) return `可能仍在运行，最近更新于 ${formatDateTime(task.updated_at)}`;
+  return `最近更新 ${formatDateTime(task.updated_at)}`;
 }
 
 function progressStatusLabel(status?: string | null) {

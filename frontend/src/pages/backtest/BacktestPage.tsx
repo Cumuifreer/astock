@@ -38,7 +38,7 @@ export function BacktestPage() {
   return (
     <div className="page-grid">
       <section className="surface pad">
-        <div className="section-heading">
+        <div className="section-heading backtest-header-grid">
           <div>
             <h2>回测</h2>
             <p>选择策略和时间范围，评估信号质量与组合表现。</p>
@@ -53,13 +53,15 @@ export function BacktestPage() {
           <Select label="回测策略" value={selectedStrategyId} onChange={setSelectedStrategyId} options={strategyOptions} />
           <Badge tone="info">{selectedName}</Badge>
         </div>
-        <Tabs
-          defaultValue="signal"
-          items={[
-            { value: 'signal', label: '信号评估', content: <SignalEvaluation config={selectedConfig as StrategyConfig | null} strategyName={selectedName} /> },
-            { value: 'portfolio', label: '组合回测', content: <PortfolioBacktest config={selectedConfig as StrategyConfig | null} strategyName={selectedName} /> },
-          ]}
-        />
+        <div className="backtest-tabs">
+          <Tabs
+            defaultValue="signal"
+            items={[
+              { value: 'signal', label: '信号评估', content: <SignalEvaluation config={selectedConfig as StrategyConfig | null} strategyName={selectedName} /> },
+              { value: 'portfolio', label: '组合回测', content: <PortfolioBacktest config={selectedConfig as StrategyConfig | null} strategyName={selectedName} /> },
+            ]}
+          />
+        </div>
       </section>
     </div>
   );

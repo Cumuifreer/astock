@@ -8,6 +8,8 @@ import { Button } from '../../design/Button';
 import { EmptyState } from '../../design/EmptyState';
 import { LoadingState } from '../../design/LoadingState';
 import { Select } from '../../design/Select';
+import { Segmented } from '../../design/Segmented';
+import { useToast } from '../../design/Toast';
 import { useBootstrap } from '../../hooks/useBootstrap';
 import { useStrategyDraft } from '../../hooks/useStrategyDraft';
 import { composeStrategyConfig, defaultStrategyRule } from '../../utils/strategy';
@@ -24,12 +26,14 @@ export function StrategyPage() {
   const draftConfig = useStrategyDraft((state) => state.config);
   const draftRules = useStrategyDraft((state) => state.rules);
   const draftResonances = useStrategyDraft((state) => state.resonances);
+  const draftIsSystem = useStrategyDraft((state) => state.isSystem);
   const initialized = useStrategyDraft((state) => state.initialized);
   const setDraft = useStrategyDraft((state) => state.setDraft);
   const setName = useStrategyDraft((state) => state.setName);
   const setRules = useStrategyDraft((state) => state.setRules);
   const setResonances = useStrategyDraft((state) => state.setResonances);
   const patchConfig = useStrategyDraft((state) => state.patchConfig);
+  const { showToast } = useToast();
   const data = bootstrap.data;
   const library = (data as typeof data & { indicator_library?: IndicatorLibrary })?.indicator_library;
   const strategies = data?.strategies || [];
@@ -69,13 +73,20 @@ export function StrategyPage() {
   const invalidate = () => {
     void queryClient.invalidateQueries();
   };
+  const patchBootstrapStrategies = (updater: (rows: StrategyPreset[]) => StrategyPreset[]) => {
+    queryClient.setQueryData(['bootstrap'], (current: unknown) => {
+      const record = current as { strategies?: StrategyPreset[] } | undefined;
+      if (!record) return current;
+      return { ...record, strategies: updater(record.strategies || []) };
+    });
+  };
   const applyPreset = (preset: StrategyPreset) => {
     setDraft({
       presetId: preset.id,
       name: preset.name,
       config: cloneConfig(preset.config),
-      isSystem: false,
-      isDefault: false,
+      isSystem: Boolean(preset.is_system),
+      isDefault: Boolean(preset.is_default),
     });
   };
   const createNewDraft = () => {
@@ -104,9 +115,15 @@ export function StrategyPage() {
         config: namedConfig,
       }),
     onSuccess: (result) => {
+      patchBootstrapStrategies((rows) => {
+        const existing = rows.filter((item) => item.id !== result.preset.id);
+        return [result.preset, ...existing];
+      });
       applyPreset(result.preset);
       invalidate();
+      showToast('策略已保存', 'success');
     },
+    onError: (error) => showToast(error instanceof Error ? error.message : '策略保存失败', 'danger'),
   });
   const duplicateMutation = useMutation({
     mutationFn: () => {
@@ -122,21 +139,50 @@ export function StrategyPage() {
       });
     },
     onSuccess: (result) => {
+      patchBootstrapStrategies((rows) => [result.preset, ...rows.filter((item) => item.id !== result.preset.id)]);
       applyPreset(result.preset);
       invalidate();
+      showToast('策略副本已创建', 'success');
     },
+    onError: (error) => showToast(error instanceof Error ? error.message : '策略复制失败', 'danger'),
   });
   const deleteMutation = useMutation({
-    mutationFn: () => deleteStrategy(presetId || ''),
-    onSuccess: () => {
+    mutationFn: (id: string) => deleteStrategy(id),
+    onSuccess: (_, deletedId) => {
+      patchBootstrapStrategies((rows) => rows.filter((item) => item.id !== deletedId));
       createNewDraft();
       invalidate();
+      showToast('策略已删除', 'success');
     },
+    onError: (error) => showToast(error instanceof Error ? error.message : '策略删除失败', 'danger'),
   });
   const runMutation = useMutation({
     mutationFn: () => runStrategy(namedConfig),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate();
+      window.location.hash = '#status';
+      showToast('分析任务已开始，可在任务状态查看进度', 'success');
+    },
+    onError: (error) => showToast(error instanceof Error ? error.message : '分析任务启动失败', 'danger'),
   });
+  const handleSave = (saveAs: boolean) => {
+    if (!saveAs && draftIsSystem) {
+      showToast('系统模板可复制后编辑', 'info');
+      return;
+    }
+    saveMutation.mutate({ saveAs });
+  };
+  const handleDelete = () => {
+    if (!presetId) {
+      showToast('当前是未保存草稿，无需删除', 'info');
+      return;
+    }
+    if (draftIsSystem) {
+      showToast('系统模板可复制后编辑', 'info');
+      return;
+    }
+    deleteMutation.mutate(presetId);
+  };
   const patchRule = (ruleId: string, patch: Partial<StrategyRule>) => {
     setRules(rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)));
   };
@@ -167,13 +213,13 @@ export function StrategyPage() {
               <Button disabled={duplicateMutation.isPending} icon={<Copy size={16} />} onClick={() => duplicateMutation.mutate()} variant="secondary">
                 复制
               </Button>
-              <Button disabled={saveMutation.isPending} icon={<Save size={16} />} onClick={() => saveMutation.mutate({ saveAs: false })} variant="secondary">
+              <Button disabled={saveMutation.isPending} icon={<Save size={16} />} onClick={() => handleSave(false)} variant="secondary">
                 保存
               </Button>
-              <Button disabled={saveMutation.isPending} icon={<Save size={16} />} onClick={() => saveMutation.mutate({ saveAs: true })} variant="secondary">
+              <Button disabled={saveMutation.isPending} icon={<Save size={16} />} onClick={() => handleSave(true)} variant="secondary">
                 另存为
               </Button>
-              <Button disabled={deleteMutation.isPending || !presetId} icon={<Trash2 size={16} />} onClick={() => deleteMutation.mutate()} variant="danger">
+              <Button disabled={deleteMutation.isPending} icon={<Trash2 size={16} />} onClick={handleDelete} variant="danger">
                 删除
               </Button>
               <Button disabled={runMutation.isPending} icon={<Play size={16} />} onClick={() => runMutation.mutate()} variant="primary">
@@ -186,7 +232,7 @@ export function StrategyPage() {
             value={presetId || 'draft-new'}
             onChange={selectPreset}
             options={[
-              { value: 'draft-new', label: '未命名策略' },
+              { value: 'draft-new', label: '新建未保存策略' },
               ...strategies.map((preset) => ({
                 value: preset.id,
                 label: preset.name,
@@ -197,6 +243,20 @@ export function StrategyPage() {
             <label className="parameter-field">
               <span>策略名称</span>
               <input className="strategy-name-input" value={draftName} onChange={(event) => setName(event.target.value)} />
+            </label>
+            <label className="parameter-field">
+              <span>分析模式</span>
+              <Segmented
+                value={(namedConfig.analysis_mode === 'score' ? 'score' : 'strict') as 'strict' | 'score'}
+                options={[
+                  { value: 'strict', label: '严格筛选' },
+                  { value: 'score', label: '评分排序' },
+                ]}
+                onChange={(value) => patchConfig({ analysis_mode: value })}
+              />
+              <small className="field-readonly muted">
+                {namedConfig.analysis_mode === 'score' ? '允许加分和扣分参与排序。' : '硬条件不满足时直接剔除。'}
+              </small>
             </label>
           </div>
         </section>

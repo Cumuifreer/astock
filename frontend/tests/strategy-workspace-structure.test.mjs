@@ -63,12 +63,18 @@ test('scanner supports adding editing saving and running current draft', () => {
   assert.match(indicatorMatrixSource, /onPatchRule/);
   assert.doesNotMatch(indicatorMatrixSource, /onRemoveRule|removeRule/);
   assert.match(combinationSource, /onSetResonances/);
+  assert.match(scannerSource, /严格筛选/);
+  assert.match(scannerSource, /评分排序/);
+  assert.match(scannerSource, /analysis_mode/);
   assert.match(scannerSource, /保存/);
   assert.doesNotMatch(scannerSource, /保存为默认|系统策略|默认策略/);
   assert.match(scannerSource, /运行当前策略/);
+  assert.match(scannerSource, /分析任务已开始，可在任务状态查看进度/);
+  assert.match(scannerSource, /window\.location\.hash = '#status'/);
   assert.match(scannerSource, /strategy_name/);
-  assert.match(shellSource, /useStrategyDraft\.getState/);
-  assert.match(shellSource, /composeStrategyConfig/);
+  assert.doesNotMatch(shellSource, /运行策略/);
+  assert.doesNotMatch(shellSource, /runStrategy/);
+  assert.doesNotMatch(shellSource, /useStrategyDraft\.getState/);
   assert.doesNotMatch(shellSource, /const config = bootstrap\.data\?\.default_strategy/);
 });
 
@@ -76,7 +82,13 @@ test('scanner has explicit preset management instead of only saving a single str
   for (const label of ['新建', '复制', '保存', '另存为', '删除']) {
     assert.match(scannerSource, new RegExp(label));
   }
+  assert.match(scannerSource, /新建未保存策略/);
+  assert.match(scannerSource, /当前是未保存草稿，无需删除/);
+  assert.match(scannerSource, /系统模板可复制后编辑/);
+  assert.match(scannerSource, /showToast/);
+  assert.match(scannerSource, /patchBootstrapStrategies/);
   assert.doesNotMatch(scannerSource, /duplicateStrategy|保存为默认|系统策略|默认策略/);
+  assert.doesNotMatch(scannerSource, /label:\s*'未命名策略'/);
   assert.match(scannerSource, /deleteStrategy/);
   assert.match(scannerSource, /presetId/);
   assert.match(draftSource, /presetId/);

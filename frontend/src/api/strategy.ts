@@ -9,6 +9,11 @@ import type {
 } from '../types';
 import { del, post, request } from './client';
 
+export type AnalysisTaskJob = {
+  task_id: string;
+  status: string;
+};
+
 export function getBootstrap(): Promise<Bootstrap> {
   return request<Bootstrap>('/api/bootstrap');
 }
@@ -17,9 +22,9 @@ export function getIndicatorLibrary(): Promise<IndicatorLibrary> {
   return request<IndicatorLibrary>('/api/indicators');
 }
 
-export function runStrategy(config: StrategyConfig): Promise<unknown> {
+export function runStrategy(config: StrategyConfig): Promise<AnalysisTaskJob> {
   const strategyName = config.strategy_name || config.name || config.preset_name;
-  return post('/api/tasks/analyze', {
+  return post<AnalysisTaskJob>('/api/tasks/analyze', {
     config,
     strategy_name: strategyName,
     name: strategyName,

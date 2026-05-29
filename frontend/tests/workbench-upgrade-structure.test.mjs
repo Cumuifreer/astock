@@ -107,7 +107,10 @@ test('light design tokens and product navigation are present', () => {
     assert.match(shell, new RegExp(label));
   }
   assert.match(shell, /syncToday/);
-  assert.match(shell, /runStrategy/);
+  assert.doesNotMatch(shell, /runStrategy/);
+  assert.doesNotMatch(shell, /运行策略/);
+  assert.match(shell, /showToast/);
+  assert.match(shell, /任务已开始，可在任务状态查看进度/);
 });
 
 test('new API layer exposes market, intraday boards, checkpoints, and backtest endpoints', () => {
@@ -176,6 +179,10 @@ test('task progress and topbar popover avoid false running states', () => {
   assert.match(statusPage, /flowProgress/);
   assert.match(statusPage, /progressByTaskId/);
   assert.match(statusPage, /getTasks/);
+  assert.match(statusPage, /effectiveActiveRows\.map/);
+  assert.match(statusPage, /refetchInterval:\s*activeRefreshInterval/);
+  assert.match(statusPage, /可能仍在运行/);
+  assert.doesNotMatch(statusPage, /fallbackTasks\[0\]/);
   for (const label of ['系统状态', '任务队列', '定时计划', 'DeepSeek']) {
     assert.match(statusPage, new RegExp(label));
   }

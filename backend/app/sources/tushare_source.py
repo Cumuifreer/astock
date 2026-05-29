@@ -51,7 +51,7 @@ class TushareRealtimeSource:
         codes = ",".join(code_list or [])
 
         if hasattr(pro, "rt_k"):
-            patterns = codes or ("0*.SZ,3*.SZ,6*.SH,9*.BJ" if include_bj else "0*.SZ,3*.SZ,6*.SH")
+            patterns = codes or ("0*.SZ,3*.SZ,6*.SH,4*.BJ,8*.BJ,9*.BJ" if include_bj else "0*.SZ,3*.SZ,6*.SH")
             frame = pro.rt_k(ts_code=patterns)
             frame.attrs["tushare_amount_unit"] = "yuan"
             return frame

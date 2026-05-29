@@ -38,6 +38,58 @@ def test_rps_scores_rank_recent_returns_by_percentile():
     assert scores["300750.SZ"]["rps20"] == 33.33
 
 
+def test_strategy_filters_respect_include_bj_switch():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "latest_price": 10.0,
+                "amount": 100_000_000,
+                "float_market_value": 1_000_000_000,
+                "rps20": 70.0,
+                "rps60": 70.0,
+                "rps120": 70.0,
+                "pct_chg": 1.0,
+                "amplitude": 0.02,
+                "volume_ratio": 1.2,
+                "ma_distance": 0.03,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "430047.BJ",
+                "name": "诺思兰德",
+                "latest_price": 12.0,
+                "amount": 100_000_000,
+                "float_market_value": 1_000_000_000,
+                "rps20": 75.0,
+                "rps60": 75.0,
+                "rps120": 75.0,
+                "pct_chg": 1.0,
+                "amplitude": 0.02,
+                "volume_ratio": 1.2,
+                "ma_distance": 0.03,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+    config = {
+        **DEFAULT_STRATEGY_CONFIG,
+        "min_price": 1,
+        "min_amount": 1,
+        "candidate_limit": 10,
+    }
+
+    without_bj, funnel, _ = apply_strategy_filters(rows, {**config, "include_bj": False})
+    with_bj, _, _ = apply_strategy_filters(rows, {**config, "include_bj": True})
+
+    assert [item["code"] for item in without_bj] == ["000001.SZ"]
+    assert {item["code"] for item in with_bj} == {"000001.SZ", "430047.BJ"}
+    assert any(step["step_name"] == "北交所范围" for step in funnel)
+
+
 def test_platform_breakout_metrics_detect_compression_and_volume_breakout():
     bars = []
     start = date(2026, 4, 1)

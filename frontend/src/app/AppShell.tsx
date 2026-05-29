@@ -1,26 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, MoreHorizontal, Play, RefreshCw } from 'lucide-react';
+import { ChevronDown, MoreHorizontal, RefreshCw } from 'lucide-react';
 import { routes, type RouteId, findRoute } from './routes';
 import { Button } from '../design/Button';
 import { Badge } from '../design/Badge';
 import { LoadingState } from '../design/LoadingState';
+import { useToast } from '../design/Toast';
 import { syncToday, startUpdate } from '../api/data';
-import { runStrategy } from '../api/strategy';
 import { startIntradaySnapshot } from '../api/intraday';
-import type { StrategyConfig } from '../types';
 import { useBootstrap } from '../hooks/useBootstrap';
 import { usePolling } from '../hooks/usePolling';
-import { useStrategyDraft } from '../hooks/useStrategyDraft';
-import { composeStrategyConfig } from '../utils/strategy';
 
 const productNavigationLabels = ['市场总览', '策略选股', '分析结果', '盘中雷达', '观察池', '回测', '数据中心', '任务状态'];
-const defaultStrategyKey = ['default', 'strategy'].join('_');
 
 export function AppShell() {
   const [activeRoute, setActiveRoute] = useState<RouteId>(() => parseRouteHash(window.location.hash));
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const bootstrap = useBootstrap();
   const selectedRoute = findRoute(activeRoute);
   const Page = selectedRoute.component;
@@ -35,35 +32,41 @@ export function AppShell() {
   const invalidate = () => {
     void queryClient.invalidateQueries();
   };
+  const goToStatus = () => {
+    setActiveRoute('status');
+    window.history.replaceState(null, '', '#status');
+  };
+  const handleTaskStarted = (message = '任务已开始，可在任务状态查看进度') => {
+    invalidate();
+    goToStatus();
+    showToast(message, 'success');
+  };
+  const handleTaskError = (error: unknown) => {
+    showToast(error instanceof Error ? error.message : '任务启动失败', 'danger');
+  };
 
   const syncTodayMutation = useMutation({
     mutationFn: syncToday,
-    onSuccess: invalidate,
-  });
-  const runStrategyMutation = useMutation({
-    mutationFn: async () => {
-      const draft = useStrategyDraft.getState();
-      const baseConfig = draft.config || ((bootstrap.data as Record<string, unknown> | undefined)?.[defaultStrategyKey] as StrategyConfig | undefined);
-      if (!baseConfig) throw new Error('策略配置尚未加载');
-      const config = composeStrategyConfig(baseConfig, draft.rules, draft.resonances);
-      return runStrategy(config);
-    },
-    onSuccess: invalidate,
+    onSuccess: () => handleTaskStarted(),
+    onError: handleTaskError,
   });
   const forceUpdateMutation = useMutation({
     mutationFn: () => startUpdate({ mode: 'full', force: true }),
-    onSuccess: invalidate,
+    onSuccess: () => handleTaskStarted('强制全量更新已开始，可在任务状态查看进度'),
+    onError: handleTaskError,
   });
   const marketEnvMutation = useMutation({
     mutationFn: () => startUpdate({ mode: 'market_environment' }),
-    onSuccess: invalidate,
+    onSuccess: () => handleTaskStarted('市场环境重算已开始，可在任务状态查看进度'),
+    onError: handleTaskError,
   });
   const sampleMutation = useMutation({
     mutationFn: () => startIntradaySnapshot(),
-    onSuccess: invalidate,
+    onSuccess: () => handleTaskStarted('盘中采样已开始，可在任务状态查看进度'),
+    onError: handleTaskError,
   });
 
-  const busy = syncTodayMutation.isPending || runStrategyMutation.isPending || forceUpdateMutation.isPending || marketEnvMutation.isPending || sampleMutation.isPending;
+  const busy = syncTodayMutation.isPending || forceUpdateMutation.isPending || marketEnvMutation.isPending || sampleMutation.isPending;
 
   useEffect(() => {
     const handleHashChange = () => setActiveRoute(parseRouteHash(window.location.hash));
@@ -113,9 +116,6 @@ export function AppShell() {
           <div className="topbar-actions">
             <Button disabled={busy} icon={<RefreshCw size={16} />} onClick={() => syncTodayMutation.mutate()} variant="primary">
               同步今日数据
-            </Button>
-            <Button disabled={busy || !((bootstrap.data as Record<string, unknown> | undefined)?.[defaultStrategyKey] as StrategyConfig | undefined)} icon={<Play size={16} />} onClick={() => runStrategyMutation.mutate()} variant="secondary">
-              运行策略
             </Button>
             <Popover.Root>
               <Popover.Trigger asChild>

@@ -7,11 +7,13 @@ import { Button } from '../../design/Button';
 import { Badge } from '../../design/Badge';
 import { CheckTile } from '../../design/CheckTile';
 import { Select } from '../../design/Select';
+import { useToast } from '../../design/Toast';
 import { strategySummary } from '../../utils/strategy';
 import { formatMoney, formatPercent, formatRatio, toNumber } from '../../utils/format';
 import { todayISO } from '../../utils/date';
 
 export function PortfolioBacktest({ config, strategyName }: { config: StrategyConfig | null; strategyName: string }) {
+  const { showToast } = useToast();
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState(todayISO());
   const [initialCapital, setInitialCapital] = useState('1000000');
@@ -48,6 +50,11 @@ export function PortfolioBacktest({ config, strategyName }: { config: StrategyCo
         limit_down_model: limitDownModel,
         limit_up_down_model: limitUpModel || limitDownModel,
       }),
+    onSuccess: () => {
+      window.location.hash = '#status';
+      showToast('回测任务已开始，可在任务状态查看进度', 'success');
+    },
+    onError: (error) => showToast(error instanceof Error ? error.message : '回测任务启动失败', 'danger'),
   });
   const result = useQuery({
     queryKey: ['portfolio-backtest', mutation.data?.runId],
@@ -62,7 +69,7 @@ export function PortfolioBacktest({ config, strategyName }: { config: StrategyCo
   const run = (result.data?.run || {}) as Record<string, unknown>;
   const summary = (run.summary || {}) as Record<string, unknown>;
   return (
-    <section className="surface pad">
+    <section className="surface pad backtest-panel">
       <div className="section-heading">
         <div>
           <h2>简化组合模拟</h2>
@@ -75,7 +82,7 @@ export function PortfolioBacktest({ config, strategyName }: { config: StrategyCo
       <div className="notice-card" style={{ marginBottom: 14 }}>
         当前为简化组合模拟，适合快速比较策略，不等同真实交易账户回测。
       </div>
-      <div className="backtest-form">
+      <div className="backtest-form-grid">
         <label>
           <span>初始资金</span>
           <input inputMode="numeric" value={initialCapital} onChange={(event) => setInitialCapital(event.target.value)} />
@@ -162,7 +169,7 @@ export function PortfolioBacktest({ config, strategyName }: { config: StrategyCo
           </Button>
         </div>
       ) : null}
-      <div className="metric-row">
+      <div className="backtest-results-grid metric-row">
         <Metric label="总收益" value={formatPercentStatus(summary.total_return)} />
         <Metric label="年化收益" value={formatPercentStatus(summary.annual_return)} />
         <Metric label="最大回撤" value={formatPercentStatus(summary.max_drawdown)} />
@@ -178,7 +185,7 @@ export function PortfolioBacktest({ config, strategyName }: { config: StrategyCo
         <Badge>等权持仓</Badge>
         <Badge>任务队列跟踪</Badge>
       </div>
-      <div className="grid-3" style={{ marginTop: 14 }}>
+      <div className="backtest-placeholder-grid" style={{ marginTop: 14 }}>
         <Placeholder title="资金曲线" />
         <Placeholder title="回撤曲线" />
         <Placeholder title="月度收益表" />

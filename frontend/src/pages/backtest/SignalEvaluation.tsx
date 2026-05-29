@@ -6,11 +6,13 @@ import type { StrategyConfig } from '../../types';
 import { Button } from '../../design/Button';
 import { Badge } from '../../design/Badge';
 import { CheckTile } from '../../design/CheckTile';
+import { useToast } from '../../design/Toast';
 import { strategySummary } from '../../utils/strategy';
 import { formatPercent, formatRatio, toNumber } from '../../utils/format';
 import { todayISO } from '../../utils/date';
 
 export function SignalEvaluation({ config, strategyName }: { config: StrategyConfig | null; strategyName: string }) {
+  const { showToast } = useToast();
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState(todayISO());
   const [step, setStep] = useState('5');
@@ -29,6 +31,11 @@ export function SignalEvaluation({ config, strategyName }: { config: StrategyCon
         market_buckets: marketBuckets,
         score_buckets: scoreBuckets,
       }),
+    onSuccess: () => {
+      window.location.hash = '#status';
+      showToast('回测任务已开始，可在任务状态查看进度', 'success');
+    },
+    onError: (error) => showToast(error instanceof Error ? error.message : '回测任务启动失败', 'danger'),
   });
   const result = useQuery({
     queryKey: ['signal-evaluation', mutation.data?.runId],
@@ -42,7 +49,7 @@ export function SignalEvaluation({ config, strategyName }: { config: StrategyCon
   const summary = (result.data?.run?.summary || {}) as Record<string, unknown>;
   const queued = mutation.data && !result.data?.run?.summary;
   return (
-    <section className="surface pad">
+    <section className="surface pad backtest-panel">
       <div className="section-heading">
         <div>
           <h2>信号评估</h2>
@@ -52,7 +59,7 @@ export function SignalEvaluation({ config, strategyName }: { config: StrategyCon
           运行评估
         </Button>
       </div>
-      <div className="backtest-form">
+      <div className="backtest-form-grid">
         <label>
           <span>开始日期</span>
           <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
@@ -80,7 +87,7 @@ export function SignalEvaluation({ config, strategyName }: { config: StrategyCon
           </Button>
         </div>
       ) : null}
-      <div className="metric-row">
+      <div className="backtest-results-grid metric-row">
         <Metric label="样本数" value={formatRatioStatus(summary.sample_count)} />
         <Metric label="平均 T+1 收益" value={formatPercentStatus(summary.avg_return_1d)} />
         <Metric label="平均 T+3 收益" value={formatPercentStatus(summary.avg_return_3d)} />
@@ -99,7 +106,7 @@ export function SignalEvaluation({ config, strategyName }: { config: StrategyCon
         <Badge>按题材分组</Badge>
         <Badge>规则命中贡献</Badge>
       </div>
-      <div className="grid-3" style={{ marginTop: 14 }}>
+      <div className="backtest-placeholder-grid" style={{ marginTop: 14 }}>
         <Placeholder title="分数分桶收益" />
         <Placeholder title="市场状态分层表现" />
         <Placeholder title="历史信号表" />

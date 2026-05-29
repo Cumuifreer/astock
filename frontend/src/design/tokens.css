@@ -671,6 +671,8 @@ button {
 .rule-editor select,
 .backtest-form input,
 .backtest-form select,
+.backtest-form-grid input,
+.backtest-form-grid select,
 .search-box input {
   width: 100%;
   min-height: 36px;
@@ -689,7 +691,8 @@ button {
 
 .rule-name-input span,
 .rule-editor span,
-.backtest-form span {
+.backtest-form span,
+.backtest-form-grid span {
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 800;
@@ -1243,7 +1246,8 @@ button {
 }
 
 .rule-editor label,
-.backtest-form label {
+.backtest-form label,
+.backtest-form-grid label {
   display: grid;
   gap: 5px;
 }
@@ -1349,8 +1353,47 @@ button {
   gap: var(--space-3);
 }
 
+.backtest-header-grid {
+  align-items: flex-start;
+}
+
+.backtest-tabs {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.backtest-panel {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.backtest-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.backtest-results-grid {
+  align-items: stretch;
+}
+
+.backtest-placeholder-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
 .backtest-runline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
   margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
   color: var(--text-secondary);
   font-size: 13px;
 }
@@ -1367,6 +1410,21 @@ button {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
+}
+
+.task-status-list {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.task-progress-card {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
 }
 
 .subsection-title {
@@ -1791,7 +1849,9 @@ button {
   .rule-editor,
   .brief-list-grid,
   .indicator-card-grid,
-  .combo-choice-grid {
+  .combo-choice-grid,
+  .backtest-form-grid,
+  .backtest-placeholder-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1812,7 +1872,8 @@ button {
     flex-basis: auto;
   }
 
-  .backtest-form {
+  .backtest-form,
+  .backtest-form-grid {
     grid-template-columns: 1fr;
   }
 

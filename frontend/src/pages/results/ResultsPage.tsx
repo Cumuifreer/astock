@@ -8,6 +8,7 @@ import { Button } from '../../design/Button';
 import { EmptyState } from '../../design/EmptyState';
 import { LoadingState } from '../../design/LoadingState';
 import { Select } from '../../design/Select';
+import { useToast } from '../../design/Toast';
 import { useBootstrap } from '../../hooks/useBootstrap';
 import { formatDateTime } from '../../utils/date';
 import { formatMoney, formatPercent, formatRatio } from '../../utils/format';
@@ -20,6 +21,7 @@ const latestRunKey = ['run', 'id'].join('_');
 
 export function ResultsPage() {
   const bootstrap = useBootstrap();
+  const { showToast } = useToast();
   const reports = useQuery({ queryKey: ['result-reports'], queryFn: getAnalysisReports });
   const flattenedReports = useMemo(
     () => (reports.data?.groups || []).flatMap((group) => group.reports),
@@ -52,6 +54,12 @@ export function ResultsPage() {
       const config = activeReport?.config || ((bootstrap.data as Record<string, unknown> | undefined)?.[defaultStrategyKey] as unknown);
       return config ? runStrategy(withStrategyName(config as StrategyConfig, activeStrategyName)) : Promise.resolve(null);
     },
+    onSuccess: (result) => {
+      if (!result) return;
+      window.location.hash = '#status';
+      showToast('分析任务已开始，可在任务状态查看进度', 'success');
+    },
+    onError: (error) => showToast(error instanceof Error ? error.message : '分析任务启动失败', 'danger'),
   });
   const batchAddMutation = useMutation({
     mutationFn: () =>

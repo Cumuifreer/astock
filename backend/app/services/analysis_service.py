@@ -513,6 +513,12 @@ def apply_strategy_filters(
     working = working[(working.get("is_st", False) != True) & (working.get("suspended", False) != True)]
     mark("可交易股票", before, working, "排除 ST 与停牌")
 
+    if not strategy.get("include_bj") and "code" in working.columns:
+        before = len(working)
+        code_series = working["code"].astype(str).str.upper()
+        working = working[~code_series.str.endswith(".BJ")]
+        mark("北交所范围", before, working, "未开启包含北交所")
+
     working = _numeric_filter(working, "latest_price", strategy["min_price"], None, "最低股价", funnel)
     working = _numeric_filter(working, "amount", strategy["min_amount"], None, "成交额", funnel)
 

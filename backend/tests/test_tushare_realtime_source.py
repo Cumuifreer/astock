@@ -35,6 +35,26 @@ class FakeTusharePro:
         )
 
 
+class CapturingTusharePro:
+    def __init__(self):
+        self.requested_code = ""
+
+    def rt_k(self, ts_code=""):
+        self.requested_code = ts_code
+        return pd.DataFrame(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "name": "平安银行",
+                    "close": 10.5,
+                    "pre_close": 10.0,
+                    "vol": 1200,
+                    "amount": 12_600_000,
+                }
+            ]
+        )
+
+
 def test_tushare_realtime_daily_normalizes_snapshot_fields():
     source = TushareRealtimeSource(pro=FakeTusharePro())
 
@@ -50,6 +70,18 @@ def test_tushare_realtime_daily_normalizes_snapshot_fields():
     assert row["volume"] == 1200.0
     assert row["amount"] == 12_600_000.0
     assert row["source"] == "Tushare 实时日线"
+
+
+def test_tushare_realtime_daily_requests_all_beijing_prefixes_when_enabled():
+    pro = CapturingTusharePro()
+    source = TushareRealtimeSource(pro=pro)
+
+    frame = source.fetch_realtime_daily(include_bj=True, exclude_star=False)
+
+    assert list(frame["code"]) == ["000001.SZ"]
+    assert "4*.BJ" in pro.requested_code
+    assert "8*.BJ" in pro.requested_code
+    assert "9*.BJ" in pro.requested_code
 
 
 class FakeTushareEnrichmentPro:
