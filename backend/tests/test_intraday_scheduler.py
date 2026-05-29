@@ -88,6 +88,26 @@ def test_intraday_scheduler_ignores_non_trading_hours(tmp_path, monkeypatch):
     assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'intraday'") == 0
 
 
+def test_intraday_sample_sets_initial_progress_before_fetch(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    task_id = "intraday-auto-20260529-1320"
+    observed = {}
+
+    service._write_task(task_id, kind="intraday", status="running", stage="启动")
+
+    def stop_after_initial_progress(include_bj, exclude_star, warnings):
+        observed.update(db.query("SELECT stage, processed, total FROM task_runs WHERE id = ?", [task_id])[0])
+        raise RuntimeError("stop after initial progress")
+
+    monkeypatch.setattr(service, "_fetch_intraday_snapshot_frame", stop_after_initial_progress)
+
+    service._run_intraday_sample(task_id, {"sample_at": "2026-05-29T13:20:00"})
+
+    assert observed == {"stage": "拉取盘中快照", "processed": 0, "total": 3}
+
+
 def test_runtime_health_reports_scheduler_slots_and_data_dates(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

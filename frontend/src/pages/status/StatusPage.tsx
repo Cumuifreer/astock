@@ -155,13 +155,20 @@ function TaskStatusCard({ task, progressValue }: { task: TaskRun; progressValue?
       </div>
       <Progress label={`${kindLabel(task.kind)}进度`} state={task.status} value={taskProgressValue(task, progressValue)} />
       <p className="card-copy">
-        当前步骤：{task.stage || '等待开始'} · 已完成 {task.processed} / 共 {task.total || 0}
+        {taskProgressCopy(task)}
       </p>
       <p className="card-copy">
         开始于 {formatDateTime(task.started_at)} · {heartbeatLabel(task)}
       </p>
     </article>
   );
+}
+
+function taskProgressCopy(task: TaskRun) {
+  const stage = task.stage || '等待开始';
+  const total = Number(task.total || 0);
+  if (total <= 0) return `当前步骤：${stage} · 进度待返回`;
+  return `当前步骤：${stage} · 已完成 ${task.processed || 0} / 共 ${total}`;
 }
 
 function heartbeatLabel(task: TaskRun) {

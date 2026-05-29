@@ -54,6 +54,37 @@ LEFT JOIN (
 ACTIVE_STOCK_FILTER = "b.suspended IS DISTINCT FROM TRUE"
 INACTIVE_STOCK_FILTER = "b.suspended IS TRUE"
 
+NON_THEME_CONCEPT_KEYWORDS = (
+    "同花顺全A",
+    "同花顺沪",
+    "同花顺深",
+    "沪深京",
+    "沪深等权",
+    "上证指数",
+    "深证",
+    "指数",
+    "沪股通",
+    "深股通",
+    "陆股通",
+    "QFII",
+    "融资融券",
+    "昨日",
+    "近期",
+    "百日",
+    "打板",
+    "首板",
+    "涨停表现",
+    "大盘",
+    "小盘",
+    "高估值",
+    "低估值",
+    "高贝塔",
+    "均衡盈利",
+    "业绩预",
+    "减持",
+    "重仓",
+)
+
 
 def _is_blocked_brief_source(item: Dict[str, Any]) -> bool:
     source_text = f"{item.get('source_id') or ''} {item.get('source') or ''}".lower()
@@ -376,21 +407,24 @@ class DataService:
 
     def sector_heatmap(self, sector_type: str = "concept", metric: str = "heat", limit: int = 80) -> List[Dict[str, Any]]:
         resolved_type = "industry" if str(sector_type).lower() == "industry" else "concept"
-        order_expression = {
-            "pct_chg": "pct_chg",
-            "moneyflow": "net_amount",
-            "limit": """
-                CASE
-                    WHEN COALESCE(limit_up_count_status, '') = 'computed'
-                      OR COALESCE(strong_count_status, '') = 'computed'
-                    THEN 0 ELSE 1
-                END,
-                COALESCE(limit_up_count, 0) DESC,
-                COALESCE(strong_count, 0) DESC,
-                heat_score
-            """,
-            "heat": "heat_score",
-        }.get(str(metric).lower(), "heat_score")
+        metric_key = str(metric).lower()
+        where_parts = ["sector_type = ?"]
+        where_params: List[Any] = [resolved_type]
+        if resolved_type == "concept":
+            for keyword in NON_THEME_CONCEPT_KEYWORDS:
+                where_parts.append("sector_name NOT ILIKE ?")
+                where_params.append(f"%{keyword}%")
+        if metric_key == "moneyflow":
+            where_parts.append("net_amount IS NOT NULL")
+        elif metric_key == "limit":
+            where_parts.append("COALESCE(limit_up_count_status, '') = 'computed'")
+        where_sql = " AND ".join(where_parts)
+        order_clause = {
+            "pct_chg": "pct_chg DESC NULLS LAST, heat_score DESC NULLS LAST, sector_name",
+            "moneyflow": "net_amount DESC NULLS LAST, heat_score DESC NULLS LAST, sector_name",
+            "limit": "COALESCE(limit_up_count, 0) DESC, COALESCE(strong_count, 0) DESC, heat_score DESC NULLS LAST, sector_name",
+            "heat": "heat_score DESC NULLS LAST, pct_chg DESC NULLS LAST, sector_name",
+        }.get(metric_key, "heat_score DESC NULLS LAST, pct_chg DESC NULLS LAST, sector_name")
         rows = self.db.query(
             f"""
             SELECT sector_code AS code,
@@ -415,16 +449,16 @@ class DataService:
                    source,
                    updated_at
             FROM market_sector_daily
-            WHERE sector_type = ?
+            WHERE {where_sql}
               AND trade_date = (
                 SELECT MAX(trade_date)
                 FROM market_sector_daily
-                WHERE sector_type = ?
+                WHERE {where_sql}
               )
-            ORDER BY {order_expression} DESC NULLS LAST, sector_name
+            ORDER BY {order_clause}
             LIMIT ?
             """,
-            [resolved_type, resolved_type, max(1, min(limit, 300))],
+            [*where_params, *where_params, max(1, min(limit, 300))],
         )
         return rows
 

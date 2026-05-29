@@ -23,21 +23,13 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
   });
   const rows = normalizeRows<SectorHeatNode>(heatmap.data);
   const sourceRows = rows.length || mode !== 'concept' ? rows : sectors;
-  const filtered = sourceRows.slice(0, 36);
+  const filtered = sourceRows.filter((sector) => hasDisplayableData(sector, mode)).slice(0, 36);
   const option = useMemo(
     () => ({
       tooltip: {
         formatter: (params: { data?: { raw?: SectorHeatNode } }) => {
           const raw = params.data?.raw || {};
-          return [
-            `<strong>${raw.name || raw.sector_name || '板块'}</strong>`,
-            `涨跌幅：${formatPercent(raw.pct_chg)}`,
-            `主力净流入：${formatMoney(raw.net_amount)}`,
-            `成分覆盖：${raw.member_count ?? raw.company_count ?? '待同步'}`,
-            `涨停家数：${limitText(raw)}`,
-            `强势家数：${strongText(raw)}`,
-            `领涨股：${raw.leader_name || raw.leader_code || '待同步'}`,
-          ].join('<br/>');
+          return tooltipLines(raw, mode).join('<br/>');
         },
       },
       series: [
@@ -50,12 +42,7 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
           upperLabel: { show: false },
           data: filtered.map((sector) => {
             const heat = toNumber(sector.heat_score) || 0;
-            const value =
-              mode === 'money'
-                ? Math.abs(toNumber(sector.net_amount) || 1)
-                : mode === 'limit'
-                  ? Math.max(1, statusComputed(sector.limit_up_count_status) ? toNumber(sector.limit_up_count) || 1 : statusComputed(sector.strong_count_status) ? toNumber(sector.strong_count) || 1 : toNumber(sector.company_count) || 1)
-                  : toNumber(sector.amount) || toNumber(sector.company_count) || 1;
+            const value = heatmapNodeValue(sector, mode);
             return {
               name: sector.name || sector.sector_name || sector.code || sector.sector_code || '板块',
               value,
@@ -98,11 +85,7 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
             {filtered.slice(0, 8).map((sector) => (
               <div className="heat-tile" key={`${sector.sector_code || sector.code}-${sector.sector_type || sector.type}`}>
                 <strong>{sector.name || sector.sector_name || '板块'}</strong>
-                <span className="card-copy">
-                  {mode === 'limit'
-                    ? `涨停 ${limitText(sector)} · 强势 ${strongText(sector)}`
-                    : `${formatPercent(sector.pct_chg)} · ${formatMoney(sector.net_amount)}`}
-                </span>
+                <span className="card-copy">{tileDetail(sector, mode)}</span>
               </div>
             ))}
           </div>
@@ -112,6 +95,42 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
       )}
     </section>
   );
+}
+
+function hasDisplayableData(sector: SectorHeatNode, mode: HeatMode) {
+  if (mode === 'money') return toNumber(sector.net_amount) !== null;
+  if (mode === 'limit') return statusComputed(sector.limit_up_count_status);
+  return true;
+}
+
+function heatmapNodeValue(sector: SectorHeatNode, mode: HeatMode) {
+  if (mode === 'money') return Math.max(1, Math.abs(toNumber(sector.net_amount) || 0));
+  if (mode === 'limit') return Math.max(1, toNumber(sector.limit_up_count) || toNumber(sector.strong_count) || 0);
+  return toNumber(sector.amount) || toNumber(sector.company_count) || 1;
+}
+
+function tooltipLines(raw: SectorHeatNode, mode: HeatMode) {
+  const title = `<strong>${raw.name || raw.sector_name || '板块'}</strong>`;
+  const leader = `领涨股：${raw.leader_name || raw.leader_code || '待同步'}`;
+  if (mode === 'money') {
+    return [title, `主力净流入：${formatMoney(raw.net_amount)}`, `涨跌幅：${formatPercent(raw.pct_chg)}`, leader];
+  }
+  if (mode === 'limit') {
+    return [title, `涨停家数：${limitText(raw)}`, `强势家数：${strongText(raw)}`, leader];
+  }
+  return [
+    title,
+    `涨跌幅：${formatPercent(raw.pct_chg)}`,
+    `成交额：${formatMoney(raw.amount)}`,
+    `成分覆盖：${raw.member_count ?? raw.company_count ?? '待同步'}`,
+    leader,
+  ];
+}
+
+function tileDetail(sector: SectorHeatNode, mode: HeatMode) {
+  if (mode === 'money') return `净流入 ${formatMoney(sector.net_amount)} · ${formatPercent(sector.pct_chg)}`;
+  if (mode === 'limit') return `涨停 ${limitText(sector)} · 强势 ${strongText(sector)}`;
+  return `${formatPercent(sector.pct_chg)} · ${formatMoney(sector.amount)}`;
 }
 
 function limitText(sector: SectorHeatNode) {

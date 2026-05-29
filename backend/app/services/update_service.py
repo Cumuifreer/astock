@@ -2781,6 +2781,11 @@ class UpdateService:
                 task_id,
                 stage="拉取盘中快照",
                 source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
+                total=3,
+                processed=0,
+                success=0,
+                failed=0,
+                skipped=0,
             )
             frame = self._fetch_intraday_snapshot_frame(include_bj, exclude_star, warnings)
             snapshot_count = self.intraday_service.record_snapshots(
