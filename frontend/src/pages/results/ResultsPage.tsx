@@ -10,7 +10,7 @@ import { LoadingState } from '../../design/LoadingState';
 import { Select } from '../../design/Select';
 import { useToast } from '../../design/Toast';
 import { useBootstrap } from '../../hooks/useBootstrap';
-import { formatDateTime } from '../../utils/date';
+import { formatDateTime, todayISO } from '../../utils/date';
 import { formatMoney, formatPercent, formatRatio } from '../../utils/format';
 import { CandidateTable } from './CandidateTable';
 import { CandidateEvidencePanel } from './CandidateEvidencePanel';
@@ -228,7 +228,7 @@ function exportCandidates(candidates: Candidate[]) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
-  anchor.download = `candidates-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.download = `candidates-${todayISO()}.json`;
   anchor.click();
   URL.revokeObjectURL(url);
 }

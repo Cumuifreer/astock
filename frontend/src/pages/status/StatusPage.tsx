@@ -7,7 +7,7 @@ import { DataTable } from '../../design/DataTable';
 import { LoadingState } from '../../design/LoadingState';
 import { Progress } from '../../design/Progress';
 import { useBootstrap } from '../../hooks/useBootstrap';
-import { formatDateTime } from '../../utils/date';
+import { dateTimeToMs, formatChinaDateTime, formatDateTime } from '../../utils/date';
 import { flowProgress, normalizeRows, taskProgressValue } from '../../utils/metrics';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { TaskRun } from '../../types';
@@ -165,7 +165,7 @@ function TaskStatusCard({ task, progressValue }: { task: TaskRun; progressValue?
 }
 
 function heartbeatLabel(task: TaskRun) {
-  const updated = new Date(task.updated_at).getTime();
+  const updated = dateTimeToMs(task.updated_at);
   const stale = Number.isFinite(updated) && task.status === 'running' && Date.now() - updated > staleHeartbeatMs;
   if (stale) return `可能仍在运行，最近更新于 ${formatDateTime(task.updated_at)}`;
   return `最近更新 ${formatDateTime(task.updated_at)}`;
@@ -210,7 +210,7 @@ function ScheduleStatusStrip({ scheduler }: { scheduler?: SchedulerHealth }) {
       <span>盘中采样：{enabled ? '已开启' : '未开启'}</span>
       <span>下一次：{enabled ? next || '待定' : '未开启'}</span>
       <span>今日剩余：{enabled ? `${remaining} 次` : '-'}</span>
-      <span>最近一次：{latest ? `${formatDateTime(latest)} · ${latestStatus}` : '暂无'}</span>
+      <span>最近一次：{latest ? `${formatChinaDateTime(latest)} · ${latestStatus}` : '暂无'}</span>
     </article>
   );
 }

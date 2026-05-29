@@ -7,7 +7,7 @@ import { DataTable } from '../../design/DataTable';
 import { Drawer } from '../../design/Drawer';
 import { LoadingState } from '../../design/LoadingState';
 import { Tabs } from '../../design/Tabs';
-import { formatDateTime } from '../../utils/date';
+import { formatChinaDateTime } from '../../utils/date';
 import { formatMoney, formatPercent, formatRatio, toNumber } from '../../utils/format';
 import { IntradayBoard } from './IntradayBoard';
 import { IntradayTimeline } from './IntradayTimeline';
@@ -40,7 +40,7 @@ export function IntradayPage() {
             <p>基于多次快照计算成交速度、增量、冲高回落、市场分位和题材同步。</p>
           </div>
           <div className="rule-chip-grid">
-            <Badge tone="info">{formatDateTime(data.sample_at)}</Badge>
+            <Badge tone="info">{formatChinaDateTime(data.sample_at)}</Badge>
             <Badge>{data.sample_count || 0} 次采样</Badge>
           </div>
         </div>
@@ -134,7 +134,7 @@ function BoardWithHint({
 function TimelineDetail({ data }: { data: import('../../types').IntradayTimeline | null }) {
   const columns = useMemo<Array<ColumnDef<import('../../types').IntradayTimelineRow, unknown>>>(
     () => [
-      { header: '时间', accessorKey: 'sample_at', cell: ({ row }) => formatDateTime(row.original.sample_at) },
+      { header: '时间', accessorKey: 'sample_at', cell: ({ row }) => formatChinaDateTime(row.original.sample_at) },
       { header: '最新价', accessorKey: 'latest_price', cell: ({ row }) => formatRatioStatus(row.original.latest_price) },
       { header: '涨跌幅', accessorKey: 'pct_chg', cell: ({ row }) => formatPercentStatus(row.original.pct_chg) },
       { header: '成交额', accessorKey: 'amount', cell: ({ row }) => formatMoneyStatus(row.original.amount) },
