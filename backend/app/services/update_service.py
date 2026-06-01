@@ -414,6 +414,7 @@ class UpdateService:
         self.daily_brief_service = DailyBriefService(db)
         self.analysis_runner: Any = None
         self.backtest_runner: Any = None
+        self.candidate_summary_runner: Any = None
         self._queue_lock = threading.Lock()
         self._queue_worker_active = False
         self.public_guard = SourceGuard(
@@ -428,11 +429,18 @@ class UpdateService:
         )
         self.tushare_rate_limiter = TushareRateLimiter()
 
-    def configure_runners(self, analysis_runner: Any = None, backtest_runner: Any = None) -> None:
+    def configure_runners(
+        self,
+        analysis_runner: Any = None,
+        backtest_runner: Any = None,
+        candidate_summary_runner: Any = None,
+    ) -> None:
         if analysis_runner is not None:
             self.analysis_runner = analysis_runner
         if backtest_runner is not None:
             self.backtest_runner = backtest_runner
+        if candidate_summary_runner is not None:
+            self.candidate_summary_runner = candidate_summary_runner
 
     def recover_interrupted_tasks(self) -> None:
         now = datetime.utcnow()
@@ -448,6 +456,23 @@ class UpdateService:
             WHERE status = 'running'
             """,
             [now, now],
+            write=True,
+        )
+        self.db.execute(
+            """
+            UPDATE analysis_runs
+            SET status = 'failed',
+                finished_at = ?,
+                error_message = '服务重启后中止'
+            WHERE status = 'running'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM task_runs
+                  WHERE task_runs.id = analysis_runs.task_id
+                    AND task_runs.status IN ('queued', 'running')
+              )
+            """,
+            [now],
             write=True,
         )
 
@@ -466,19 +491,44 @@ class UpdateService:
         )
         return task_id
 
-    def start_analysis(self, config: Dict[str, Any], analysis_runner: Any) -> str:
+    def start_analysis(self, config: Dict[str, Any], analysis_runner: Any) -> tuple[str, str]:
         self.analysis_runner = analysis_runner
         frozen_config = json.loads(json.dumps(config, ensure_ascii=False))
         task_id = f"analyze-{uuid.uuid4().hex[:12]}"
+        run_id = f"analysis-{uuid.uuid4().hex[:12]}"
         self._enqueue_task(
             task_id,
             kind="analyze",
             stage="准备分析",
             source="本地仓库",
-            summary={},
-            payload={"config": frozen_config},
+            summary={"analysis_run_id": run_id},
+            payload={"config": frozen_config, "run_id": run_id},
         )
-        return task_id
+        return task_id, run_id
+
+    def start_candidate_ai_summary(self, payload: Dict[str, Any], candidate_summary_runner: Any) -> tuple[str, Dict[str, Any]]:
+        self.candidate_summary_runner = candidate_summary_runner
+        run_id = str(payload.get("run_id") or "")
+        code = str(payload.get("code") or "")
+        if not run_id or not code:
+            raise ValueError("run_id 和 code 不能为空。")
+        identity = candidate_summary_runner.prepare_from_result(run_id=run_id, code=code)
+        existing = candidate_summary_runner.read_summary(run_id, code, input_hash=identity["input_hash"])
+        if not payload.get("force") and existing.get("status") in {"queued", "running", "completed_full", "completed_partial"}:
+            identity["status"] = existing.get("status")
+            return str(existing.get("task_id") or ""), identity
+        task_id = f"ai-summary-{uuid.uuid4().hex[:12]}"
+        candidate_summary_runner.mark_queued(identity, task_id=task_id)
+        self._enqueue_task(
+            task_id,
+            kind="candidate_ai_summary",
+            stage="准备生成候选解释",
+            source="LLM",
+            summary={"run_id": run_id, "code": code, "input_hash": identity["input_hash"]},
+            payload={"run_id": run_id, "code": code, "input_hash": identity["input_hash"]},
+        )
+        identity["status"] = "queued"
+        return task_id, identity
 
     def start_backtest(self, payload: Dict[str, Any], backtest_runner: Any) -> tuple[str, str]:
         self.backtest_runner = backtest_runner
@@ -774,7 +824,12 @@ class UpdateService:
         if kind == "analyze":
             if self.analysis_runner is None:
                 raise RuntimeError("分析服务尚未就绪。")
-            self._run_analysis(task_id, payload.get("config") or {}, self.analysis_runner)
+            self._run_analysis(task_id, payload.get("config") or {}, self.analysis_runner, run_id=payload.get("run_id"))
+            return
+        if kind == "candidate_ai_summary":
+            if self.candidate_summary_runner is None:
+                raise RuntimeError("候选解释服务尚未就绪。")
+            self._run_candidate_ai_summary(task_id, payload)
             return
         if kind == "intraday":
             self._run_intraday_sample(task_id, payload)
@@ -865,7 +920,13 @@ class UpdateService:
         self.data_service.refresh_capabilities()
         return results
 
-    def _run_analysis(self, task_id: str, config: Dict[str, Any], analysis_runner: Any) -> None:
+    def _run_analysis(
+        self,
+        task_id: str,
+        config: Dict[str, Any],
+        analysis_runner: Any,
+        run_id: Optional[str] = None,
+    ) -> None:
         try:
             def progress(stage: str, processed: int, total: int) -> None:
                 self._patch_task(
@@ -876,8 +937,12 @@ class UpdateService:
                     total=total,
                 )
 
-            run_id = analysis_runner.run(config, progress=progress)
+            run_id = analysis_runner.run(config, progress=progress, run_id=run_id, task_id=task_id)
             candidates = self.data_service.candidates(run_id, limit=1)
+            candidate_count = int(
+                self.db.scalar("SELECT COUNT(*) FROM candidate_results WHERE run_id = ?", [run_id])
+                or 0
+            )
             self._patch_task(
                 task_id,
                 status="completed_full",
@@ -887,7 +952,7 @@ class UpdateService:
                 success=1,
                 summary={
                     "analysis_run_id": run_id,
-                    "candidate_count": len(candidates.get("rows", [])),
+                    "candidate_count": candidate_count,
                     "zero_reason": candidates.get("zero_reason"),
                 },
                 finished_at=datetime.utcnow(),
@@ -900,6 +965,47 @@ class UpdateService:
                 failed=1,
                 error_message=str(exc),
                 warning=str(exc),
+                finished_at=datetime.utcnow(),
+            )
+
+    def _run_candidate_ai_summary(self, task_id: str, payload: Dict[str, Any]) -> None:
+        run_id = str(payload.get("run_id") or "")
+        code = str(payload.get("code") or "")
+        identity: Optional[Dict[str, Any]] = None
+        try:
+            self._patch_task(task_id, status="running", stage="生成候选解释", processed=0, total=1)
+            identity = self.candidate_summary_runner.prepare_from_result(run_id=run_id, code=code)
+            self.candidate_summary_runner.mark_running(identity, task_id=task_id)
+            result = self.candidate_summary_runner.generate_and_store(identity, task_id=task_id)
+            status = str(result.get("status") or "completed_full")
+            if status not in {"completed_full", "completed_partial"}:
+                status = "completed_full"
+            summary_payload = {
+                "run_id": run_id,
+                "code": code,
+                "input_hash": result.get("input_hash") or identity.get("input_hash"),
+                "fallback_reason": result.get("fallback_reason") or (result.get("summary") or {}).get("fallback_reason"),
+            }
+            self._patch_task(
+                task_id,
+                status=status,
+                stage="候选解释完成",
+                processed=1,
+                total=1,
+                success=1,
+                summary=summary_payload,
+                finished_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            if identity is not None:
+                self.candidate_summary_runner.mark_failed(identity, task_id=task_id, error_message=str(exc))
+            self._patch_task(
+                task_id,
+                status="failed",
+                stage="候选解释失败",
+                failed=1,
+                warning=str(exc),
+                error_message=str(exc),
                 finished_at=datetime.utcnow(),
             )
 

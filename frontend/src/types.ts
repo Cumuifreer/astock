@@ -2,7 +2,7 @@ export type TaskStatus = 'queued' | 'running' | 'completed_full' | 'completed_pa
 
 export interface TaskRun {
   id: string;
-  kind: 'update' | 'analyze' | 'backtest' | 'intraday' | 'brief';
+  kind: 'update' | 'analyze' | 'backtest' | 'intraday' | 'brief' | 'candidate_ai_summary';
   status: TaskStatus;
   stage: string | null;
   source: string | null;

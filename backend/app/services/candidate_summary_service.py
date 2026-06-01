@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -35,61 +36,213 @@ class CandidateSummaryService:
         matched_rules: Optional[List[Dict[str, Any]]] = None,
         risk_items: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        cached = self._cached(run_id, code)
-        if cached:
-            return cached
-        generated_at = datetime.utcnow().isoformat(timespec="seconds")
-        matched = matched_rules or []
-        risks = risk_items or []
-        if not self.api_key:
-            return _fallback_result(candidate, matched, risks, generated_at, "missing_api_key")
-        try:
-            result = self._call_llm(candidate, matched, risks)
-        except ValueError as exc:
-            return _fallback_result(candidate, matched, risks, generated_at, "invalid_response", str(exc))
-        except Exception as exc:
-            return _fallback_result(candidate, matched, risks, generated_at, "llm_error", str(exc))
-        result = {
-            "enabled": True,
-            "summary": str(result.get("summary") or result.get("ai_interpretation") or _fallback_summary(candidate, matched)),
-            "opportunities": _string_list(result.get("opportunities")) or _fallback_opportunities(candidate, matched),
-            "risks": _string_list(result.get("risks")) or _fallback_risks(candidate, risks),
-            "watch_plan": _string_list(result.get("watch_plan")) or _fallback_watch_plan(),
-            "generated_at": generated_at,
+        identity = self.prepare_summary_identity(run_id, code, candidate, matched_rules, risk_items)
+        cached = self.read_summary(run_id, code, input_hash=identity["input_hash"])
+        if cached.get("status") in {"completed_full", "completed_partial"} and cached.get("summary"):
+            return cached["summary"]
+        result = self.generate_and_store(identity)
+        return result.get("summary") or {}
+
+    def prepare_summary_identity(
+        self,
+        run_id: str,
+        code: str,
+        candidate: Dict[str, Any],
+        matched_rules: Optional[List[Dict[str, Any]]] = None,
+        risk_items: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        evidence = {
+            "candidate": _compact_candidate(candidate),
+            "matched_rules": (matched_rules or [])[:8],
+            "risk_items": (risk_items or [])[:8],
             "prompt_version": PROMPT_VERSION,
-            "fallback_reason": None,
-            "error_message": None,
+            "llm_model": self.model,
         }
+        input_hash = _stable_hash(evidence)
+        return {
+            "run_id": run_id,
+            "code": code,
+            "candidate": evidence["candidate"],
+            "matched_rules": evidence["matched_rules"],
+            "risk_items": evidence["risk_items"],
+            "prompt_version": PROMPT_VERSION,
+            "llm_model": self.model,
+            "input_hash": input_hash,
+            "evidence": evidence,
+        }
+
+    def prepare_from_result(self, run_id: str, code: str) -> Dict[str, Any]:
+        rows = self.db.query(
+            """
+            SELECT *
+            FROM candidate_results
+            WHERE run_id = ? AND code = ?
+            LIMIT 1
+            """,
+            [run_id, code],
+        )
+        candidate = {"code": code, "name": code, "reasons": [], "metrics": {}}
+        if rows:
+            row = rows[0]
+            metrics = _loads_json(row.get("metrics_json"))
+            candidate = {
+                "code": row.get("code") or code,
+                "name": row.get("name") or row.get("code") or code,
+                "signal_score": row.get("signal_score"),
+                "signal_type": row.get("signal_type"),
+                "latest_price": row.get("latest_price"),
+                "pct_chg": row.get("pct_chg"),
+                "amount": row.get("amount"),
+                "turnover_rate": row.get("turnover_rate"),
+                "float_market_value": row.get("float_market_value"),
+                "reasons": _loads_json(row.get("reasons_json"), fallback=[]),
+                "metrics": metrics,
+            }
+        metrics = candidate.get("metrics") if isinstance(candidate.get("metrics"), dict) else {}
+        matched_rules = metrics.get("matched_rules") if isinstance(metrics.get("matched_rules"), list) else []
+        risk_items = metrics.get("risk_items") if isinstance(metrics.get("risk_items"), list) else []
+        if matched_rules or risk_items:
+            return self.prepare_summary_identity(run_id, code, candidate, matched_rules, risk_items)
+
+        rule_results = metrics.get("strategy_rule_results")
+        if not isinstance(rule_results, list):
+            rule_results = []
+        matched_rules = [item for item in rule_results if isinstance(item, dict) and item.get("matched")]
+        risk_items = [
+            item
+            for item in rule_results
+            if isinstance(item, dict) and (item.get("action") == "risk" or item.get("missing") or item.get("reason"))
+        ]
+        return self.prepare_summary_identity(run_id, code, candidate, matched_rules, risk_items)
+
+    def read_summary(self, run_id: str, code: str, input_hash: Optional[str] = None) -> Dict[str, Any]:
+        rows = self.db.query(
+            """
+            SELECT *
+            FROM candidate_ai_summaries
+            WHERE run_id = ? AND code = ?
+            ORDER BY updated_at DESC NULLS LAST, generated_at DESC NULLS LAST
+            LIMIT 1
+            """,
+            [run_id, code],
+        )
+        if not rows:
+            return {"status": "not_requested", "run_id": run_id, "code": code, "summary": None}
+        row = rows[0]
+        summary = _loads_json(row.get("summary_json"))
+        prompt_version = row.get("prompt_version") or summary.get("prompt_version")
+        status = row.get("status") or "completed_full"
+        if prompt_version != PROMPT_VERSION:
+            status = "stale"
+        if input_hash and row.get("input_hash") != input_hash:
+            status = "stale"
+        return {
+            "status": status,
+            "task_id": row.get("task_id"),
+            "run_id": run_id,
+            "code": code,
+            "input_hash": row.get("input_hash"),
+            "prompt_version": prompt_version,
+            "llm_model": row.get("llm_model"),
+            "fallback_reason": row.get("fallback_reason"),
+            "error_message": row.get("error_message"),
+            "summary": summary or None,
+            "generated_at": row.get("generated_at"),
+            "updated_at": row.get("updated_at"),
+        }
+
+    def generate_and_store(self, identity: Dict[str, Any], task_id: Optional[str] = None) -> Dict[str, Any]:
+        generated_at = datetime.utcnow().isoformat(timespec="seconds")
+        candidate = identity["candidate"]
+        matched = identity["matched_rules"]
+        risks = identity["risk_items"]
+        if not self.api_key:
+            summary = _fallback_result(candidate, matched, risks, generated_at, "missing_api_key")
+            status = "completed_partial"
+        else:
+            try:
+                result = self._call_llm(candidate, matched, risks)
+                summary = _normalize_llm_result(result, candidate, matched, risks, generated_at)
+                status = "completed_full"
+            except ValueError as exc:
+                summary = _fallback_result(candidate, matched, risks, generated_at, "invalid_response", str(exc))
+                status = "completed_partial"
+            except Exception as exc:
+                summary = _fallback_result(candidate, matched, risks, generated_at, "llm_error", str(exc))
+                status = "completed_partial"
+        self.persist_summary(identity, summary, status=status, task_id=task_id)
+        return self.read_summary(identity["run_id"], identity["code"], input_hash=identity["input_hash"])
+
+    def persist_summary(
+        self,
+        identity: Dict[str, Any],
+        summary: Dict[str, Any],
+        status: str,
+        task_id: Optional[str] = None,
+    ) -> None:
+        now = datetime.utcnow().isoformat(timespec="seconds")
         self.db.upsert(
             "candidate_ai_summaries",
             [
                 {
-                    "run_id": run_id,
-                    "code": code,
-                    "summary_json": json.dumps(result, ensure_ascii=False),
+                    "run_id": identity["run_id"],
+                    "code": identity["code"],
+                    "status": status,
+                    "task_id": task_id,
+                    "input_hash": identity["input_hash"],
+                    "prompt_version": identity["prompt_version"],
+                    "evidence_json": json.dumps(identity.get("evidence") or {}, ensure_ascii=False),
+                    "summary_json": json.dumps(summary, ensure_ascii=False),
                     "llm_model": self.model,
-                    "generated_at": generated_at,
+                    "fallback_reason": summary.get("fallback_reason"),
+                    "error_message": summary.get("error_message"),
+                    "requested_at": now,
+                    "generated_at": summary.get("generated_at") or now,
+                    "updated_at": now,
                 }
             ],
             ["run_id", "code"],
         )
-        return result
 
-    def _cached(self, run_id: str, code: str) -> Optional[Dict[str, Any]]:
-        rows = self.db.query(
-            "SELECT summary_json, generated_at FROM candidate_ai_summaries WHERE run_id = ? AND code = ?",
-            [run_id, code],
+    def mark_queued(self, identity: Dict[str, Any], task_id: str) -> None:
+        self._mark_status(identity, status="queued", task_id=task_id)
+
+    def mark_running(self, identity: Dict[str, Any], task_id: str) -> None:
+        self._mark_status(identity, status="running", task_id=task_id)
+
+    def mark_failed(self, identity: Dict[str, Any], task_id: str, error_message: str) -> None:
+        self._mark_status(identity, status="failed", task_id=task_id, error_message=error_message)
+
+    def _mark_status(
+        self,
+        identity: Dict[str, Any],
+        status: str,
+        task_id: str,
+        error_message: Optional[str] = None,
+    ) -> None:
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        self.db.upsert(
+            "candidate_ai_summaries",
+            [
+                {
+                    "run_id": identity["run_id"],
+                    "code": identity["code"],
+                    "status": status,
+                    "task_id": task_id,
+                    "input_hash": identity["input_hash"],
+                    "prompt_version": identity["prompt_version"],
+                    "evidence_json": json.dumps(identity.get("evidence") or {}, ensure_ascii=False),
+                    "summary_json": None,
+                    "llm_model": self.model,
+                    "fallback_reason": None,
+                    "error_message": error_message,
+                    "requested_at": now,
+                    "generated_at": None,
+                    "updated_at": now,
+                }
+            ],
+            ["run_id", "code"],
         )
-        if not rows:
-            return None
-        try:
-            payload = json.loads(rows[0].get("summary_json") or "{}")
-        except json.JSONDecodeError:
-            return None
-        if payload.get("prompt_version") != PROMPT_VERSION:
-            return None
-        payload["generated_at"] = payload.get("generated_at") or rows[0].get("generated_at")
-        return payload
 
     def _call_llm(self, candidate: Dict[str, Any], matched_rules: List[Dict[str, Any]], risk_items: List[Dict[str, Any]]) -> Dict[str, Any]:
         metrics = candidate.get("metrics") if isinstance(candidate.get("metrics"), dict) else {}
@@ -176,6 +329,61 @@ def _compact_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
         "interpretation",
     ]
     return {key: metrics.get(key) for key in keep if key in metrics}
+
+
+def _compact_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    metrics = candidate.get("metrics") if isinstance(candidate.get("metrics"), dict) else {}
+    return {
+        "code": candidate.get("code"),
+        "name": candidate.get("name"),
+        "signal_score": candidate.get("signal_score"),
+        "signal_type": candidate.get("signal_type"),
+        "latest_price": candidate.get("latest_price"),
+        "pct_chg": candidate.get("pct_chg"),
+        "amount": candidate.get("amount"),
+        "turnover_rate": candidate.get("turnover_rate"),
+        "float_market_value": candidate.get("float_market_value"),
+        "reasons": candidate.get("reasons") or [],
+        "metrics": _compact_metrics(metrics),
+    }
+
+
+def _normalize_llm_result(
+    result: Dict[str, Any],
+    candidate: Dict[str, Any],
+    matched_rules: List[Dict[str, Any]],
+    risk_items: List[Dict[str, Any]],
+    generated_at: str,
+) -> Dict[str, Any]:
+    return {
+        "enabled": True,
+        "summary": str(result.get("summary") or result.get("ai_interpretation") or _fallback_summary(candidate, matched_rules)),
+        "opportunities": _string_list(result.get("opportunities")) or _fallback_opportunities(candidate, matched_rules),
+        "risks": _string_list(result.get("risks")) or _fallback_risks(candidate, risk_items),
+        "watch_plan": _string_list(result.get("watch_plan")) or _fallback_watch_plan(),
+        "generated_at": generated_at,
+        "prompt_version": PROMPT_VERSION,
+        "fallback_reason": None,
+        "error_message": None,
+    }
+
+
+def _stable_hash(value: Dict[str, Any]) -> str:
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _loads_json(value: Any, fallback: Optional[Any] = None) -> Any:
+    if fallback is None:
+        fallback = {}
+    if isinstance(value, (dict, list)):
+        return value
+    if not value:
+        return fallback
+    try:
+        return json.loads(str(value))
+    except json.JSONDecodeError:
+        return fallback
 
 
 def _fallback_result(

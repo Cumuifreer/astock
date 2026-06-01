@@ -1077,6 +1077,30 @@ class DataService:
         )
         return {"analysis": analysis, "candidates": self.candidates(run_id=run_id, limit=limit)}
 
+    def candidate_ai_summary(self, run_id: str, code: str) -> Dict[str, Any]:
+        from backend.app.services.candidate_summary_service import CandidateSummaryService
+
+        summary_service = CandidateSummaryService(self.db)
+        identity = summary_service.prepare_from_result(run_id=run_id, code=code)
+        result = summary_service.read_summary(run_id, code, input_hash=identity["input_hash"])
+        summary = result.get("summary")
+        response = dict(summary) if isinstance(summary, dict) else {"summary": None}
+        response.update(
+            {
+                "status": result.get("status"),
+                "task_id": result.get("task_id"),
+                "run_id": run_id,
+                "code": code,
+                "input_hash": result.get("input_hash") or identity.get("input_hash"),
+                "prompt_version": result.get("prompt_version") or identity.get("prompt_version"),
+                "fallback_reason": result.get("fallback_reason") or response.get("fallback_reason"),
+                "error_message": result.get("error_message") or response.get("error_message"),
+                "generated_at": result.get("generated_at") or response.get("generated_at"),
+                "updated_at": result.get("updated_at"),
+            }
+        )
+        return response
+
     def candidates(self, run_id: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
         target = run_id or self.db.scalar(
             "SELECT id FROM analysis_runs WHERE status LIKE 'completed%' ORDER BY started_at DESC LIMIT 1"

@@ -1,3 +1,6 @@
+import json
+from datetime import datetime
+
 from backend.app.db import Database
 from backend.app.schema import migrate
 from backend.app.services.candidate_summary_service import CandidateSummaryService
@@ -21,6 +24,51 @@ def test_candidate_summary_returns_rule_fallback_without_api_key(tmp_path):
     assert result["summary"].startswith("平安银行")
     assert result["opportunities"] == ["RPS 强", "量能确认"]
     assert result["prompt_version"]
+
+
+def test_candidate_summary_status_uses_input_hash_and_prompt_version(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = CandidateSummaryService(db, api_key="configured", model="model-a")
+
+    first = service.prepare_summary_identity(
+        run_id="run-1",
+        code="000001.SZ",
+        candidate={"code": "000001.SZ", "name": "平安银行", "reasons": ["RPS 强"], "metrics": {"volume_ratio": 1.8}},
+        matched_rules=[{"indicator_id": "rps20", "matched": True}],
+        risk_items=[],
+    )
+    second = service.prepare_summary_identity(
+        run_id="run-1",
+        code="000001.SZ",
+        candidate={"code": "000001.SZ", "name": "平安银行", "reasons": ["RPS 强"], "metrics": {"volume_ratio": 2.2}},
+        matched_rules=[{"indicator_id": "rps20", "matched": True}],
+        risk_items=[],
+    )
+
+    assert first["input_hash"] != second["input_hash"]
+    assert first["prompt_version"]
+
+
+def test_candidate_summary_persists_fallback_result(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = CandidateSummaryService(db, api_key="")
+
+    identity = service.prepare_summary_identity(
+        run_id="run-1",
+        code="000001.SZ",
+        candidate={"code": "000001.SZ", "name": "平安银行", "reasons": ["量能确认"], "metrics": {}},
+        matched_rules=[],
+        risk_items=[],
+    )
+    result = service.generate_and_store(identity, task_id="ai-summary-test")
+    cached = service.read_summary("run-1", "000001.SZ", input_hash=identity["input_hash"])
+
+    assert result["status"] == "completed_partial"
+    assert result["summary"]["fallback_reason"] == "missing_api_key"
+    assert cached["status"] == "completed_partial"
+    assert cached["task_id"] == "ai-summary-test"
 
 
 def test_candidate_summary_caches_llm_result(tmp_path, monkeypatch):
@@ -115,3 +163,64 @@ def test_candidate_summary_reports_invalid_response_fallback(tmp_path, monkeypat
     assert result["fallback_reason"] == "invalid_response"
     assert "bad json" in result["error_message"]
     assert result["summary"].startswith("平安银行")
+
+
+def test_candidate_summary_read_is_read_only(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = CandidateSummaryService(db, api_key="configured")
+
+    def fail_call(*_args, **_kwargs):
+        raise AssertionError("GET/read must not call LLM")
+
+    monkeypatch.setattr(service, "_call_llm", fail_call)
+
+    result = service.read_summary("run-1", "000001.SZ")
+
+    assert result["status"] == "not_requested"
+    assert result["summary"] is None
+
+
+def test_candidate_summary_prepares_authoritative_evidence_from_candidate_results(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    now = datetime.utcnow()
+    db.upsert(
+        "candidate_results",
+        [
+            {
+                "run_id": "run-1",
+                "rank": 1,
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "signal_score": 88.0,
+                "signal_type": "breakout",
+                "latest_price": 12.3,
+                "pct_chg": 2.1,
+                "amount": 120000000.0,
+                "turnover_rate": 3.2,
+                "float_market_value": 5000000000.0,
+                "data_sources": "{}",
+                "reasons_json": json.dumps(["RPS 强", "量能确认"], ensure_ascii=False),
+                "metrics_json": json.dumps(
+                    {
+                        "volume_ratio": 1.8,
+                        "matched_rules": [{"indicator_id": "rps20", "matched": True}],
+                        "risk_items": [{"indicator_id": "turnover", "reason": "换手偏高"}],
+                    },
+                    ensure_ascii=False,
+                ),
+                "created_at": now,
+            }
+        ],
+        ["run_id", "code"],
+    )
+    service = CandidateSummaryService(db, api_key="")
+
+    identity = service.prepare_from_result(run_id="run-1", code="000001.SZ")
+
+    assert identity["candidate"]["name"] == "平安银行"
+    assert identity["candidate"]["reasons"] == ["RPS 强", "量能确认"]
+    assert identity["candidate"]["metrics"]["volume_ratio"] == 1.8
+    assert identity["matched_rules"] == [{"indicator_id": "rps20", "matched": True}]
+    assert identity["risk_items"] == [{"indicator_id": "turnover", "reason": "换手偏高"}]

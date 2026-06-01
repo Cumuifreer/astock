@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getTaskFlow, getTaskProgressNodes, getTasks } from '../../api/data';
+import { queryKeys } from '../../api/queryKeys';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
 import { DataTable } from '../../design/DataTable';
 import { LoadingState } from '../../design/LoadingState';
 import { Progress } from '../../design/Progress';
 import { useBootstrap } from '../../hooks/useBootstrap';
+import { useTaskTerminalInvalidation } from '../../hooks/useTaskTerminalInvalidation';
 import { dateTimeToMs, formatChinaDateTime, formatDateTime } from '../../utils/date';
 import { flowProgress, normalizeRows, taskProgressValue } from '../../utils/metrics';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -20,19 +22,20 @@ export function StatusPage() {
   const [showMaintenance, setShowMaintenance] = useState(false);
   const bootstrap = useBootstrap();
   const activeTasks = useQuery({
-    queryKey: ['tasks', 'queued,running'],
+    queryKey: queryKeys.tasks.active(),
     queryFn: () => getTasks({ status: 'queued,running', limit: 50 }),
     refetchInterval: activeRefreshInterval,
   });
   const recentTasks = useQuery({
-    queryKey: ['tasks', 'recent'],
+    queryKey: queryKeys.tasks.recent(),
     queryFn: () => getTasks({ status: 'completed_full,completed_partial,failed', limit: 50 }),
     refetchInterval: activeRefreshInterval,
   });
   const fallbackTasks = [bootstrap.data?.update_status, bootstrap.data?.analyze_status, bootstrap.data?.backtest_status, bootstrap.data?.intraday_status, bootstrap.data?.brief_status].filter(Boolean) as TaskRun[];
   const activeRows = normalizeRows<TaskRun>(activeTasks.data);
   const recentRows = normalizeRows<TaskRun>(recentTasks.data);
-  const effectiveActiveRows = activeRows.length ? activeRows : fallbackTasks.filter((task) => ['queued', 'running'].includes(task.status));
+  const bootstrapActiveRows = fallbackTasks.filter((task) => ['queued', 'running'].includes(task.status));
+  const effectiveActiveRows = activeTasks.isSuccess ? activeRows : activeRows.length ? activeRows : bootstrapActiveRows;
   const runningTasks = effectiveActiveRows.filter((task) => task.status === 'running');
   const queuedTasks = effectiveActiveRows.filter((task) => task.status === 'queued');
   const failedTasks = recentRows.filter((task) => task.status === 'failed');
@@ -40,13 +43,13 @@ export function StatusPage() {
   const scheduler = bootstrap.data?.runtime_health?.scheduler;
   const llm = bootstrap.data?.runtime_health?.llm;
   const taskFlow = useQuery({
-    queryKey: ['task-flow', activeTask?.id],
+    queryKey: queryKeys.tasks.flow(activeTask?.id),
     queryFn: () => getTaskFlow(activeTask?.id || ''),
     enabled: Boolean(activeTask?.id && activeTask.kind === 'update'),
     refetchInterval: activeTask?.kind === 'update' ? activeRefreshInterval : false,
   });
   const progressNodes = useQuery({
-    queryKey: ['task-progress-nodes', activeTask?.id],
+    queryKey: queryKeys.tasks.progressNodes(activeTask?.id),
     queryFn: () => getTaskProgressNodes(activeTask?.id || ''),
     enabled: Boolean(activeTask?.id && activeTask.kind === 'update'),
     refetchInterval: activeTask?.kind === 'update' ? activeRefreshInterval : false,
@@ -69,6 +72,7 @@ export function StatusPage() {
     ],
     [],
   );
+  useTaskTerminalInvalidation(recentRows);
 
   if (bootstrap.isLoading || activeTasks.isLoading) return <LoadingState label="读取任务状态" />;
 
@@ -234,6 +238,7 @@ function systemLabel(task?: TaskRun | null) {
   if (task.kind === 'update') return task.status === 'queued' ? '等待同步' : '正在同步';
   if (task.kind === 'analyze') return task.status === 'queued' ? '等待分析' : '正在分析';
   if (task.kind === 'backtest') return task.status === 'queued' ? '等待回测' : '正在回测';
+  if (String(task.kind) === 'candidate_ai_summary') return task.status === 'queued' ? '等待解释' : '正在解释';
   return task.status === 'queued' ? '等待任务' : '正在运行';
 }
 
@@ -243,6 +248,7 @@ function kindLabel(kind?: string | null) {
   if (kind === 'backtest') return '回测';
   if (kind === 'intraday') return '盘中采样';
   if (kind === 'brief') return '市场简报';
+  if (kind === 'candidate_ai_summary') return '候选解释';
   return kind || '任务';
 }
 

@@ -413,6 +413,9 @@ MIGRATIONS = [
     )
     """,
     """
+    ALTER TABLE analysis_runs ADD COLUMN IF NOT EXISTS task_id TEXT
+    """,
+    """
     CREATE TABLE IF NOT EXISTS funnel_stats (
         run_id TEXT,
         order_index INTEGER,
@@ -466,11 +469,47 @@ MIGRATIONS = [
     CREATE TABLE IF NOT EXISTS candidate_ai_summaries (
         run_id TEXT,
         code TEXT,
+        status TEXT,
+        task_id TEXT,
+        input_hash TEXT,
+        prompt_version TEXT,
+        evidence_json TEXT,
         summary_json TEXT,
         llm_model TEXT,
+        fallback_reason TEXT,
+        error_message TEXT,
+        requested_at TIMESTAMP,
         generated_at TIMESTAMP,
+        updated_at TIMESTAMP,
         PRIMARY KEY (run_id, code)
     )
+    """,
+    """
+    ALTER TABLE candidate_ai_summaries ADD COLUMN IF NOT EXISTS status TEXT
+    """,
+    """
+    ALTER TABLE candidate_ai_summaries ADD COLUMN IF NOT EXISTS task_id TEXT
+    """,
+    """
+    ALTER TABLE candidate_ai_summaries ADD COLUMN IF NOT EXISTS input_hash TEXT
+    """,
+    """
+    ALTER TABLE candidate_ai_summaries ADD COLUMN IF NOT EXISTS prompt_version TEXT
+    """,
+    """
+    ALTER TABLE candidate_ai_summaries ADD COLUMN IF NOT EXISTS evidence_json TEXT
+    """,
+    """
+    ALTER TABLE candidate_ai_summaries ADD COLUMN IF NOT EXISTS fallback_reason TEXT
+    """,
+    """
+    ALTER TABLE candidate_ai_summaries ADD COLUMN IF NOT EXISTS error_message TEXT
+    """,
+    """
+    ALTER TABLE candidate_ai_summaries ADD COLUMN IF NOT EXISTS requested_at TIMESTAMP
+    """,
+    """
+    ALTER TABLE candidate_ai_summaries ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP
     """,
     """
     CREATE TABLE IF NOT EXISTS backtest_runs (

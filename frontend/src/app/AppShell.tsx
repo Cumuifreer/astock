@@ -1,16 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, MoreHorizontal, RefreshCw } from 'lucide-react';
 import { routes, type RouteId, findRoute } from './routes';
 import { Button } from '../design/Button';
 import { Badge } from '../design/Badge';
 import { LoadingState } from '../design/LoadingState';
 import { useToast } from '../design/Toast';
-import { syncToday, startUpdate } from '../api/data';
+import { syncToday, startUpdate, getTasks } from '../api/data';
+import { queryKeys } from '../api/queryKeys';
 import { startIntradaySnapshot } from '../api/intraday';
 import { useBootstrap } from '../hooks/useBootstrap';
-import { usePolling } from '../hooks/usePolling';
+import { useActiveTaskPolling } from '../hooks/useActiveTaskPolling';
+import { useTaskTerminalInvalidation } from '../hooks/useTaskTerminalInvalidation';
+import type { TaskRun } from '../types';
+import { normalizeRows } from '../utils/metrics';
 
 const productNavigationLabels = ['市场总览', '策略选股', '分析结果', '盘中雷达', '观察池', '回测', '数据中心', '任务状态'];
 
@@ -21,13 +25,19 @@ export function AppShell() {
   const bootstrap = useBootstrap();
   const selectedRoute = findRoute(activeRoute);
   const Page = selectedRoute.component;
-  const taskActive = useMemo(() => {
-    const data = bootstrap.data;
-    return [data?.update_status, data?.analyze_status, data?.backtest_status, data?.intraday_status].some((task) =>
-      task ? ['queued', 'running'].includes(task.status) : false,
-    );
-  }, [bootstrap.data]);
-  usePolling(taskActive, [['bootstrap'], ['runtime-health'], ['market-overview']], 2600);
+  const activeTasks = useQuery({
+    queryKey: queryKeys.tasks.active(),
+    queryFn: () => getTasks({ status: 'queued,running', limit: 50 }),
+    refetchInterval: (query) => (hasActiveRows(normalizeRows<TaskRun>(query.state.data as { rows?: TaskRun[] } | TaskRun[] | undefined)) ? 2600 : false),
+  });
+  const activeRows = normalizeRows<TaskRun>(activeTasks.data);
+  const taskActive = useActiveTaskPolling(bootstrap.data, activeRows);
+  const recentTasks = useQuery({
+    queryKey: queryKeys.tasks.recent(),
+    queryFn: () => getTasks({ status: 'completed_full,completed_partial,failed', limit: 50 }),
+    refetchInterval: taskActive ? 2600 : false,
+  });
+  useTaskTerminalInvalidation(normalizeRows<TaskRun>(recentTasks.data));
 
   const invalidate = () => {
     void queryClient.invalidateQueries();
@@ -148,6 +158,10 @@ export function AppShell() {
       </main>
     </div>
   );
+}
+
+function hasActiveRows(rows: TaskRun[]) {
+  return rows.some((task) => ['queued', 'running'].includes(task.status));
 }
 
 function parseRouteHash(hash: string): RouteId {

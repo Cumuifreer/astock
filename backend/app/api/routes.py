@@ -30,7 +30,7 @@ backtest_service = BacktestService(db, analysis_service)
 intraday_service = IntradayRadarService(db)
 watchlist_service = WatchlistService(db)
 candidate_summary_service = CandidateSummaryService(db)
-update_service.configure_runners(analysis_service, backtest_service)
+update_service.configure_runners(analysis_service, backtest_service, candidate_summary_service)
 update_service.recover_interrupted_tasks()
 update_service.kick_queue()
 
@@ -330,10 +330,10 @@ def start_analyze(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         config["name"] = name
         config["preset_name"] = name
     try:
-        task_id = update_service.start_analysis(config, analysis_service)
+        task_id, run_id = update_service.start_analysis(config, analysis_service)
     except TaskBusy as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return {"task_id": task_id, "status": "queued"}
+    return {"task_id": task_id, "run_id": run_id, "status": "queued"}
 
 
 @router.get("/status/analyze")
@@ -393,6 +393,11 @@ def analysis_report(
     return report
 
 
+@router.get("/analysis/candidates/{run_id}/{code}/ai-summary")
+def get_candidate_ai_summary(run_id: str, code: str) -> Dict[str, Any]:
+    return data_service.candidate_ai_summary(run_id=run_id, code=code)
+
+
 @router.post("/analysis/candidates/{run_id}/{code}/ai-summary")
 def candidate_ai_summary(run_id: str, code: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     report = data_service.analysis_report(run_id=run_id, limit=300)
@@ -407,6 +412,21 @@ def candidate_ai_summary(run_id: str, code: str, payload: Optional[Dict[str, Any
         matched_rules=((payload or {}).get("matched_rules") if isinstance(payload, dict) else None),
         risk_items=((payload or {}).get("risk_items") if isinstance(payload, dict) else None),
     )
+
+
+@router.post("/tasks/candidate-ai-summary")
+def start_candidate_ai_summary(payload: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        task_id, identity = update_service.start_candidate_ai_summary(payload, candidate_summary_service)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "task_id": task_id,
+        "run_id": identity["run_id"],
+        "code": identity["code"],
+        "input_hash": identity["input_hash"],
+        "status": identity.get("status") or "queued",
+    }
 
 
 @router.get("/backtests")

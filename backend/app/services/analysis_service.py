@@ -2073,8 +2073,14 @@ class AnalysisService:
     def __init__(self, db: Database):
         self.db = db
 
-    def run(self, config: Dict[str, Any], progress: Optional[AnalysisProgress] = None) -> str:
-        run_id = f"analysis-{uuid.uuid4().hex[:12]}"
+    def run(
+        self,
+        config: Dict[str, Any],
+        progress: Optional[AnalysisProgress] = None,
+        run_id: Optional[str] = None,
+        task_id: Optional[str] = None,
+    ) -> str:
+        run_id = run_id or f"analysis-{uuid.uuid4().hex[:12]}"
         strategy = normalize_strategy_config(config)
         strategy_name = _strategy_name(strategy)
         strategy.setdefault("strategy_name", strategy_name)
@@ -2091,6 +2097,7 @@ class AnalysisService:
                     "config_json": json.dumps(strategy, ensure_ascii=False),
                     "summary_json": "{}",
                     "error_message": None,
+                    "task_id": task_id,
                 }
             ],
             ["id"],
@@ -2123,6 +2130,7 @@ class AnalysisService:
                         "config_json": json.dumps(strategy, ensure_ascii=False),
                         "summary_json": json.dumps(summary, ensure_ascii=False),
                         "error_message": None,
+                        "task_id": task_id,
                     }
                 ],
                 ["id"],
@@ -2234,7 +2242,10 @@ class AnalysisService:
         _emit_analysis_progress(progress, "计算技术形态", 4)
         output = []
         analysis_engines = set(strategy.get("analysis_engines") or [])
-        for code, group in bars.groupby("code"):
+        stock_count = int(bars["code"].nunique()) if "code" in bars else 0
+        for index, (code, group) in enumerate(bars.groupby("code"), start=1):
+            if progress and (index == 1 or index % 250 == 0 or index == stock_count):
+                _emit_analysis_progress(progress, f"计算技术形态 {index}/{stock_count}", 4)
             group = group.sort_values("date")
             latest_bar = group.iloc[-1].to_dict()
             if target_date and _date_value(latest_bar.get("date")) != target_date:

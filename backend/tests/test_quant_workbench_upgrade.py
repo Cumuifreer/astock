@@ -772,7 +772,7 @@ def test_analyze_route_preserves_strategy_name(tmp_path, monkeypatch):
     class FakeUpdateService:
         def start_analysis(self, config, runner):
             calls.append(config)
-            return "analyze-test"
+            return "analyze-test", "analysis-test"
 
     monkeypatch.setattr(routes, "update_service", FakeUpdateService())
     client = TestClient(routes.router)
@@ -783,7 +783,7 @@ def test_analyze_route_preserves_strategy_name(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert response.json()["task_id"] == "analyze-test"
+    assert response.json() == {"task_id": "analyze-test", "run_id": "analysis-test", "status": "queued"}
     assert calls[0]["strategy_name"] == "右侧突破"
     assert calls[0]["name"] == "右侧突破"
     assert calls[0]["preset_name"] == "右侧突破"
@@ -815,6 +815,46 @@ def test_backtest_lab_routes_enqueue_long_running_jobs(tmp_path, monkeypatch):
     assert portfolio.json() == {"task_id": "task-portfolio", "run_id": "portfolio-test", "status": "queued"}
     assert calls[0][0] == "signal"
     assert calls[1][0] == "portfolio"
+
+
+def test_candidate_ai_summary_routes_split_read_and_task_start(tmp_path, monkeypatch):
+    routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
+
+    class FakeDataService:
+        def candidate_ai_summary(self, run_id, code):
+            return {"status": "not_requested", "run_id": run_id, "code": code, "summary": None}
+
+    class FakeUpdateService:
+        def start_candidate_ai_summary(self, payload, runner):
+            assert runner is routes.candidate_summary_service
+            assert payload == {"run_id": "run-1", "code": "000001.SZ"}
+            return "ai-summary-test", {
+                "run_id": "run-1",
+                "code": "000001.SZ",
+                "input_hash": "hash-1",
+                "status": "queued",
+            }
+
+    monkeypatch.setattr(routes, "data_service", FakeDataService())
+    monkeypatch.setattr(routes, "update_service", FakeUpdateService())
+    client = TestClient(routes.router)
+
+    read = client.get("/api/analysis/candidates/run-1/000001.SZ/ai-summary")
+    started = client.post("/api/tasks/candidate-ai-summary", json={"run_id": "run-1", "code": "000001.SZ"})
+
+    assert read.status_code == 200
+    assert read.json()["status"] == "not_requested"
+    assert read.json()["run_id"] == "run-1"
+    assert read.json()["code"] == "000001.SZ"
+    assert read.json()["summary"] is None
+    assert started.status_code == 200
+    assert started.json() == {
+        "task_id": "ai-summary-test",
+        "run_id": "run-1",
+        "code": "000001.SZ",
+        "input_hash": "hash-1",
+        "status": "queued",
+    }
 
 
 def test_source_diagnostics_reports_tushare_configuration_and_fallbacks(tmp_path, monkeypatch):

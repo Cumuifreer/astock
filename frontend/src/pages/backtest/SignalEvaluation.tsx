@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { Activity, Play } from 'lucide-react';
 import { getSignalEvaluation, runSignalEvaluation } from '../../api/backtest';
+import { queryKeys } from '../../api/queryKeys';
 import type { StrategyConfig } from '../../types';
 import { Button } from '../../design/Button';
 import { Badge } from '../../design/Badge';
 import { CheckTile } from '../../design/CheckTile';
 import { useToast } from '../../design/Toast';
+import { useTaskResultQuery } from '../../hooks/useTaskResultQuery';
 import { strategySummary } from '../../utils/strategy';
 import { formatPercent, formatRatio, toNumber } from '../../utils/format';
 import { todayISO } from '../../utils/date';
@@ -37,14 +39,12 @@ export function SignalEvaluation({ config, strategyName }: { config: StrategyCon
     },
     onError: (error) => showToast(error instanceof Error ? error.message : '回测任务启动失败', 'danger'),
   });
-  const result = useQuery({
-    queryKey: ['signal-evaluation', mutation.data?.runId],
+  const result = useTaskResultQuery({
+    queryKey: queryKeys.backtest.signalEvaluation(mutation.data?.runId),
     queryFn: () => getSignalEvaluation(mutation.data?.runId || ''),
     enabled: Boolean(mutation.data?.runId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.run?.status;
-      return status === 'queued' || status === 'running' ? 2600 : false;
-    },
+    initialStatus: mutation.data?.status,
+    getResultStatus: (data) => data?.run?.status,
   });
   const summary = (result.data?.run?.summary || {}) as Record<string, unknown>;
   const queued = mutation.data && !result.data?.run?.summary;

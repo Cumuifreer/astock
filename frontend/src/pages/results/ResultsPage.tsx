@@ -28,17 +28,21 @@ export function ResultsPage() {
     [reports.data],
   );
   const [selectedRunId, setSelectedRunId] = useState<string>('');
+  const [manualRunSelection, setManualRunSelection] = useState(false);
   const [selected, setSelected] = useState<Candidate | null>(null);
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('signal_score');
-  const latestRunId = getLatestRunId(bootstrap.data?.candidates) || flattenedReports[0]?.id || '';
+  const latestRunId = flattenedReports[0]?.id || getLatestRunId(bootstrap.data?.candidates) || '';
   const reportDetail = useQuery({
     queryKey: ['result-report', selectedRunId],
     queryFn: () => getAnalysisReport(selectedRunId),
     enabled: Boolean(selectedRunId),
   });
-  const activeCandidates = reportDetail.data?.candidates?.rows || bootstrap.data?.candidates?.rows || [];
-  const activeReport = reportDetail.data?.analysis || bootstrap.data?.latest_analysis || flattenedReports.find((report) => report.id === selectedRunId) || null;
+  const selectedIsLatest = Boolean(selectedRunId && selectedRunId === latestRunId);
+  const bootstrapCandidateRows = getLatestRunId(bootstrap.data?.candidates) === selectedRunId ? bootstrap.data?.candidates?.rows : undefined;
+  const bootstrapLatestReport = bootstrap.data?.latest_analysis?.id === selectedRunId ? bootstrap.data.latest_analysis : null;
+  const activeCandidates = reportDetail.data?.candidates?.rows || (selectedIsLatest ? bootstrapCandidateRows : []) || [];
+  const activeReport = reportDetail.data?.analysis || (selectedIsLatest ? bootstrapLatestReport : null) || flattenedReports.find((report) => report.id === selectedRunId) || null;
   const activeReportDate = reportDateValue(activeReport);
   const observedCodes = useMemo(
     () => new Set((bootstrap.data?.watchlist?.batches || []).flatMap((batch) => batch.items.map((item) => item.code))),
@@ -86,8 +90,9 @@ export function ResultsPage() {
   });
 
   useEffect(() => {
-    if (!selectedRunId && latestRunId) setSelectedRunId(latestRunId);
-  }, [latestRunId, selectedRunId]);
+    if (!latestRunId || manualRunSelection) return;
+    setSelectedRunId(latestRunId);
+  }, [latestRunId, manualRunSelection]);
 
   useEffect(() => {
     setSelected(filteredCandidates[0] || null);
@@ -122,7 +127,11 @@ export function ResultsPage() {
           <Select
             label="当前报告"
             value={selectedRunId || reportOptions[0].value}
-            onChange={(value) => value !== 'none' && setSelectedRunId(value)}
+            onChange={(value) => {
+              if (value === 'none') return;
+              setManualRunSelection(value !== latestRunId);
+              setSelectedRunId(value);
+            }}
             options={reportOptions}
           />
           <label className="search-box">
