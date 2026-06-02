@@ -830,8 +830,9 @@ def test_bootstrap_and_daily_brief_gets_do_not_enqueue_brief_tasks(tmp_path, mon
         def ensure_daily_brief(self):
             raise AssertionError("GET endpoints must not enqueue daily brief tasks")
 
-        def start_daily_brief(self, *_args, **_kwargs):
-            raise AssertionError("manual daily brief generation is disabled")
+        def start_daily_brief(self, payload):
+            assert payload == {}
+            return "brief-task"
 
     class FakeDataService:
         def source_diagnostics(self):
@@ -894,7 +895,8 @@ def test_bootstrap_and_daily_brief_gets_do_not_enqueue_brief_tasks(tmp_path, mon
     assert brief_response.json() == {"brief": None, "task": None}
 
     regenerate_response = client.post("/api/daily-brief/regenerate", json={})
-    assert regenerate_response.status_code == 410
+    assert regenerate_response.status_code == 200
+    assert regenerate_response.json() == {"task_id": "brief-task", "status": "queued"}
 
 
 def test_app_startup_does_not_enqueue_daily_brief(monkeypatch):
@@ -911,14 +913,14 @@ def test_app_startup_does_not_enqueue_daily_brief(monkeypatch):
             self.started = False
 
         def start(self):
-            if self.name == "brief":
-                raise AssertionError("startup must not start daily brief scheduler")
             self.started = True
             return None
 
     monkeypatch.setattr(main_module, "update_service", FakeUpdateService())
     intraday_scheduler = FakeScheduler("intraday")
+    brief_scheduler = FakeScheduler("brief")
     monkeypatch.setattr(main_module, "intraday_scheduler", intraday_scheduler)
+    monkeypatch.setattr(main_module, "daily_brief_scheduler", brief_scheduler, raising=False)
     monkeypatch.setattr(
         main_module,
         "settings",
@@ -927,7 +929,7 @@ def test_app_startup_does_not_enqueue_daily_brief(monkeypatch):
 
     main_module.start_schedulers()
     assert intraday_scheduler.started is True
-    assert not hasattr(main_module, "daily_brief_scheduler")
+    assert brief_scheduler.started is True
 
 
 def test_analyze_route_preserves_strategy_name(tmp_path, monkeypatch):

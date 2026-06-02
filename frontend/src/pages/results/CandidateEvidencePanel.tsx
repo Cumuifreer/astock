@@ -1,8 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import type { Candidate } from '../../types';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
-import { getCandidateAiSummary, startCandidateAiSummary } from '../../api/strategy';
+import { getCandidateAiSummary } from '../../api/strategy';
 import { queryKeys } from '../../api/queryKeys';
 import type { CandidateAiSummary, CandidateAiSummaryContent, CandidateAiSummaryStatus } from '../../api/strategy';
 import { addWatchlistItems } from '../../api/watchlist';
@@ -18,7 +18,6 @@ type CandidateEvidencePanelProps = {
 
 export function CandidateEvidencePanel({ candidate, runId, strategyName, analysisDate }: CandidateEvidencePanelProps) {
   const { showToast } = useToast();
-  const queryClient = useQueryClient();
   const ruleResults = candidate ? extractRuleResults(candidate) : [];
   const matchedRules = ruleResults
     .filter((item) => item.matched)
@@ -40,28 +39,6 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName, analysi
     enabled: Boolean(candidate && runId),
     refetchInterval: (query) => (isAiSummaryActive(query.state.data as CandidateAiSummary | undefined) ? 2600 : false),
     staleTime: 30 * 1000,
-  });
-  const aiMutation = useMutation({
-    mutationFn: ({ runId: targetRunId, code, force }: { runId: string; code: string; force: boolean }) =>
-      startCandidateAiSummary(targetRunId, code, force),
-    onSuccess: (result, variables) => {
-      const targetRunId = result.run_id || variables.runId;
-      const targetCode = result.code || variables.code;
-      if (targetRunId && targetCode) {
-        queryClient.setQueryData<CandidateAiSummary>(queryKeys.analysis.candidateAiSummary(targetRunId, targetCode), (current) => ({
-          ...(current || {}),
-          status: (result.status as CandidateAiSummaryStatus) || 'queued',
-          task_id: result.task_id,
-          run_id: targetRunId,
-          code: targetCode,
-          input_hash: result.input_hash || current?.input_hash || null,
-        }));
-        void queryClient.invalidateQueries({ queryKey: queryKeys.analysis.candidateAiSummary(targetRunId, targetCode) });
-      }
-      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all() });
-      showToast('候选解释已加入任务队列', 'success');
-    },
-    onError: (error) => showToast(error instanceof Error ? error.message : '候选解释任务启动失败', 'danger'),
   });
   const addMutation = useMutation({
     mutationFn: () =>
@@ -109,10 +86,9 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName, analysi
   const aiText = typeof aiContent.summary === 'string' ? aiContent.summary : null;
   const useAiEvidence = Boolean(aiText && (aiStatus === 'completed_full' || aiStatus === 'completed_partial'));
   const aiReady = Boolean(aiText && aiStatus === 'completed_full');
-  const aiBusy = aiMutation.isPending || aiStatus === 'queued' || aiStatus === 'running';
   const primaryExplanation = useAiEvidence
     ? [aiText || '']
-    : [fallbackExplanation(aiStatus, aiContent.fallback_reason, aiContent.error_message, aiSummary.isError || aiMutation.isError)];
+    : [fallbackExplanation(aiStatus, aiContent.fallback_reason, aiContent.error_message, aiSummary.isError)];
   const opportunityItems =
     useAiEvidence && aiContent.opportunities?.length ? aiContent.opportunities : candidate.reasons?.length ? candidate.reasons : matchedRules;
   const riskItems = useAiEvidence && aiContent.risks?.length
@@ -123,7 +99,6 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName, analysi
   const watchPlan = useAiEvidence && aiContent.watch_plan?.length
     ? aiContent.watch_plan
     : ['观察 1-3 个交易日的量价延续', '失效条件：跌破 5 日线或放量跌破平台', '复盘 T+1 / T+3 / T+5 收益'];
-  const forceGenerate = aiStatus === 'completed_full' || aiStatus === 'completed_partial' || aiStatus === 'failed' || aiStatus === 'stale';
 
   return (
     <section className="surface pad">
@@ -145,9 +120,6 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName, analysi
       <div className="button-row" aria-label="可操作动作" style={{ marginTop: 16 }}>
         <Button disabled={addMutation.isPending} onClick={() => addMutation.mutate()} variant="primary">
           加入观察池
-        </Button>
-        <Button disabled={!runId || aiBusy} onClick={() => runId && aiMutation.mutate({ runId, code: candidate.code, force: forceGenerate })} variant="secondary">
-          {generateButtonLabel(aiStatus)}
         </Button>
         {candidate.chart_url ? (
           <Button onClick={() => window.open(candidate.chart_url, '_blank', 'noopener,noreferrer')} variant="secondary">
@@ -182,12 +154,6 @@ function isAiSummaryActive(data?: CandidateAiSummary) {
   return data?.status === 'queued' || data?.status === 'running';
 }
 
-function generateButtonLabel(status?: CandidateAiSummaryStatus) {
-  if (status === 'failed') return '重试';
-  if (status === 'completed_full' || status === 'completed_partial' || status === 'stale') return '重新生成';
-  return '生成解释';
-}
-
 function EvidenceBlock({ title, items }: { title: string; items: string[] }) {
   return (
     <article className="rule-card evidence-block">
@@ -214,7 +180,7 @@ function fallbackExplanation(
   if (status === 'running') return '候选解释生成中，当前先显示规则证据。';
   if (status === 'stale') return '候选解释已过期，当前显示规则证据。';
   if (status === 'failed') return errorMessage ? `候选解释生成失败，当前显示规则证据：${errorMessage}` : '候选解释生成失败，当前显示规则证据。';
-  if (status === 'not_requested') return '点击生成解释后，将在此显示 AI 解读；当前显示规则证据。';
+  if (status === 'not_requested') return 'AI 解读由后台自动生成，当前显示规则证据。';
   if (reason === 'missing_api_key') return '模型未启用，当前显示规则证据。';
   if (reason === 'llm_error') return errorMessage ? `模型请求失败，当前显示规则证据：${errorMessage}` : '模型请求失败，当前显示规则证据。';
   if (reason === 'invalid_response') return '模型返回格式异常，当前显示规则证据。';

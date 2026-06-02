@@ -38,7 +38,17 @@ class DailyBriefScheduler:
             self._thread.join(timeout=2)
 
     def tick(self, now: Optional[datetime] = None) -> Optional[str]:
-        return None
+        current = now or datetime.now(CHINA_TZ)
+        current = current.astimezone(CHINA_TZ) if current.tzinfo else current.replace(tzinfo=CHINA_TZ)
+        due_slots = [
+            current.replace(hour=item.hour, minute=item.minute, second=0, microsecond=0)
+            for item in self.schedule_times
+            if current >= current.replace(hour=item.hour, minute=item.minute, second=0, microsecond=0)
+        ]
+        if not due_slots:
+            return None
+        slot = due_slots[-1]
+        return self.update_service.start_scheduled_daily_brief(slot.replace(tzinfo=None))
 
     def _run(self) -> None:
         while not self._stop.is_set():

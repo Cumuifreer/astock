@@ -995,10 +995,42 @@ class UpdateService:
         return None
 
     def start_daily_brief(self, options: Optional[Dict[str, Any]] = None) -> str:
-        raise RuntimeError("资讯简报生成已禁用；只读取 DuckDB 已有简报。")
+        payload = options or {}
+        with self._queue_lock:
+            existing = self._active_task_for_payload("brief", payload)
+            if existing:
+                return str(existing["id"])
+            task_id = f"brief-{uuid.uuid4().hex[:12]}"
+            self._enqueue_task(
+                task_id,
+                kind="brief",
+                stage="准备资讯简报",
+                source="新闻资讯 + LLM",
+                summary={"scheduled": bool(payload.get("scheduled")), "report_date": payload.get("report_date")},
+                payload=payload,
+            )
+            return task_id
 
     def start_scheduled_daily_brief(self, scheduled_at: datetime) -> Optional[str]:
-        return None
+        slot = scheduled_at.replace(second=0, microsecond=0)
+        brief_date = slot.date()
+        task_id = f"brief-auto-{brief_date:%Y%m%d}-{slot:%H%M}"
+        if self.db.scalar("SELECT id FROM task_runs WHERE id = ?", [task_id]):
+            return None
+        schedule_key = slot.strftime("%Y-%m-%d %H:%M")
+        self._enqueue_task(
+            task_id,
+            kind="brief",
+            stage="准备资讯简报",
+            source="新闻资讯 + LLM",
+            summary={"scheduled": True, "schedule_key": schedule_key, "report_date": brief_date.isoformat()},
+            payload={
+                "scheduled": True,
+                "report_date": brief_date.isoformat(),
+                "schedule_key": schedule_key,
+            },
+        )
+        return task_id
 
     def _enqueue_task(
         self,
@@ -1216,6 +1248,7 @@ class UpdateService:
                 self.db.scalar("SELECT COUNT(*) FROM candidate_results WHERE run_id = ?", [run_id])
                 or 0
             )
+            ai_task_count = self._enqueue_candidate_ai_summaries_for_run(run_id)
             self._patch_task(
                 task_id,
                 status="completed_full",
@@ -1226,6 +1259,7 @@ class UpdateService:
                 summary={
                     "analysis_run_id": run_id,
                     "candidate_count": candidate_count,
+                    "candidate_ai_task_count": ai_task_count,
                     "zero_reason": candidates.get("zero_reason"),
                 },
                 finished_at=datetime.utcnow(),
@@ -1240,6 +1274,34 @@ class UpdateService:
                 warning=str(exc),
                 finished_at=datetime.utcnow(),
             )
+
+    def _enqueue_candidate_ai_summaries_for_run(self, run_id: str) -> int:
+        if self.candidate_summary_runner is None:
+            return 0
+        rows = self.db.query(
+            """
+            SELECT code
+            FROM candidate_results
+            WHERE run_id = ?
+            ORDER BY rank NULLS LAST, code
+            """,
+            [run_id],
+        )
+        queued = 0
+        for row in rows:
+            code = str(row.get("code") or "")
+            if not code:
+                continue
+            try:
+                task_id, _identity = self.start_candidate_ai_summary(
+                    {"run_id": run_id, "code": code, "force": False},
+                    self.candidate_summary_runner,
+                )
+                if task_id:
+                    queued += 1
+            except Exception as exc:
+                logger.warning("Candidate AI summary auto-enqueue failed for %s/%s: %s", run_id, code, exc)
+        return queued
 
     def _run_candidate_ai_summary(self, task_id: str, payload: Dict[str, Any]) -> None:
         run_id = str(payload.get("run_id") or "")
@@ -3228,17 +3290,42 @@ class UpdateService:
             )
 
     def _run_daily_brief(self, task_id: str, options: Dict[str, Any]) -> None:
-        message = "资讯简报生成已禁用；只读取 DuckDB 已有简报。"
-        self._patch_task(
-            task_id,
-            status="failed",
-            stage="资讯简报已禁用",
-            source="本地仓库",
-            failed=1,
-            error_message=message,
-            warning=message,
-            finished_at=datetime.utcnow(),
-        )
+        report_date = None
+        if options.get("report_date"):
+            report_date = date.fromisoformat(str(options["report_date"])[:10])
+        try:
+            def progress(stage: str, processed: int, total: int) -> None:
+                self._patch_task(
+                    task_id,
+                    status="running",
+                    stage=stage,
+                    source="新闻资讯 + LLM",
+                    processed=processed,
+                    total=total,
+                )
+
+            summary = self.daily_brief_service.generate(report_date=report_date, progress=progress)
+            self._patch_task(
+                task_id,
+                status=summary.get("status") or "completed_partial",
+                stage="资讯简报完成",
+                source="新闻资讯 + LLM",
+                success=1 if summary.get("article_count") else 0,
+                failed=0,
+                warning=summary.get("visible_warning"),
+                summary=summary,
+                finished_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            self._patch_task(
+                task_id,
+                status="failed",
+                stage="资讯简报失败",
+                failed=1,
+                error_message=str(exc),
+                warning=str(exc),
+                finished_at=datetime.utcnow(),
+            )
 
     def _fetch_intraday_snapshot_frame(
         self,

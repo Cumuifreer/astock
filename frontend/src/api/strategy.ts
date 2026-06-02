@@ -74,20 +74,8 @@ export type CandidateAiSummary = {
   error_message?: string | null;
 };
 
-export type CandidateAiSummaryTask = {
-  task_id: string;
-  run_id: string;
-  code: string;
-  input_hash?: string | null;
-  status: string;
-};
-
 export function getCandidateAiSummary(runId: string, code: string): Promise<CandidateAiSummary> {
   return request<CandidateAiSummary>(`/api/analysis/candidates/${encodeURIComponent(runId)}/${encodeURIComponent(code)}/ai-summary`);
-}
-
-export function startCandidateAiSummary(runId: string, code: string, force = false): Promise<CandidateAiSummaryTask> {
-  return post<CandidateAiSummaryTask>('/api/tasks/candidate-ai-summary', { run_id: runId, code, force });
 }
 
 export function saveStrategy(payload: Record<string, unknown>): Promise<{ preset: StrategyPreset }> {

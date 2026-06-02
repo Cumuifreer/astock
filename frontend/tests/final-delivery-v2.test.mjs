@@ -65,7 +65,7 @@ test('strategy page uses a default full indicator matrix instead of factor picke
   assert.match(matrix, /已启用指标/);
 });
 
-test('analysis results display strategy names and explicit candidate explanation controls', () => {
+test('analysis results display strategy names and automatic candidate explanations', () => {
   const results = read('pages/results/ResultsPage.tsx');
   assert.match(results, /activeStrategyName|strategyLabel/);
   assert.match(results, /strategy_name/);
@@ -78,9 +78,9 @@ test('analysis results display strategy names and explicit candidate explanation
   assert.doesNotMatch(panel, /未配置模型，以下先按规则证据生成解释。/);
   assert.doesNotMatch(panel, /AI 解读 \/ 规则解释/);
   assert.match(panel, /useQuery/);
-  assert.match(panel, /useMutation/);
   assert.match(panel, /getCandidateAiSummary/);
-  assert.match(panel, /startCandidateAiSummary/);
+  assert.doesNotMatch(panel, /startCandidateAiSummary|generateButtonLabel|生成解释|重新生成|重试/);
+  assert.match(panel, /后台自动生成/);
   assert.doesNotMatch(panel, /技术明细|Dialog|AI 解读暂未启用/);
   assert.doesNotMatch(panel, /开发者详情/);
   assert.doesNotMatch(panel, /window\.alert/);

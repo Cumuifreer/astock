@@ -255,8 +255,9 @@ def daily_brief() -> Dict[str, Any]:
 
 
 @router.post("/daily-brief/regenerate")
-def regenerate_daily_brief(payload: Optional[Dict[str, Any]] = None) -> JSONResponse:
-    return JSONResponse(status_code=410, content={"detail": "资讯简报生成已禁用；此接口只保留读取本地 DuckDB 已有简报。"})
+def regenerate_daily_brief(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    task_id = update_service.start_daily_brief(payload or {})
+    return {"task_id": task_id, "status": "queued"}
 
 
 @router.get("/watchlist")

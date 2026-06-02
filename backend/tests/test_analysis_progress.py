@@ -111,6 +111,104 @@ def test_update_service_analysis_task_uses_progress_callback(tmp_path):
     assert patches[-1]["total"] == 7
 
 
+def test_analysis_task_auto_enqueues_candidate_ai_summaries_after_run(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+
+    class NoopExecutor:
+        def submit(self, *args, **kwargs):
+            return None
+
+    class AnalysisRunner:
+        def run(self, config, progress=None, run_id=None, task_id=None):
+            assert task_id == "analyze-test"
+            run_id = run_id or "run-1"
+            db.upsert(
+                "candidate_results",
+                [
+                    {
+                        "run_id": run_id,
+                        "rank": 1,
+                        "code": "000001.SZ",
+                        "name": "平安银行",
+                        "signal_score": 88,
+                        "reasons_json": json.dumps(["放量突破"], ensure_ascii=False),
+                        "metrics_json": json.dumps({"strategy_rule_results": [{"indicator_name": "量能", "matched": True}]}, ensure_ascii=False),
+                        "created_at": datetime.utcnow(),
+                    },
+                    {
+                        "run_id": run_id,
+                        "rank": 2,
+                        "code": "000002.SZ",
+                        "name": "万科A",
+                        "signal_score": 82,
+                        "reasons_json": json.dumps(["趋势延续"], ensure_ascii=False),
+                        "metrics_json": json.dumps({"strategy_rule_results": [{"indicator_name": "趋势", "matched": True}]}, ensure_ascii=False),
+                        "created_at": datetime.utcnow(),
+                    },
+                ],
+                ["run_id", "code"],
+            )
+            return run_id
+
+    class CandidateSummaryRunner:
+        def prepare_from_result(self, run_id, code, require_existing=False):
+            assert require_existing is True
+            return {
+                "run_id": run_id,
+                "code": code,
+                "input_hash": f"hash-{code}",
+                "prompt_version": "candidate-ai-v2",
+                "llm_model": "model-a",
+                "evidence": {"candidate": {"code": code}},
+            }
+
+        def read_summary(self, run_id, code, input_hash=None):
+            return {"status": "not_requested", "run_id": run_id, "code": code, "summary": None}
+
+        def mark_queued(self, identity, task_id):
+            db.upsert(
+                "candidate_ai_summaries",
+                [
+                    {
+                        "run_id": identity["run_id"],
+                        "code": identity["code"],
+                        "summary_json": None,
+                        "llm_model": identity["llm_model"],
+                        "generated_at": None,
+                        "status": "queued",
+                        "task_id": task_id,
+                        "input_hash": identity["input_hash"],
+                        "prompt_version": identity["prompt_version"],
+                        "evidence_json": json.dumps(identity["evidence"], ensure_ascii=False),
+                    }
+                ],
+                ["run_id", "code"],
+            )
+
+    monkeypatch.setattr(service, "executor", NoopExecutor())
+    service.candidate_summary_runner = CandidateSummaryRunner()
+    service._write_task(
+        "analyze-test",
+        kind="analyze",
+        status="running",
+        stage="准备分析",
+        source="本地仓库",
+        summary={},
+        payload={},
+    )
+
+    service._run_analysis("analyze-test", {}, AnalysisRunner(), run_id="run-1")
+
+    tasks = db.query("SELECT kind, status, payload_json FROM task_runs WHERE kind = 'candidate_ai_summary' ORDER BY payload_json")
+    summaries = db.query("SELECT code, status FROM candidate_ai_summaries ORDER BY code")
+    assert len(tasks) == 2
+    assert {json.loads(row["payload_json"])["code"] for row in tasks} == {"000001.SZ", "000002.SZ"}
+    assert {row["status"] for row in tasks} == {"queued"}
+    assert summaries == [{"code": "000001.SZ", "status": "queued"}, {"code": "000002.SZ", "status": "queued"}]
+
+
 def test_analysis_task_completion_publishes_result_for_polling(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

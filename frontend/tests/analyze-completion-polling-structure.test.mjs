@@ -56,12 +56,11 @@ test('task result polling stops after terminal result data arrives', () => {
   assert.match(hook, /if \(activeTaskStatuses\.has\(String\(initialStatus \|\| ''\)\)\) return intervalMs;/);
 });
 
-test('candidate AI summary mutation updates cache for the requested candidate', () => {
+test('candidate AI summary reads background status without a frontend generation mutation', () => {
   const panel = src('pages/results/CandidateEvidencePanel.tsx');
-  assert.match(panel, /mutationFn: \(\{ runId: targetRunId, code, force \}/);
-  assert.match(panel, /onSuccess: \(result, variables\)/);
-  assert.match(panel, /result\.run_id \|\| variables\.runId/);
-  assert.doesNotMatch(panel, /mutationFn: \(\{ force \}: \{ force: boolean \}\)/);
+  assert.match(panel, /getCandidateAiSummary\(runId, candidate\.code\)/);
+  assert.match(panel, /refetchInterval: \(query\) => \(isAiSummaryActive/);
+  assert.doesNotMatch(panel, /startCandidateAiSummary|generateButtonLabel|mutationFn: \(\{ runId: targetRunId, code, force \}/);
 });
 
 test('backtest result pages resume from persisted run ids instead of mutation-only state', () => {

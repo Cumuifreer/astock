@@ -30,7 +30,7 @@ test('data-source documentation presents Tushare with local DuckDB cache only', 
     assert.match(source, /DuckDB|本地缓存/, `${path} should describe the local cache`);
   }
   const readme = readRepo('README.md');
-  assert.doesNotMatch(readme, /多源资讯|自动抓取|DeepSeek|LLM|自动排队生成第一份/);
+  assert.doesNotMatch(readme, /自动排队生成第一份/);
 });
 
 test('data map status copy uses Tushare and DuckDB labels instead of fallback wording', () => {
