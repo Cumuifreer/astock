@@ -21,6 +21,8 @@ test('intraday page renders strategy tracking before the three market boards', (
   assert.match(page, /StrategyTrackingPanel/);
   assert.match(page, /getIntradayStrategyTracking/);
   assert.match(page, /saveIntradayStrategyTrackingConfig/);
+  assert.match(page, /label:\s*preset\.name/);
+  assert.doesNotMatch(page, /strategyOptionLabel|未发布/);
   assert.doesNotMatch(page, /<select\b/i);
 });
 

@@ -200,7 +200,7 @@ function StrategyTrackingPanel({
     () =>
       strategies.map((preset) => ({
         value: preset.id,
-        label: strategyOptionLabel(preset),
+        label: preset.name,
       })),
     [strategies],
   );
@@ -277,12 +277,6 @@ function StrategyTrackingCard({ row, onOpenTimeline }: { row: IntradayStrategyTr
       </div>
     </article>
   );
-}
-
-function strategyOptionLabel(preset: StrategyPreset) {
-  const version = preset.latest_version_number ? `v${preset.latest_version_number}` : '未发布';
-  const tags = [version, preset.is_default ? '默认' : null, preset.is_system ? '系统' : null].filter(Boolean);
-  return `${preset.name} · ${tags.join(' · ')}`;
 }
 
 function TimelineDetail({ data }: { data: import('../../types').IntradayTimeline | null }) {
