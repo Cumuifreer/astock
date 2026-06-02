@@ -1075,6 +1075,7 @@ class UpdateService:
             raise
 
     def _drain_queue(self) -> None:
+        worker_failed = False
         try:
             while True:
                 task = self._next_queued_task()
@@ -1096,10 +1097,13 @@ class UpdateService:
                         finished_at=datetime.utcnow(),
                     )
                 self._complete_if_still_running(task_id)
+        except Exception:
+            worker_failed = True
+            logger.exception("任务队列 worker 异常")
         finally:
             with self._queue_lock:
                 self._queue_worker_active = False
-            if self.db.scalar("SELECT COUNT(*) FROM task_runs WHERE status = 'queued'"):
+            if not worker_failed and self.db.scalar("SELECT COUNT(*) FROM task_runs WHERE status = 'queued'"):
                 self._ensure_queue_worker()
 
     def _next_queued_task(self) -> Optional[Dict[str, Any]]:
@@ -1108,23 +1112,40 @@ class UpdateService:
                 conn.execute("BEGIN TRANSACTION")
                 try:
                     now = datetime.utcnow()
-                    cur = conn.execute(
+                    queued = conn.execute(
+                        """
+                        SELECT id
+                        FROM task_runs
+                        WHERE status = 'queued'
+                        ORDER BY (queue_order IS NULL), queue_order, started_at, id
+                        LIMIT 1
+                        """
+                    ).fetchone()
+                    if not queued:
+                        conn.execute("COMMIT")
+                        return None
+                    task_id = str(queued[0])
+                    conn.execute(
                         """
                         UPDATE task_runs
                         SET status = 'running',
                             warning = NULL,
                             error_message = NULL,
                             updated_at = ?
-                        WHERE id = (
-                            SELECT id
-                            FROM task_runs
-                            WHERE status = 'queued'
-                            ORDER BY queue_order NULLS LAST, started_at, id
-                            LIMIT 1
-                        )
-                        RETURNING *
+                        WHERE id = ?
+                          AND status = 'queued'
                         """,
-                        [now],
+                        [now, task_id],
+                    )
+                    cur = conn.execute(
+                        """
+                        SELECT *
+                        FROM task_runs
+                        WHERE id = ?
+                          AND status = 'running'
+                          AND updated_at = ?
+                        """,
+                        [task_id, now],
                     )
                     claimed_columns = [desc[0] for desc in cur.description]
                     row = cur.fetchone()

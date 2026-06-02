@@ -1,4 +1,6 @@
 import json
+import logging
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 
 from backend.app.db import Database
@@ -593,6 +595,77 @@ def test_next_queued_task_claims_task_once_across_service_instances(tmp_path):
     assert first_claim and first_claim["id"] == "queued-once"
     assert second_claim is None
     assert db.scalar("SELECT status FROM task_runs WHERE id = ?", ["queued-once"]) == "running"
+
+
+def test_next_queued_task_does_not_require_update_returning(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    service._write_task(
+        "queued-compatible",
+        kind="update",
+        status="queued",
+        stage="准备更新",
+        source="本地仓库",
+        summary={},
+        payload={"mode": "daily_light"},
+    )
+    original_connect = db.connect
+
+    class ReturningUnsupportedConnection:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, params=None):
+            if "RETURNING" in str(sql).upper():
+                raise RuntimeError("RETURNING is not supported by this DuckDB runtime")
+            return self._conn.execute(sql, params or [])
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    @contextmanager
+    def guarded_connect():
+        with original_connect() as conn:
+            yield ReturningUnsupportedConnection(conn)
+
+    monkeypatch.setattr(db, "connect", guarded_connect)
+
+    claimed = service._next_queued_task()
+
+    assert claimed and claimed["id"] == "queued-compatible"
+    assert db.scalar("SELECT status FROM task_runs WHERE id = ?", ["queued-compatible"]) == "running"
+
+
+def test_queue_worker_logs_claim_failure_without_spinning(tmp_path, monkeypatch, caplog):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    service._write_task(
+        "queued-failing-claim",
+        kind="update",
+        status="queued",
+        stage="准备更新",
+        source="本地仓库",
+        summary={},
+        payload={"mode": "daily_light"},
+    )
+    rekicks = []
+
+    def fail_claim():
+        raise RuntimeError("claim failed")
+
+    monkeypatch.setattr(service, "_next_queued_task", fail_claim)
+    monkeypatch.setattr(service, "_ensure_queue_worker", lambda: rekicks.append("rekick"))
+    service._queue_worker_active = True
+
+    with caplog.at_level(logging.ERROR):
+        service._drain_queue()
+
+    assert service._queue_worker_active is False
+    assert rekicks == []
+    assert "任务队列 worker 异常" in caplog.text
+    assert "claim failed" in caplog.text
 
 
 def test_candidate_ai_summary_task_rejects_missing_candidate(tmp_path):
