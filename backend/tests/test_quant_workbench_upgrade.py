@@ -857,6 +857,21 @@ def test_candidate_ai_summary_routes_split_read_and_task_start(tmp_path, monkeyp
     }
 
 
+def test_legacy_candidate_ai_summary_post_is_gone(tmp_path, monkeypatch):
+    routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
+
+    class FailCandidateSummaryService:
+        def summarize(self, *_args, **_kwargs):
+            raise AssertionError("legacy POST must not call the synchronous LLM path")
+
+    monkeypatch.setattr(routes, "candidate_summary_service", FailCandidateSummaryService())
+    client = TestClient(routes.router)
+
+    response = client.post("/api/analysis/candidates/run-1/000001.SZ/ai-summary", json={})
+
+    assert response.status_code == 410
+
+
 def test_source_diagnostics_reports_tushare_configuration_and_fallbacks(tmp_path, monkeypatch):
     from backend.app import config as config_module
 

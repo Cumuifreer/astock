@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from backend.app.services.market_utils import normalize_a_share_code, safe_float
 from backend.app.sources.base import SourceUnavailable, first_present
+
+
+SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class AkShareSource:
@@ -54,6 +58,7 @@ class AkShareSource:
         if frame is None or frame.empty:
             raise SourceUnavailable("快照接口返回空数据。")
         rows: List[Dict[str, Any]] = []
+        snapshot_date = _shanghai_today_iso()
         for item in frame.to_dict("records"):
             code = normalize_a_share_code(
                 first_present(item, ["代码", "code", "symbol", "证券代码"]),
@@ -71,7 +76,7 @@ class AkShareSource:
             rows.append(
                 {
                     "code": code,
-                    "date": date.today().isoformat(),
+                    "date": snapshot_date,
                     "name": first_present(item, ["名称", "name", "股票名称"]) or code,
                     "latest_price": latest,
                     "pct_chg": safe_float(first_present(item, ["涨跌幅", "changepercent", "涨幅", "change_pct"])),
@@ -88,3 +93,7 @@ class AkShareSource:
                 }
             )
         return pd.DataFrame(rows)
+
+
+def _shanghai_today_iso() -> str:
+    return datetime.now(SHANGHAI_TZ).date().isoformat()

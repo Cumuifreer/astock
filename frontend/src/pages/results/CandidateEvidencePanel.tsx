@@ -7,7 +7,7 @@ import { queryKeys } from '../../api/queryKeys';
 import type { CandidateAiSummary, CandidateAiSummaryContent, CandidateAiSummaryStatus } from '../../api/strategy';
 import { addWatchlistItems } from '../../api/watchlist';
 import { useToast } from '../../design/Toast';
-import { formatMoney, formatPercent, formatRatio } from '../../utils/format';
+import { formatMoney, formatPercent, formatRatio, formatRatioPercent } from '../../utils/format';
 
 type CandidateEvidencePanelProps = {
   candidate: Candidate | null;
@@ -42,19 +42,21 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName, analysi
     staleTime: 30 * 1000,
   });
   const aiMutation = useMutation({
-    mutationFn: ({ force }: { force: boolean }) =>
-      candidate && runId ? startCandidateAiSummary(runId, candidate.code, force) : Promise.reject(new Error('请选择候选后再生成解释')),
-    onSuccess: (result) => {
-      if (candidate && runId) {
-        queryClient.setQueryData<CandidateAiSummary>(queryKeys.analysis.candidateAiSummary(runId, candidate.code), (current) => ({
+    mutationFn: ({ runId: targetRunId, code, force }: { runId: string; code: string; force: boolean }) =>
+      startCandidateAiSummary(targetRunId, code, force),
+    onSuccess: (result, variables) => {
+      const targetRunId = result.run_id || variables.runId;
+      const targetCode = result.code || variables.code;
+      if (targetRunId && targetCode) {
+        queryClient.setQueryData<CandidateAiSummary>(queryKeys.analysis.candidateAiSummary(targetRunId, targetCode), (current) => ({
           ...(current || {}),
           status: (result.status as CandidateAiSummaryStatus) || 'queued',
           task_id: result.task_id,
-          run_id: result.run_id,
-          code: result.code,
+          run_id: targetRunId,
+          code: targetCode,
           input_hash: result.input_hash || current?.input_hash || null,
         }));
-        void queryClient.invalidateQueries({ queryKey: queryKeys.analysis.candidateAiSummary(runId, candidate.code) });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.analysis.candidateAiSummary(targetRunId, targetCode) });
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all() });
       showToast('候选解释已加入任务队列', 'success');
@@ -117,7 +119,7 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName, analysi
     ? aiContent.risks
     : riskRules.length
       ? riskRules
-      : [`换手率 ${formatPercent(candidate.turnover_rate)}`, `振幅 ${formatPercent(candidate.amplitude)}`, `流通市值 ${formatMoney(candidate.float_market_value)}`];
+      : [`换手率 ${formatPercent(candidate.turnover_rate)}`, `振幅 ${formatRatioPercent(candidate.amplitude)}`, `流通市值 ${formatMoney(candidate.float_market_value)}`];
   const watchPlan = useAiEvidence && aiContent.watch_plan?.length
     ? aiContent.watch_plan
     : ['观察 1-3 个交易日的量价延续', '失效条件：跌破 5 日线或放量跌破平台', '复盘 T+1 / T+3 / T+5 收益'];
@@ -144,7 +146,7 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName, analysi
         <Button disabled={addMutation.isPending} onClick={() => addMutation.mutate()} variant="primary">
           加入观察池
         </Button>
-        <Button disabled={!runId || aiBusy} onClick={() => aiMutation.mutate({ force: forceGenerate })} variant="secondary">
+        <Button disabled={!runId || aiBusy} onClick={() => runId && aiMutation.mutate({ runId, code: candidate.code, force: forceGenerate })} variant="secondary">
           {generateButtonLabel(aiStatus)}
         </Button>
         {candidate.chart_url ? (

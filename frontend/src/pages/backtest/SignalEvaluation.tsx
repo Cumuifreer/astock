@@ -10,10 +10,20 @@ import { CheckTile } from '../../design/CheckTile';
 import { useToast } from '../../design/Toast';
 import { useTaskResultQuery } from '../../hooks/useTaskResultQuery';
 import { strategySummary } from '../../utils/strategy';
-import { formatPercent, formatRatio, toNumber } from '../../utils/format';
+import { formatRatio, formatRatioPercent, toNumber } from '../../utils/format';
 import { todayISO } from '../../utils/date';
 
-export function SignalEvaluation({ config, strategyName }: { config: StrategyConfig | null; strategyName: string }) {
+export function SignalEvaluation({
+  config,
+  selectedRunId,
+  strategyName,
+  onRunStarted,
+}: {
+  config: StrategyConfig | null;
+  selectedRunId: string;
+  strategyName: string;
+  onRunStarted: (runId: string) => void;
+}) {
   const { showToast } = useToast();
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState(todayISO());
@@ -33,21 +43,22 @@ export function SignalEvaluation({ config, strategyName }: { config: StrategyCon
         market_buckets: marketBuckets,
         score_buckets: scoreBuckets,
       }),
-    onSuccess: () => {
+    onSuccess: (job) => {
+      if (job.runId) onRunStarted(job.runId);
       window.location.hash = '#status';
       showToast('回测任务已开始，可在任务状态查看进度', 'success');
     },
     onError: (error) => showToast(error instanceof Error ? error.message : '回测任务启动失败', 'danger'),
   });
   const result = useTaskResultQuery({
-    queryKey: queryKeys.backtest.signalEvaluation(mutation.data?.runId),
-    queryFn: () => getSignalEvaluation(mutation.data?.runId || ''),
-    enabled: Boolean(mutation.data?.runId),
+    queryKey: queryKeys.backtest.signalEvaluation(selectedRunId),
+    queryFn: () => getSignalEvaluation(selectedRunId),
+    enabled: Boolean(selectedRunId),
     initialStatus: mutation.data?.status,
     getResultStatus: (data) => data?.run?.status,
   });
   const summary = (result.data?.run?.summary || {}) as Record<string, unknown>;
-  const queued = mutation.data && !result.data?.run?.summary;
+  const queued = Boolean(mutation.data && selectedRunId === mutation.data.runId && !result.data?.run?.summary);
   return (
     <section className="surface pad backtest-panel">
       <div className="section-heading">
@@ -79,22 +90,22 @@ export function SignalEvaluation({ config, strategyName }: { config: StrategyCon
         <CheckTile checked={marketBuckets} label="市场状态分层" onCheckedChange={setMarketBuckets} />
         <CheckTile checked={scoreBuckets} label="分数分桶" onCheckedChange={setScoreBuckets} />
       </div>
-      {mutation.data ? (
+      {selectedRunId ? (
         <div className="backtest-runline">
-          <strong>{queued ? '已排队' : statusLabel(result.data?.run?.status || mutation.data.status)}</strong>
+          <strong>{queued ? '已排队' : statusLabel(result.data?.run?.status || mutation.data?.status)}</strong>
           <Button onClick={() => (window.location.hash = '#status')} variant="ghost">
             查看任务状态
           </Button>
         </div>
       ) : null}
       <div className="backtest-results-grid metric-row">
-        <Metric label="样本数" value={formatRatioStatus(summary.sample_count)} />
-        <Metric label="平均 T+1 收益" value={formatPercentStatus(summary.avg_return_1d)} />
-        <Metric label="平均 T+3 收益" value={formatPercentStatus(summary.avg_return_3d)} />
+        <Metric label="样本数" value={formatRatioStatus(summary.signal_count)} />
+        <Metric label="评估日期" value={formatRatioStatus(summary.evaluated_dates)} />
         <Metric label="平均 T+5 收益" value={formatPercentStatus(summary.avg_return_5d)} />
         <Metric label="平均 T+10 收益" value={formatPercentStatus(summary.top_n_avg_return_10d || summary.avg_return_10d)} />
-        <Metric label="胜率" value={formatPercentStatus(summary.win_rate)} />
-        <Metric label="最大回撤" value={formatPercentStatus(summary.max_drawdown)} />
+        <Metric label="平均 T+20 收益" value={formatPercentStatus(summary.avg_return_20d)} />
+        <Metric label="10日触及5%" value={formatPercentStatus(summary.hit_5pct_10d_rate)} />
+        <Metric label="10日回撤中位" value={formatPercentStatus(summary.median_max_drawdown_10d)} />
         <Metric label="排序 IC" value={formatRatioStatus(summary.rank_ic)} />
       </div>
       <div className="rule-chip-grid" style={{ marginTop: 14 }}>
@@ -125,7 +136,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 function formatPercentStatus(value: unknown) {
-  return toNumber(value) === null ? '待评估' : formatPercent(value);
+  return toNumber(value) === null ? '待评估' : formatRatioPercent(value);
 }
 
 function formatRatioStatus(value: unknown) {

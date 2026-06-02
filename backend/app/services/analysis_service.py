@@ -46,10 +46,9 @@ def compute_rps_scores(
         returns: Dict[str, float] = {}
         for code, group in frame.groupby("code"):
             clean = group.dropna(subset=["close"])
-            if len(clean) < 2:
+            if len(clean) <= window:
                 continue
-            start_index = max(0, len(clean) - window - 1)
-            start = float(clean.iloc[start_index]["close"])
+            start = float(clean.iloc[-window - 1]["close"])
             end = float(clean.iloc[-1]["close"])
             if start > 0:
                 returns[str(code)] = (end - start) / start

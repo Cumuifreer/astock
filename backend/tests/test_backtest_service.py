@@ -413,3 +413,86 @@ def test_backtest_service_runs_one_historical_date(tmp_path):
     assert result["run"]["summary"]["signal_count"] == 1
     assert result["signals"][0]["code"] == "000001.SZ"
     assert result["signals"][0]["return_5d"] is not None
+
+
+def test_portfolio_backtest_accepts_initial_capital_payload_alias(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "stock_basic",
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "exchange": "SZ",
+                "list_date": "1991-04-03",
+                "source": "test",
+                "is_st": False,
+                "suspended": False,
+                "updated_at": "2026-01-01T00:00:00",
+            }
+        ],
+        ["code"],
+    )
+    start = date(2026, 1, 1)
+    db.upsert(
+        "historical_bars",
+        [
+            {
+                "code": "000001.SZ",
+                "date": start + timedelta(days=index),
+                "open": 10 + index * 0.1,
+                "high": 10.3 + index * 0.1,
+                "low": 9.8 + index * 0.1,
+                "close": 10.1 + index * 0.1,
+                "prev_close": 10 + index * 0.1,
+                "volume": 1000 + index,
+                "amount": 200_000_000,
+                "turn": 2.0,
+                "pct_chg": 1.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Baostock",
+                "updated_at": "2026-01-01T00:00:00",
+            }
+            for index in range(40)
+        ],
+        ["code", "date"],
+    )
+
+    result = BacktestService(db).run_portfolio_backtest(
+        {
+            "start_date": "2026-01-10",
+            "end_date": "2026-01-12",
+            "step": 1,
+            "candidate_limit": 1,
+            "max_positions": 1,
+            "hold_days": 2,
+            "initial_capital": 250_000,
+            "config": {
+                "analysis_mode": "score",
+                "min_price": 0,
+                "min_amount": 0,
+                "min_float_market_value": None,
+                "max_float_market_value": None,
+                "min_rps20": None,
+                "min_rps60": None,
+                "min_rps120": None,
+                "min_turnover": None,
+                "max_turnover": None,
+                "min_pct_chg": None,
+                "max_pct_chg": None,
+                "volume_ratio_min": None,
+                "max_ma_distance": None,
+                "candidate_limit": 1,
+                "missing_turnover_policy": "allow",
+                "missing_float_market_value_policy": "allow",
+                "include_bj": False,
+                "exclude_star_board": False,
+            },
+        },
+        run_id="portfolio-initial-capital",
+    )
+
+    assert result["run"]["summary"]["initial_equity"] == 250_000
+    assert result["run"]["config"]["initial_equity"] == 250_000

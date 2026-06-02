@@ -27,9 +27,9 @@ export function useTaskResultQuery<TData>({
     refetchInterval: (query) => {
       const data = query.state.data as TData | undefined;
       const resultStatus = getResultStatus(data);
-      if (activeTaskStatuses.has(String(initialStatus || ''))) return intervalMs;
       if (activeTaskStatuses.has(String(resultStatus || ''))) return intervalMs;
-      if (!data) return intervalMs;
+      if (data) return false;
+      if (activeTaskStatuses.has(String(initialStatus || ''))) return intervalMs;
       return false;
     },
   });

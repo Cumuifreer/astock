@@ -71,7 +71,7 @@ class CandidateSummaryService:
             "evidence": evidence,
         }
 
-    def prepare_from_result(self, run_id: str, code: str) -> Dict[str, Any]:
+    def prepare_from_result(self, run_id: str, code: str, require_existing: bool = False) -> Dict[str, Any]:
         rows = self.db.query(
             """
             SELECT *
@@ -82,7 +82,10 @@ class CandidateSummaryService:
             [run_id, code],
         )
         candidate = {"code": code, "name": code, "reasons": [], "metrics": {}}
-        if rows:
+        if not rows:
+            if require_existing:
+                raise ValueError("候选不存在，无法生成解释。")
+        else:
             row = rows[0]
             metrics = _loads_json(row.get("metrics_json"))
             candidate = {

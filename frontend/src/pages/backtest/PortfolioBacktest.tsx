@@ -11,14 +11,24 @@ import { Select } from '../../design/Select';
 import { useToast } from '../../design/Toast';
 import { useTaskResultQuery } from '../../hooks/useTaskResultQuery';
 import { strategySummary } from '../../utils/strategy';
-import { formatMoney, formatPercent, formatRatio, toNumber } from '../../utils/format';
+import { formatMoney, formatRatio, formatRatioPercent, toNumber } from '../../utils/format';
 import { todayISO } from '../../utils/date';
 
-export function PortfolioBacktest({ config, strategyName }: { config: StrategyConfig | null; strategyName: string }) {
+export function PortfolioBacktest({
+  config,
+  selectedRunId,
+  strategyName,
+  onRunStarted,
+}: {
+  config: StrategyConfig | null;
+  selectedRunId: string;
+  strategyName: string;
+  onRunStarted: (runId: string) => void;
+}) {
   const { showToast } = useToast();
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState(todayISO());
-  const [initialCapital, setInitialCapital] = useState('1000000');
+  const [initialEquity, setInitialEquity] = useState('1000000');
   const [rebalance, setRebalance] = useState('daily');
   const [maxPositions, setMaxPositions] = useState('8');
   const [maxPositionPct, setMaxPositionPct] = useState('15');
@@ -35,7 +45,7 @@ export function PortfolioBacktest({ config, strategyName }: { config: StrategyCo
       runPortfolioBacktest({
         config,
         strategy_name: strategyName,
-        initial_capital: Number(initialCapital) || 1_000_000,
+        initial_equity: Number(initialEquity) || 1_000_000,
         start_date: startDate || undefined,
         end_date: endDate || undefined,
         candidate_limit: Number(candidateLimit) || config?.candidate_limit || 80,
@@ -52,16 +62,17 @@ export function PortfolioBacktest({ config, strategyName }: { config: StrategyCo
         limit_down_model: limitDownModel,
         limit_up_down_model: limitUpModel || limitDownModel,
       }),
-    onSuccess: () => {
+    onSuccess: (job) => {
+      if (job.runId) onRunStarted(job.runId);
       window.location.hash = '#status';
       showToast('回测任务已开始，可在任务状态查看进度', 'success');
     },
     onError: (error) => showToast(error instanceof Error ? error.message : '回测任务启动失败', 'danger'),
   });
   const result = useTaskResultQuery<Record<string, unknown>>({
-    queryKey: queryKeys.backtest.portfolio(mutation.data?.runId),
-    queryFn: () => getPortfolioBacktest(mutation.data?.runId || ''),
-    enabled: Boolean(mutation.data?.runId),
+    queryKey: queryKeys.backtest.portfolio(selectedRunId),
+    queryFn: () => getPortfolioBacktest(selectedRunId),
+    enabled: Boolean(selectedRunId),
     initialStatus: mutation.data?.status,
     getResultStatus: (data) => String(((data?.run as Record<string, unknown> | undefined)?.status as string | undefined) || ''),
   });
@@ -83,8 +94,8 @@ export function PortfolioBacktest({ config, strategyName }: { config: StrategyCo
       </div>
       <div className="backtest-form-grid">
         <label>
-          <span>初始资金</span>
-          <input inputMode="numeric" value={initialCapital} onChange={(event) => setInitialCapital(event.target.value)} />
+          <span>初始模拟权益</span>
+          <input inputMode="numeric" value={initialEquity} onChange={(event) => setInitialEquity(event.target.value)} />
         </label>
         <label>
           <span>开始日期</span>
@@ -160,9 +171,9 @@ export function PortfolioBacktest({ config, strategyName }: { config: StrategyCo
         <CheckTile checked={limitUpModel} label="涨停买不进" onCheckedChange={setLimitUpModel} />
         <CheckTile checked={limitDownModel} label="跌停卖不出" onCheckedChange={setLimitDownModel} />
       </div>
-      {mutation.data ? (
+      {selectedRunId ? (
         <div className="backtest-runline">
-          <strong>{statusLabel(String(run.status || mutation.data.status))}</strong>
+          <strong>{statusLabel(String(run.status || mutation.data?.status || ''))}</strong>
           <Button onClick={() => (window.location.hash = '#status')} variant="ghost">
             查看任务状态
           </Button>
@@ -209,7 +220,7 @@ function formatMoneyStatus(value: unknown) {
 }
 
 function formatPercentStatus(value: unknown) {
-  return toNumber(value) === null ? '待回测' : formatPercent(value);
+  return toNumber(value) === null ? '待回测' : formatRatioPercent(value);
 }
 
 function formatRatioStatus(value: unknown) {

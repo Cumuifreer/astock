@@ -150,7 +150,7 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.doesNotMatch(read('pages/watchlist/WatchlistPage.tsx'), /Segmented|失效条件|review_status|观察中|误报|有效/);
   assert.match(read('pages/backtest/BacktestPage.tsx'), /信号评估/);
   assert.match(`${read('pages/backtest/BacktestPage.tsx')}\n${read('pages/backtest/PortfolioBacktest.tsx')}`, /组合回测|简化组合模拟/);
-  assert.match(read('pages/backtest/SignalEvaluation.tsx'), /mutation\.data\?\.runId/);
+  assert.match(read('pages/backtest/SignalEvaluation.tsx'), /selectedRunId/);
   assert.match(read('pages/backtest/SignalEvaluation.tsx'), /run\?\.summary/);
   assert.doesNotMatch(read('pages/backtest/SignalEvaluation.tsx'), /2024-01-01/);
   assert.match(read('pages/data-map/DataMapPage.tsx'), /核心数据/);

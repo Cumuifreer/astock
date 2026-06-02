@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 
 from backend.app.db import get_database
 from backend.app.schema import migrate
@@ -399,19 +400,8 @@ def get_candidate_ai_summary(run_id: str, code: str) -> Dict[str, Any]:
 
 
 @router.post("/analysis/candidates/{run_id}/{code}/ai-summary")
-def candidate_ai_summary(run_id: str, code: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    report = data_service.analysis_report(run_id=run_id, limit=300)
-    rows = (report.get("candidates") or {}).get("rows") or []
-    candidate = next((row for row in rows if str(row.get("code")) == str(code)), None)
-    if candidate is None:
-        candidate = (payload or {}).get("candidate") or {"code": code, "name": code, "reasons": []}
-    return candidate_summary_service.summarize(
-        run_id=run_id,
-        code=code,
-        candidate=candidate,
-        matched_rules=((payload or {}).get("matched_rules") if isinstance(payload, dict) else None),
-        risk_items=((payload or {}).get("risk_items") if isinstance(payload, dict) else None),
-    )
+def candidate_ai_summary(run_id: str, code: str, payload: Optional[Dict[str, Any]] = None) -> JSONResponse:
+    return JSONResponse(status_code=410, content={"detail": "请使用 POST /api/tasks/candidate-ai-summary 启动候选解释任务。"})
 
 
 @router.post("/tasks/candidate-ai-summary")

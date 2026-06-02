@@ -475,6 +475,45 @@ class UpdateService:
             [now],
             write=True,
         )
+        self.db.execute(
+            """
+            UPDATE backtest_runs
+            SET status = 'failed',
+                finished_at = ?,
+                error_message = '服务重启后中止'
+            WHERE status = 'running'
+            """,
+            [now],
+            write=True,
+        )
+        self.db.execute(
+            """
+            UPDATE portfolio_backtest_runs
+            SET status = 'failed',
+                finished_at = ?,
+                error_message = '服务重启后中止'
+            WHERE status = 'running'
+            """,
+            [now],
+            write=True,
+        )
+        self.db.execute(
+            """
+            UPDATE candidate_ai_summaries
+            SET status = 'failed',
+                error_message = '服务重启后中止',
+                updated_at = ?
+            WHERE status IN ('queued', 'running')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM task_runs
+                  WHERE task_runs.id = candidate_ai_summaries.task_id
+                    AND task_runs.status IN ('queued', 'running')
+              )
+            """,
+            [now],
+            write=True,
+        )
 
     def kick_queue(self) -> None:
         self._ensure_queue_worker()
@@ -512,9 +551,12 @@ class UpdateService:
         code = str(payload.get("code") or "")
         if not run_id or not code:
             raise ValueError("run_id 和 code 不能为空。")
-        identity = candidate_summary_runner.prepare_from_result(run_id=run_id, code=code)
+        identity = candidate_summary_runner.prepare_from_result(run_id=run_id, code=code, require_existing=True)
         existing = candidate_summary_runner.read_summary(run_id, code, input_hash=identity["input_hash"])
-        if not payload.get("force") and existing.get("status") in {"queued", "running", "completed_full", "completed_partial"}:
+        existing_status = str(existing.get("status") or "")
+        reusable_completed = existing_status in {"completed_full", "completed_partial"}
+        reusable_active = existing_status in {"queued", "running"} and self._task_is_active(existing.get("task_id"))
+        if not payload.get("force") and (reusable_completed or reusable_active):
             identity["status"] = existing.get("status")
             return str(existing.get("task_id") or ""), identity
         task_id = f"ai-summary-{uuid.uuid4().hex[:12]}"
@@ -529,6 +571,12 @@ class UpdateService:
         )
         identity["status"] = "queued"
         return task_id, identity
+
+    def _task_is_active(self, task_id: Any) -> bool:
+        if not task_id:
+            return False
+        status = self.db.scalar("SELECT status FROM task_runs WHERE id = ?", [str(task_id)])
+        return status in {"queued", "running"}
 
     def start_backtest(self, payload: Dict[str, Any], backtest_runner: Any) -> tuple[str, str]:
         self.backtest_runner = backtest_runner
@@ -974,7 +1022,10 @@ class UpdateService:
         identity: Optional[Dict[str, Any]] = None
         try:
             self._patch_task(task_id, status="running", stage="生成候选解释", processed=0, total=1)
-            identity = self.candidate_summary_runner.prepare_from_result(run_id=run_id, code=code)
+            identity = self.candidate_summary_runner.prepare_from_result(run_id=run_id, code=code, require_existing=True)
+            payload_hash = str(payload.get("input_hash") or "")
+            if payload_hash and str(identity.get("input_hash") or "") != payload_hash:
+                raise RuntimeError("候选解释输入已变化，请重新发起任务。")
             self.candidate_summary_runner.mark_running(identity, task_id=task_id)
             result = self.candidate_summary_runner.generate_and_store(identity, task_id=task_id)
             status = str(result.get("status") or "completed_full")

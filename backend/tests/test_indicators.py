@@ -20,22 +20,38 @@ def test_compute_amplitude_uses_previous_close():
 
 
 def test_rps_scores_rank_recent_returns_by_percentile():
-    closes = pd.DataFrame(
-        [
-            {"code": "000001.SZ", "date": "2026-01-01", "close": 10.0},
-            {"code": "000001.SZ", "date": "2026-01-21", "close": 11.0},
-            {"code": "600000.SH", "date": "2026-01-01", "close": 10.0},
-            {"code": "600000.SH", "date": "2026-01-21", "close": 12.0},
-            {"code": "300750.SZ", "date": "2026-01-01", "close": 10.0},
-            {"code": "300750.SZ", "date": "2026-01-21", "close": 9.0},
-        ]
-    )
+    start = date(2026, 1, 1)
+    rows = []
+    for offset in range(21):
+        day = start + timedelta(days=offset)
+        rows.append({"code": "000001.SZ", "date": day, "close": 10.0 + offset * 0.05})
+        rows.append({"code": "600000.SH", "date": day, "close": 10.0 + offset * 0.1})
+        rows.append({"code": "300750.SZ", "date": day, "close": 10.0 - offset * 0.05})
+    closes = pd.DataFrame(rows)
 
     scores = compute_rps_scores(closes, windows=(20,))
 
     assert scores["600000.SH"]["rps20"] == 100.0
     assert scores["000001.SZ"]["rps20"] == 66.67
     assert scores["300750.SZ"]["rps20"] == 33.33
+
+
+def test_rps_scores_exclude_codes_without_full_window_history():
+    start = date(2026, 1, 1)
+    rows = []
+    for offset in range(21):
+        day = start + timedelta(days=offset)
+        rows.append({"code": "000001.SZ", "date": day, "close": 10.0 + offset * 0.05})
+        rows.append({"code": "600000.SH", "date": day, "close": 10.0 + offset * 0.1})
+    for offset in range(10):
+        rows.append({"code": "300750.SZ", "date": start + timedelta(days=offset), "close": 10.0 + offset * 1.0})
+    closes = pd.DataFrame(rows)
+
+    scores = compute_rps_scores(closes, windows=(20,))
+
+    assert scores["600000.SH"]["rps20"] == 100.0
+    assert scores["000001.SZ"]["rps20"] == 50.0
+    assert "300750.SZ" not in scores
 
 
 def test_strategy_filters_respect_include_bj_switch():

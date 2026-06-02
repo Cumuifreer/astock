@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getBacktestRuns } from '../../api/backtest';
+import { queryKeys } from '../../api/queryKeys';
 import type { StrategyConfig } from '../../types';
 import { Badge } from '../../design/Badge';
 import { Select } from '../../design/Select';
@@ -13,12 +14,16 @@ import { SignalEvaluation } from './SignalEvaluation';
 import { PortfolioBacktest } from './PortfolioBacktest';
 
 const defaultStrategyKey = ['default', 'strategy'].join('_');
+const signalRunStorageKey = 'astock.signalEvaluationRunId';
+const portfolioRunStorageKey = 'astock.portfolioBacktestRunId';
 
 export function BacktestPage() {
   const bootstrap = useBootstrap();
   const draft = useStrategyDraft();
   const [selectedStrategyId, setSelectedStrategyId] = useState('draft');
-  const runs = useQuery({ queryKey: ['backtest-runs'], queryFn: getBacktestRuns });
+  const [selectedSignalRunId, setSelectedSignalRunId] = useState(() => readStoredRunId(signalRunStorageKey));
+  const [selectedPortfolioRunId, setSelectedPortfolioRunId] = useState(() => readStoredRunId(portfolioRunStorageKey));
+  const runs = useQuery({ queryKey: queryKeys.backtest.runs(), queryFn: getBacktestRuns });
   const latest = runs.data?.rows?.[0];
   const defaultConfig = (bootstrap.data as Record<string, unknown> | undefined)?.[defaultStrategyKey] as StrategyConfig | undefined;
   const draftConfig = useMemo(
@@ -35,6 +40,22 @@ export function BacktestPage() {
       label: preset.name,
     })),
   ];
+  useEffect(() => {
+    if (!selectedSignalRunId && latest?.id) {
+      setSelectedSignalRunId(latest.id);
+      persistRunId(signalRunStorageKey, latest.id);
+    }
+  }, [latest?.id, selectedSignalRunId]);
+
+  const handleSignalRunStarted = (runId: string) => {
+    setSelectedSignalRunId(runId);
+    persistRunId(signalRunStorageKey, runId);
+  };
+  const handlePortfolioRunStarted = (runId: string) => {
+    setSelectedPortfolioRunId(runId);
+    persistRunId(portfolioRunStorageKey, runId);
+  };
+
   return (
     <div className="page-grid">
       <section className="surface pad">
@@ -57,12 +78,50 @@ export function BacktestPage() {
           <Tabs
             defaultValue="signal"
             items={[
-              { value: 'signal', label: '信号评估', content: <SignalEvaluation config={selectedConfig as StrategyConfig | null} strategyName={selectedName} /> },
-              { value: 'portfolio', label: '组合回测', content: <PortfolioBacktest config={selectedConfig as StrategyConfig | null} strategyName={selectedName} /> },
+              {
+                value: 'signal',
+                label: '信号评估',
+                content: (
+                  <SignalEvaluation
+                    config={selectedConfig as StrategyConfig | null}
+                    selectedRunId={selectedSignalRunId}
+                    strategyName={selectedName}
+                    onRunStarted={handleSignalRunStarted}
+                  />
+                ),
+              },
+              {
+                value: 'portfolio',
+                label: '组合回测',
+                content: (
+                  <PortfolioBacktest
+                    config={selectedConfig as StrategyConfig | null}
+                    selectedRunId={selectedPortfolioRunId}
+                    strategyName={selectedName}
+                    onRunStarted={handlePortfolioRunStarted}
+                  />
+                ),
+              },
             ]}
           />
         </div>
       </section>
     </div>
   );
+}
+
+function readStoredRunId(key: string) {
+  try {
+    return window.localStorage.getItem(key) || '';
+  } catch {
+    return '';
+  }
+}
+
+function persistRunId(key: string, runId: string) {
+  try {
+    window.localStorage.setItem(key, runId);
+  } catch {
+    // localStorage may be disabled; keeping React state is enough for the current session.
+  }
 }

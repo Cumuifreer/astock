@@ -45,6 +45,36 @@ test('backtest task result polling uses shared hook', () => {
   assert.match(src('pages/backtest/PortfolioBacktest.tsx'), /useTaskResultQuery/);
 });
 
+test('task result polling stops after terminal result data arrives', () => {
+  const hook = src('hooks/useTaskResultQuery.ts');
+  assert.match(hook, /const resultStatus = getResultStatus\(data\);/);
+  assert.match(hook, /if \(activeTaskStatuses\.has\(String\(resultStatus \|\| ''\)\)\) return intervalMs;/);
+  assert.match(hook, /if \(data\) return false;/);
+  assert.match(hook, /if \(activeTaskStatuses\.has\(String\(initialStatus \|\| ''\)\)\) return intervalMs;/);
+});
+
+test('candidate AI summary mutation updates cache for the requested candidate', () => {
+  const panel = src('pages/results/CandidateEvidencePanel.tsx');
+  assert.match(panel, /mutationFn: \(\{ runId: targetRunId, code, force \}/);
+  assert.match(panel, /onSuccess: \(result, variables\)/);
+  assert.match(panel, /result\.run_id \|\| variables\.runId/);
+  assert.doesNotMatch(panel, /mutationFn: \(\{ force \}: \{ force: boolean \}\)/);
+});
+
+test('backtest result pages resume from persisted run ids instead of mutation-only state', () => {
+  const page = src('pages/backtest/BacktestPage.tsx');
+  const signal = src('pages/backtest/SignalEvaluation.tsx');
+  const portfolio = src('pages/backtest/PortfolioBacktest.tsx');
+  assert.match(page, /selectedSignalRunId/);
+  assert.match(page, /selectedPortfolioRunId/);
+  assert.match(page, /persistRunId\(signalRunStorageKey/);
+  assert.match(page, /persistRunId\(portfolioRunStorageKey/);
+  assert.match(signal, /selectedRunId/);
+  assert.match(portfolio, /selectedRunId/);
+  assert.doesNotMatch(signal, /queryKeys\.backtest\.signalEvaluation\(mutation\.data\?\.runId\)/);
+  assert.doesNotMatch(portfolio, /queryKeys\.backtest\.portfolio\(mutation\.data\?\.runId\)/);
+});
+
 test('results page follows latest run unless historical report is manually selected', () => {
   const results = src('pages/results/ResultsPage.tsx');
   assert.match(results, /manualRunSelection/);

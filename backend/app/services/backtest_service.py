@@ -319,7 +319,8 @@ class BacktestService:
             max_positions = int(payload.get("max_positions") or payload.get("candidate_limit") or 5)
             transaction_cost = (safe_float(payload.get("transaction_cost_bps")) or 0) / 10000
             slippage = (safe_float(payload.get("slippage_bps")) or 0) / 10000
-            initial_equity = safe_float(payload.get("initial_equity")) or 1_000_000.0
+            initial_equity = _resolve_initial_equity(payload)
+            run_config = {**payload, "initial_equity": initial_equity, "config": strategy}
             equity = initial_equity
             peak = initial_equity
             trades: List[Dict[str, Any]] = []
@@ -332,7 +333,7 @@ class BacktestService:
                         "status": "running",
                         "started_at": started_at,
                         "finished_at": None,
-                        "config_json": json.dumps({**payload, "config": strategy}, ensure_ascii=False),
+                        "config_json": json.dumps(run_config, ensure_ascii=False),
                         "summary_json": json.dumps(options, ensure_ascii=False),
                         "error_message": None,
                     }
@@ -409,7 +410,7 @@ class BacktestService:
                         "status": "completed_full",
                         "started_at": started_at,
                         "finished_at": now,
-                        "config_json": json.dumps({**payload, "config": strategy}, ensure_ascii=False),
+                        "config_json": json.dumps(run_config, ensure_ascii=False),
                         "summary_json": json.dumps(summary, ensure_ascii=False),
                         "error_message": None,
                     }
@@ -437,7 +438,7 @@ class BacktestService:
                     "started_at": started_at,
                     "finished_at": now,
                     "summary": summary,
-                    "config": {**payload, "config": strategy},
+                    "config": run_config,
                     "error_message": None,
                 },
                 "trades": [_jsonable(trade) for trade in trades],
@@ -776,6 +777,15 @@ def _portfolio_summary(
         "avg_trade_return": round(sum(clean) / len(clean), 6) if clean else None,
         "turnover_rate": len(trades) / max(1, len(equity_rows)),
     }
+
+
+def _resolve_initial_equity(payload: Dict[str, Any]) -> float:
+    value = safe_float(payload.get("initial_equity"))
+    if value is None:
+        value = safe_float(payload.get("initial_capital"))
+    if value is None or value <= 0:
+        return 1_000_000.0
+    return value
 
 
 def _trade_row(trade: Dict[str, Any]) -> Dict[str, Any]:
