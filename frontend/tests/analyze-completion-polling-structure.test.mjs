@@ -11,10 +11,13 @@ function src(path) {
   return readFileSync(resolve(root, path), 'utf8');
 }
 
-test('status page does not revive stale bootstrap active tasks after live query succeeds', () => {
+test('status page uses live active task rows instead of bootstrap fallbacks', () => {
   const status = src('pages/status/StatusPage.tsx');
-  assert.match(status, /bootstrapActiveRows/);
-  assert.match(status, /activeTasks\.isSuccess\s*\?\s*activeRows/);
+  assert.match(status, /getRuntimeHealth/);
+  assert.match(status, /const effectiveActiveRows = activeRows/);
+  assert.doesNotMatch(status, /useBootstrap/);
+  assert.doesNotMatch(status, /bootstrapActiveRows/);
+  assert.doesNotMatch(status, /fallbackTasks/);
   assert.doesNotMatch(status, /activeRows\.length\s*\?\s*activeRows\s*:\s*fallbackTasks\.filter/);
 });
 

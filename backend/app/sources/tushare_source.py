@@ -42,11 +42,21 @@ class TushareRealtimeSource:
         include_bj: bool = False,
         exclude_star: bool = False,
         code_list: Optional[List[str]] = None,
+        allow_daily_fallback: bool = True,
     ) -> pd.DataFrame:
-        frame = self._fetch_raw_frame(code_list=code_list, include_bj=include_bj)
+        frame = self._fetch_raw_frame(
+            code_list=code_list,
+            include_bj=include_bj,
+            allow_daily_fallback=allow_daily_fallback,
+        )
         return self._normalize_frame(frame, include_bj=include_bj, exclude_star=exclude_star)
 
-    def _fetch_raw_frame(self, code_list: Optional[List[str]] = None, include_bj: bool = False) -> pd.DataFrame:
+    def _fetch_raw_frame(
+        self,
+        code_list: Optional[List[str]] = None,
+        include_bj: bool = False,
+        allow_daily_fallback: bool = True,
+    ) -> pd.DataFrame:
         ts_module, pro = self.client
         codes = ",".join(code_list or [])
 
@@ -54,6 +64,8 @@ class TushareRealtimeSource:
             patterns = codes or ("0*.SZ,3*.SZ,6*.SH,4*.BJ,8*.BJ,9*.BJ" if include_bj else "0*.SZ,3*.SZ,6*.SH")
             frame = pro.rt_k(ts_code=patterns)
             frame.attrs["tushare_amount_unit"] = "yuan"
+            frame.attrs["freshness"] = "realtime"
+            frame.attrs["source"] = self.name
             return frame
 
         if hasattr(pro, "realtime_quote"):
@@ -62,6 +74,8 @@ class TushareRealtimeSource:
             except TypeError:
                 frame = pro.realtime_quote()
             frame.attrs["tushare_amount_unit"] = "yuan"
+            frame.attrs["freshness"] = "realtime"
+            frame.attrs["source"] = self.name
             return frame
 
         if hasattr(ts_module, "realtime_quote"):
@@ -70,18 +84,22 @@ class TushareRealtimeSource:
             except TypeError:
                 frame = ts_module.realtime_quote()
             frame.attrs["tushare_amount_unit"] = "yuan"
+            frame.attrs["freshness"] = "realtime"
+            frame.attrs["source"] = self.name
             return frame
 
-        if hasattr(pro, "daily"):
+        if allow_daily_fallback and hasattr(pro, "daily"):
             trade_date = datetime.now(CHINA_TZ).strftime("%Y%m%d")
             try:
                 frame = pro.daily(ts_code=codes, trade_date=trade_date) if codes else pro.daily(trade_date=trade_date)
             except TypeError:
                 frame = pro.daily(trade_date=trade_date)
             frame.attrs["tushare_amount_unit"] = "thousand_yuan"
+            frame.attrs["freshness"] = "daily_fallback"
+            frame.attrs["source"] = "Tushare 日线回退"
             return frame
 
-        raise SourceUnavailable("当前 Tushare 中转未提供 rt_k、realtime_quote 或 daily 实时日线接口。")
+        raise SourceUnavailable("当前 Tushare 中转未提供 rt_k 或 realtime_quote 盘中实时接口。")
 
     def _normalize_frame(
         self,
@@ -94,6 +112,8 @@ class TushareRealtimeSource:
         rows: List[Dict[str, Any]] = []
         today = datetime.now(CHINA_TZ).date().isoformat()
         amount_unit = frame.attrs.get("tushare_amount_unit", "yuan")
+        freshness = str(frame.attrs.get("freshness") or "realtime")
+        source = str(frame.attrs.get("source") or (self.name if freshness == "realtime" else "Tushare 日线回退"))
         for item in frame.to_dict("records"):
             code = normalize_a_share_code(
                 first_present(item, ["ts_code", "TS_CODE", "code", "CODE", "symbol", "SYMBOL"]),
@@ -133,13 +153,16 @@ class TushareRealtimeSource:
                     "float_market_value": safe_float(
                         first_present(item, ["float_market_value", "FLOAT_MARKET_VALUE", "circ_mv", "CIRC_MV"])
                     ),
-                    "source": self.name,
+                    "source": source,
+                    "freshness": freshness,
                     "updated_at": datetime.utcnow(),
                 }
             )
         result = pd.DataFrame(rows)
         if result.empty:
             raise SourceUnavailable("Tushare 实时日线没有匹配到真实 A 股代码。")
+        result.attrs["freshness"] = freshness
+        result.attrs["source"] = source
         return result
 
 

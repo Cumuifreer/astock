@@ -38,11 +38,12 @@ export function DataMapPage() {
   const [backfillingCapability, setBackfillingCapability] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const capabilities = useQuery({ queryKey: ['capabilities'], queryFn: getCapabilities });
-  const diagnostics = useQuery({ queryKey: ['source-diagnostics'], queryFn: getSourceDiagnostics });
+  const capabilities = useQuery({ queryKey: ['capabilities'], queryFn: getCapabilities, enabled: tab === 'health' });
+  const diagnostics = useQuery({ queryKey: ['source-diagnostics'], queryFn: getSourceDiagnostics, enabled: tab === 'diagnostics' });
   const stocks = useQuery({
     queryKey: ['stocks', query, status, exchange, offset],
     queryFn: () => getStocks({ limit, offset, search: query, status, exchange }),
+    enabled: tab === 'warehouse',
   });
   const detail = useQuery({
     queryKey: ['stock-detail', selectedCode],

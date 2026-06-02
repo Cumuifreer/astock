@@ -4,14 +4,12 @@ import type { DailyBrief } from '../../types';
 import { Badge } from '../../design/Badge';
 import { LoadingState } from '../../design/LoadingState';
 import { EmptyState } from '../../design/EmptyState';
-import { useBootstrap } from '../../hooks/useBootstrap';
 import { formatDate, formatDateTime } from '../../utils/date';
 import { MarketHero } from './MarketHero';
 import { SectorHeatmap } from './SectorHeatmap';
 import { MarketFlowPanel } from './MarketFlowPanel';
 
 export function OverviewPage() {
-  const bootstrap = useBootstrap();
   const overview = useQuery({
     queryKey: ['market-overview'],
     queryFn: getMarketOverview,
@@ -23,12 +21,13 @@ export function OverviewPage() {
   }
 
   const data = overview.data || {};
+  const latestBrief = (data as typeof data & { latest_brief?: DailyBrief | null }).latest_brief || null;
   return (
     <div className="page-grid">
       <MarketHero state={data.state} tradeDate={data.trade_date} />
       <MarketFlowPanel pulse={data.pulse} freshness={data.data_freshness || []} />
       <SectorHeatmap sectors={data.sector_heatmap || []} />
-      <DailyBriefPanel brief={bootstrap.data?.daily_brief || bootstrap.data?.overview?.latest_brief || null} />
+      <DailyBriefPanel brief={latestBrief} />
     </div>
   );
 }

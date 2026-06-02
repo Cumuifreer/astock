@@ -115,6 +115,8 @@ test('intraday radar has a real timeline drawer and page-level missing-data noti
   assert.match(page, /getIntradayTimeline/);
   assert.match(page, /已完成 1 次采样/);
   assert.match(page, /题材联动数据未同步/);
+  assert.match(board, /entry_price:\s*row\.latest_price\s*\?\?\s*null/);
+  assert.doesNotMatch(board, /entry_price:\s*row\.metrics\?\.latest_price/);
   assert.doesNotMatch(board, /window\.location\.hash/);
 });
 
@@ -135,7 +137,8 @@ test('status page defaults to a concise user view with hidden maintenance mode',
   for (const label of ['系统状态', '任务队列', '定时计划', 'DeepSeek', '查看维护信息', '运行中任务', '可能仍在运行']) {
     assert.match(status, new RegExp(label));
   }
-  assert.match(status, /refetchInterval:\s*activeRefreshInterval/);
+  assert.match(status, /standbyRefreshInterval/);
+  assert.match(status, /refetchInterval: taskPollingActive \? activeRefreshInterval : standbyRefreshInterval/);
   assert.match(status, /effectiveActiveRows\.map/);
   assert.doesNotMatch(status, /fallbackTasks\[0\]/);
   assert.match(status, /schedule-status-strip/);

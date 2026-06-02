@@ -5,6 +5,7 @@ export type IntradayCandidate = {
   rank?: number;
   code: string;
   name?: string;
+  latest_price?: number | null;
   pct_chg?: number | null;
   amount?: number | null;
   amount_speed?: number | null;

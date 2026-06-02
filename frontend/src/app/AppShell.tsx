@@ -5,39 +5,39 @@ import { ChevronDown, MoreHorizontal, RefreshCw } from 'lucide-react';
 import { routes, type RouteId, findRoute } from './routes';
 import { Button } from '../design/Button';
 import { Badge } from '../design/Badge';
-import { LoadingState } from '../design/LoadingState';
 import { useToast } from '../design/Toast';
 import { syncToday, startUpdate, getTasks } from '../api/data';
 import { queryKeys } from '../api/queryKeys';
 import { startIntradaySnapshot } from '../api/intraday';
-import { useBootstrap } from '../hooks/useBootstrap';
 import { useActiveTaskPolling } from '../hooks/useActiveTaskPolling';
 import { useTaskTerminalInvalidation } from '../hooks/useTaskTerminalInvalidation';
 import type { TaskRun } from '../types';
 import { normalizeRows } from '../utils/metrics';
 
 const productNavigationLabels = ['市场总览', '策略选股', '分析结果', '盘中雷达', '观察池', '回测', '数据中心', '任务状态'];
+const activeRefreshInterval = 2600;
+const standbyRefreshInterval = 60_000;
 
 export function AppShell() {
   const [activeRoute, setActiveRoute] = useState<RouteId>(() => parseRouteHash(window.location.hash));
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const bootstrap = useBootstrap();
   const selectedRoute = findRoute(activeRoute);
   const Page = selectedRoute.component;
   const activeTasks = useQuery({
     queryKey: queryKeys.tasks.active(),
     queryFn: () => getTasks({ status: 'queued,running', limit: 50 }),
-    refetchInterval: (query) => (hasActiveRows(normalizeRows<TaskRun>(query.state.data as { rows?: TaskRun[] } | TaskRun[] | undefined)) ? 2600 : false),
+    refetchInterval: (query) =>
+      hasActiveRows(normalizeRows<TaskRun>(query.state.data as { rows?: TaskRun[] } | TaskRun[] | undefined)) ? activeRefreshInterval : standbyRefreshInterval,
   });
   const activeRows = normalizeRows<TaskRun>(activeTasks.data);
-  const taskActive = useActiveTaskPolling(bootstrap.data, activeRows);
+  const taskActive = useActiveTaskPolling(null, activeRows, activeRefreshInterval);
   const recentTasks = useQuery({
     queryKey: queryKeys.tasks.recent(),
     queryFn: () => getTasks({ status: 'completed_full,completed_partial,failed', limit: 50 }),
-    refetchInterval: taskActive ? 2600 : false,
+    refetchInterval: taskActive ? activeRefreshInterval : standbyRefreshInterval,
   });
-  useTaskTerminalInvalidation(normalizeRows<TaskRun>(recentTasks.data));
+  useTaskTerminalInvalidation(normalizeRows<TaskRun>(recentTasks.data), recentTasks.isFetched);
 
   const invalidate = () => {
     void queryClient.invalidateQueries();
@@ -154,7 +154,9 @@ export function AppShell() {
             </Popover.Root>
           </div>
         </header>
-        <div className="page-content">{bootstrap.isLoading ? <LoadingState label="启动工作台" /> : <Page />}</div>
+        <div className="page-content">
+          <Page />
+        </div>
       </main>
     </div>
   );

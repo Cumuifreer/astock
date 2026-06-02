@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import threading
 import time
@@ -377,6 +378,61 @@ def _snapshot_date(value: Any, fallback: Optional[date] = None) -> date:
     return fallback or date.today()
 
 
+def _validate_intraday_frame_date(frame: pd.DataFrame, trade_date: date) -> None:
+    frame_dates = _intraday_frame_dates(frame)
+    if frame_dates and frame_dates != {trade_date}:
+        text = ", ".join(sorted(day.isoformat() for day in frame_dates))
+        raise RuntimeError(f"快照日期 {text} 与采样日期 {trade_date.isoformat()} 不一致。")
+
+
+def _intraday_frame_dates(frame: pd.DataFrame) -> set[date]:
+    if frame is None or frame.empty:
+        return set()
+    dates = set()
+    for item in frame.to_dict("records"):
+        parsed = _optional_frame_date(item.get("date") or item.get("trade_date"))
+        if parsed:
+            dates.add(parsed)
+    return dates
+
+
+def _optional_frame_date(value: Any) -> Optional[date]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    try:
+        if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+            return date.fromisoformat(text[:10])
+        if len(text) == 8 and text.isdigit():
+            return date.fromisoformat(f"{text[:4]}-{text[4:6]}-{text[6:]}")
+    except ValueError:
+        return None
+    return None
+
+
+def _is_realtime_intraday_frame(frame: pd.DataFrame) -> bool:
+    if frame is None or frame.empty:
+        return False
+    freshness = str(frame.attrs.get("freshness") or "").strip().lower()
+    if freshness and freshness not in {"realtime", "real_time", "intraday"}:
+        return False
+    source = str(frame.attrs.get("source") or "")
+    if "日线回退" in source or "daily_fallback" in source.lower():
+        return False
+    for item in frame.to_dict("records"):
+        row_freshness = str(item.get("freshness") or "").strip().lower()
+        if row_freshness and row_freshness not in {"realtime", "real_time", "intraday"}:
+            return False
+        row_source = str(item.get("source") or "")
+        if "日线回退" in row_source or "daily_fallback" in row_source.lower():
+            return False
+    return True
+
+
 def _clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
 
@@ -394,6 +450,20 @@ def _task_payload_fingerprint(payload: Dict[str, Any]) -> str:
         separators=(",", ":"),
         default=str,
     )
+
+
+def _task_payload_hash(payload: Dict[str, Any]) -> str:
+    return hashlib.sha256(_task_payload_fingerprint(payload).encode("utf-8")).hexdigest()
+
+
+def _loads_task_json(value: Any) -> Dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        decoded = json.loads(value)
+    except Exception:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
 
 
 class TaskBusy(RuntimeError):
@@ -523,6 +593,106 @@ class UpdateService:
             write=True,
         )
 
+    def fail_stale_running_tasks(
+        self,
+        stale_after: timedelta = timedelta(minutes=30),
+        now: Optional[datetime] = None,
+    ) -> int:
+        now = now or datetime.utcnow()
+        cutoff = now - stale_after
+        stale_tasks = self.db.query(
+            """
+            SELECT id, kind, payload_json, summary_json
+            FROM task_runs
+            WHERE status = 'running'
+              AND updated_at < ?
+            ORDER BY updated_at, id
+            """,
+            [cutoff],
+        )
+        if not stale_tasks:
+            return 0
+
+        message = "任务运行超时，已由 watchdog 中止。"
+        task_ids = [str(row["id"]) for row in stale_tasks]
+        for task_id in task_ids:
+            self._patch_task(
+                task_id,
+                status="failed",
+                stage="任务运行超时",
+                warning=message,
+                error_message=message,
+                finished_at=now,
+            )
+        self._mark_related_runs_failed(stale_tasks, message, now)
+        if self.db.scalar("SELECT COUNT(*) FROM task_runs WHERE status = 'queued'"):
+            self._ensure_queue_worker()
+        return len(task_ids)
+
+    def _mark_related_runs_failed(self, tasks: List[Dict[str, Any]], message: str, now: datetime) -> None:
+        task_ids = [str(row["id"]) for row in tasks]
+        if task_ids:
+            placeholders = ", ".join(["?"] * len(task_ids))
+            self.db.execute(
+                f"""
+                UPDATE analysis_runs
+                SET status = 'failed',
+                    finished_at = ?,
+                    error_message = ?
+                WHERE task_id IN ({placeholders})
+                  AND status IN ('queued', 'running')
+                """,
+                [now, message, *task_ids],
+                write=True,
+            )
+            self.db.execute(
+                f"""
+                UPDATE candidate_ai_summaries
+                SET status = 'failed',
+                    error_message = ?,
+                    updated_at = ?
+                WHERE task_id IN ({placeholders})
+                  AND status IN ('queued', 'running')
+                """,
+                [message, now, *task_ids],
+                write=True,
+            )
+
+        backtest_run_ids: List[str] = []
+        portfolio_run_ids: List[str] = []
+        for task in tasks:
+            if task.get("kind") != "backtest":
+                continue
+            payload = _loads_task_json(task.get("payload_json"))
+            summary = _loads_task_json(task.get("summary_json"))
+            run_id = str(payload.get("run_id") or summary.get("backtest_run_id") or "")
+            if not run_id:
+                continue
+            if payload.get("backtest_mode") == "portfolio" or run_id.startswith("portfolio-"):
+                portfolio_run_ids.append(run_id)
+            else:
+                backtest_run_ids.append(run_id)
+        self._mark_run_ids_failed("backtest_runs", backtest_run_ids, message, now)
+        self._mark_run_ids_failed("portfolio_backtest_runs", portfolio_run_ids, message, now)
+
+    def _mark_run_ids_failed(self, table: str, run_ids: List[str], message: str, now: datetime) -> None:
+        if not run_ids:
+            return
+        unique_ids = sorted(set(run_ids))
+        placeholders = ", ".join(["?"] * len(unique_ids))
+        self.db.execute(
+            f"""
+            UPDATE {table}
+            SET status = 'failed',
+                finished_at = ?,
+                error_message = ?
+            WHERE id IN ({placeholders})
+              AND status IN ('queued', 'running')
+            """,
+            [now, message, *unique_ids],
+            write=True,
+        )
+
     def kick_queue(self) -> None:
         self._ensure_queue_worker()
 
@@ -573,11 +743,16 @@ class UpdateService:
             raise ValueError("run_id 和 code 不能为空。")
         with self._queue_lock:
             identity = candidate_summary_runner.prepare_from_result(run_id=run_id, code=code, require_existing=True)
+            active_owner = self._active_candidate_summary_owner(run_id, code)
+            if active_owner:
+                identity["status"] = active_owner.get("status")
+                identity["input_hash"] = active_owner.get("input_hash") or identity["input_hash"]
+                return str(active_owner.get("task_id") or ""), identity
             existing = candidate_summary_runner.read_summary(run_id, code, input_hash=identity["input_hash"])
             existing_status = str(existing.get("status") or "")
             reusable_completed = existing_status in {"completed_full", "completed_partial"}
             reusable_active = existing_status in {"queued", "running"} and self._task_is_active(existing.get("task_id"))
-            if not payload.get("force") and (reusable_completed or reusable_active):
+            if reusable_active or (not payload.get("force") and reusable_completed):
                 identity["status"] = existing.get("status")
                 return str(existing.get("task_id") or ""), identity
             task_id = f"ai-summary-{uuid.uuid4().hex[:12]}"
@@ -598,6 +773,22 @@ class UpdateService:
             return False
         status = self.db.scalar("SELECT status FROM task_runs WHERE id = ?", [str(task_id)])
         return status in {"queued", "running"}
+
+    def _active_candidate_summary_owner(self, run_id: str, code: str) -> Optional[Dict[str, Any]]:
+        rows = self.db.query(
+            """
+            SELECT status, task_id, input_hash
+            FROM candidate_ai_summaries
+            WHERE run_id = ? AND code = ?
+              AND status IN ('queued', 'running')
+            LIMIT 1
+            """,
+            [run_id, code],
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        return row if self._task_is_active(row.get("task_id")) else None
 
     def start_backtest(self, payload: Dict[str, Any], backtest_runner: Any) -> tuple[str, str]:
         self.backtest_runner = backtest_runner
@@ -711,6 +902,21 @@ class UpdateService:
             return task_id, run_id
 
     def _active_task_for_payload(self, kind: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        target_hash = _task_payload_hash(payload)
+        rows = self.db.query(
+            """
+            SELECT id, payload_json, summary_json
+            FROM task_runs
+            WHERE kind = ?
+              AND status IN ('queued', 'running')
+              AND payload_hash = ?
+            ORDER BY started_at, id
+            LIMIT 1
+            """,
+            [kind, target_hash],
+        )
+        if rows:
+            return rows[0]
         target = _task_payload_fingerprint(payload)
         rows = self.db.query(
             """
@@ -718,6 +924,7 @@ class UpdateService:
             FROM task_runs
             WHERE kind = ?
               AND status IN ('queued', 'running')
+              AND (payload_hash IS NULL OR payload_hash = '')
             ORDER BY started_at, id
             """,
             [kind],
@@ -864,16 +1071,36 @@ class UpdateService:
                 self._ensure_queue_worker()
 
     def _next_queued_task(self) -> Optional[Dict[str, Any]]:
-        rows = self.db.query(
-            """
-            SELECT *
-            FROM task_runs
-            WHERE status = 'queued'
-            ORDER BY queue_order NULLS LAST, started_at, id
-            LIMIT 1
-            """
-        )
-        return rows[0] if rows else None
+        with self.db._write_lock:
+            with self.db.connect() as conn:
+                conn.execute("BEGIN TRANSACTION")
+                try:
+                    now = datetime.utcnow()
+                    cur = conn.execute(
+                        """
+                        UPDATE task_runs
+                        SET status = 'running',
+                            warning = NULL,
+                            error_message = NULL,
+                            updated_at = ?
+                        WHERE id = (
+                            SELECT id
+                            FROM task_runs
+                            WHERE status = 'queued'
+                            ORDER BY queue_order NULLS LAST, started_at, id
+                            LIMIT 1
+                        )
+                        RETURNING *
+                        """,
+                        [now],
+                    )
+                    claimed_columns = [desc[0] for desc in cur.description]
+                    row = cur.fetchone()
+                    conn.execute("COMMIT")
+                    return dict(zip(claimed_columns, row)) if row else None
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
 
     def _dispatch_queued_task(self, task: Dict[str, Any], payload: Dict[str, Any]) -> None:
         kind = task.get("kind")
@@ -2931,6 +3158,7 @@ class UpdateService:
     def _run_intraday_sample(self, task_id: str, options: Dict[str, Any]) -> None:
         include_bj = bool(options.get("include_bj", settings.include_bj))
         exclude_star = bool(options.get("exclude_star_board", settings.exclude_star_board))
+        force = bool(options.get("force"))
         sample_at = _parse_sample_at(options.get("sample_at")) or datetime.now(CHINA_TZ).replace(tzinfo=None)
         trade_date = sample_at.date()
         warnings: List[str] = []
@@ -2946,6 +3174,8 @@ class UpdateService:
                 skipped=0,
             )
             frame = self._fetch_intraday_snapshot_frame(include_bj, exclude_star, warnings)
+            if not force:
+                _validate_intraday_frame_date(frame, trade_date)
             snapshot_count = self.intraday_service.record_snapshots(
                 frame,
                 sample_at=sample_at,
@@ -3017,15 +3247,32 @@ class UpdateService:
         warnings: List[str],
     ) -> pd.DataFrame:
         ts_source = TushareRealtimeSource()
+
+        def fetcher() -> pd.DataFrame:
+            try:
+                return ts_source.fetch_realtime_daily(
+                    include_bj=include_bj,
+                    exclude_star=exclude_star,
+                    allow_daily_fallback=False,
+                )
+            except TypeError as exc:
+                if "allow_daily_fallback" not in str(exc):
+                    raise
+                return ts_source.fetch_realtime_daily(include_bj=include_bj, exclude_star=exclude_star)
+
         result = self.public_guard.call(
             "Tushare 实时日线",
             "盘中行情快照",
-            lambda: ts_source.fetch_realtime_daily(include_bj=include_bj, exclude_star=exclude_star),
+            fetcher,
             ttl_minutes=5,
             max_attempts=1,
             timeout_seconds=settings.tushare_timeout_seconds,
         )
         if result.status == "available":
+            if not _is_realtime_intraday_frame(result.frame):
+                message = "Tushare 返回非盘中实时快照。"
+                warnings.append(message)
+                raise RuntimeError(f"非盘中实时快照不可用于盘中雷达：{message}")
             return result.frame
         message = result.message or "Tushare 实时日线不可用。"
         warnings.append(f"Tushare 实时日线失败：{message}")
@@ -3556,6 +3803,7 @@ class UpdateService:
             "warning": values.get("warning"),
             "summary_json": json.dumps(values.get("summary") or {}, ensure_ascii=False),
             "payload_json": json.dumps(values.get("payload") or {}, ensure_ascii=False),
+            "payload_hash": values.get("payload_hash") or _task_payload_hash(values.get("payload") or {}),
             "queue_order": values.get("queue_order") or (time.time_ns() if values.get("status") == "queued" else None),
             "cancel_requested": False,
             "started_at": values.get("started_at") or now,

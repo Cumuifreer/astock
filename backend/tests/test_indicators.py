@@ -106,6 +106,74 @@ def test_strategy_filters_respect_include_bj_switch():
     assert any(step["step_name"] == "北交所范围" for step in funnel)
 
 
+def test_strategy_filters_exclude_star_board_by_default_with_funnel():
+    rows = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "latest_price": 10.0,
+                "amount": 100_000_000,
+                "float_market_value": 1_000_000_000,
+                "rps20": 70.0,
+                "rps60": 70.0,
+                "rps120": 70.0,
+                "pct_chg": 1.0,
+                "amplitude": 0.02,
+                "volume_ratio": 1.2,
+                "ma_distance": 0.03,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "688001.SH",
+                "name": "华兴源创",
+                "latest_price": 20.0,
+                "amount": 100_000_000,
+                "float_market_value": 1_000_000_000,
+                "rps20": 80.0,
+                "rps60": 80.0,
+                "rps120": 80.0,
+                "pct_chg": 1.0,
+                "amplitude": 0.02,
+                "volume_ratio": 1.2,
+                "ma_distance": 0.03,
+                "is_st": False,
+                "suspended": False,
+            },
+            {
+                "code": "689009.SH",
+                "name": "九号公司",
+                "latest_price": 30.0,
+                "amount": 100_000_000,
+                "float_market_value": 1_000_000_000,
+                "rps20": 90.0,
+                "rps60": 90.0,
+                "rps120": 90.0,
+                "pct_chg": 1.0,
+                "amplitude": 0.02,
+                "volume_ratio": 1.2,
+                "ma_distance": 0.03,
+                "is_st": False,
+                "suspended": False,
+            },
+        ]
+    )
+
+    default_candidates, funnel, _ = apply_strategy_filters(rows, {})
+    included_candidates, _, _ = apply_strategy_filters(rows, {"exclude_star_board": False})
+
+    assert [item["code"] for item in default_candidates] == ["000001.SZ"]
+    assert {item["code"] for item in included_candidates} == {"000001.SZ", "688001.SH", "689009.SH"}
+    assert any(
+        step["step_name"] == "科创板范围"
+        and step["before_count"] == 3
+        and step["after_count"] == 1
+        and step["removed_count"] == 2
+        for step in funnel
+    )
+
+
 def test_platform_breakout_metrics_detect_compression_and_volume_breakout():
     bars = []
     start = date(2026, 4, 1)

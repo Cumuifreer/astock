@@ -180,7 +180,9 @@ test('task progress and topbar popover avoid false running states', () => {
   assert.match(statusPage, /progressByTaskId/);
   assert.match(statusPage, /getTasks/);
   assert.match(statusPage, /effectiveActiveRows\.map/);
-  assert.match(statusPage, /refetchInterval:\s*activeRefreshInterval/);
+  assert.match(statusPage, /standbyRefreshInterval/);
+  assert.match(statusPage, /hasActiveRows\(normalizeRows<TaskRun>\(query\.state\.data/);
+  assert.match(statusPage, /refetchInterval: taskPollingActive \? activeRefreshInterval : standbyRefreshInterval/);
   assert.match(statusPage, /可能仍在运行/);
   assert.doesNotMatch(statusPage, /fallbackTasks\[0\]/);
   for (const label of ['系统状态', '任务队列', '定时计划', 'DeepSeek']) {

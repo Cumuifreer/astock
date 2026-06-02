@@ -7,7 +7,7 @@ import pytest
 from backend.app.db import Database
 from backend.app.schema import migrate
 from backend.app.services.daily_brief_scheduler import DailyBriefScheduler
-from backend.app.services.daily_brief_service import DailyBriefService
+from backend.app.services.daily_brief_service import DEFAULT_DAILY_BRIEF_SOURCES, DailyBriefService
 from backend.app.services.data_service import DataService
 from backend.app.services.update_service import UpdateService
 
@@ -26,6 +26,21 @@ def test_daily_brief_generation_is_disabled_without_fetching_sources(tmp_path, m
     with pytest.raises(RuntimeError, match="已禁用"):
         service.generate(report_date=datetime(2026, 5, 23).date())
     assert db.scalar("SELECT COUNT(*) FROM news_articles") == 0
+
+
+def test_daily_brief_legacy_external_fetch_helpers_are_disabled(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = DailyBriefService(db)
+
+    assert DEFAULT_DAILY_BRIEF_SOURCES == []
+    assert not hasattr(service, "_http_get_text")
+    assert not hasattr(service, "_http_get_json")
+    assert not hasattr(service, "_fetch_rss")
+    with pytest.raises(RuntimeError, match="已禁用"):
+        service._fetch_source({"id": "legacy", "type": "rss", "url": "https://example.com/feed"})
+    with pytest.raises(RuntimeError, match="已禁用"):
+        service._call_llm([])
 
 
 def test_daily_brief_api_backfills_article_flow_for_legacy_briefs(tmp_path):

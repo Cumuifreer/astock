@@ -518,6 +518,12 @@ def apply_strategy_filters(
         working = working[~code_series.str.endswith(".BJ")]
         mark("北交所范围", before, working, "未开启包含北交所")
 
+    if strategy.get("exclude_star_board") and "code" in working.columns:
+        before = len(working)
+        code_series = working["code"].astype(str).str.upper()
+        working = working[~code_series.str.match(r"^(688|689)")]
+        mark("科创板范围", before, working, "排除科创板 688/689")
+
     working = _numeric_filter(working, "latest_price", strategy["min_price"], None, "最低股价", funnel)
     working = _numeric_filter(working, "amount", strategy["min_amount"], None, "成交额", funnel)
 
@@ -2155,7 +2161,7 @@ class AnalysisService:
             bars = pd.DataFrame(
                 self.db.query(
                     """
-                    SELECT h.*, b.name, b.suspended
+                    SELECT h.*, b.name, b.is_st AS basic_is_st, b.suspended
                     FROM historical_bars h
                     LEFT JOIN stock_basic b USING (code)
                     WHERE h.date >= ? AND h.date <= ?
@@ -2168,7 +2174,7 @@ class AnalysisService:
             bars = pd.DataFrame(
                 self.db.query(
                     """
-                    SELECT h.*, b.name, b.suspended
+                    SELECT h.*, b.name, b.is_st AS basic_is_st, b.suspended
                     FROM historical_bars h
                     LEFT JOIN stock_basic b USING (code)
                     WHERE h.date >= current_date - INTERVAL 260 DAY
@@ -2241,13 +2247,17 @@ class AnalysisService:
         _emit_analysis_progress(progress, "计算技术形态", 4)
         output = []
         analysis_engines = set(strategy.get("analysis_engines") or [])
+        analysis_date = target_date or _date_value(bars["date"].max())
         stock_count = int(bars["code"].nunique()) if "code" in bars else 0
         for index, (code, group) in enumerate(bars.groupby("code"), start=1):
             if progress and (index == 1 or index % 250 == 0 or index == stock_count):
                 _emit_analysis_progress(progress, f"计算技术形态 {index}/{stock_count}", 4)
             group = group.sort_values("date")
             latest_bar = group.iloc[-1].to_dict()
-            if target_date and _date_value(latest_bar.get("date")) != target_date:
+            latest_bar_date = _date_value(latest_bar.get("date"))
+            if target_date and latest_bar_date != target_date:
+                continue
+            if not target_date and analysis_date and latest_bar_date != analysis_date:
                 continue
             snapshot = _first_record(snapshots, code)
             float_record = _first_record(float_values, code)
@@ -2285,6 +2295,7 @@ class AnalysisService:
                 {
                     "code": code,
                     "name": (snapshot or {}).get("name") or latest_bar.get("name") or code,
+                    "bar_date": _date_text(latest_bar_date),
                     "latest_price": latest_price,
                     "pct_chg": _first_number((snapshot or {}).get("pct_chg"), latest_bar.get("pct_chg")),
                     "amount": _first_number((snapshot or {}).get("amount"), latest_bar.get("amount")),
@@ -2303,8 +2314,8 @@ class AnalysisService:
                     "float_market_value": float_mv,
                     "volume_ratio": volume_ratio,
                     "ma_distance": ma_distance,
-                    "is_st": bool(latest_bar.get("is_st")),
-                    "suspended": str(latest_bar.get("tradestatus")) == "0" or bool(latest_bar.get("suspended")),
+                    "is_st": _truthy_flag(latest_bar.get("is_st")) or _truthy_flag(latest_bar.get("basic_is_st")),
+                    "suspended": str(latest_bar.get("tradestatus")) == "0" or _truthy_flag(latest_bar.get("suspended")),
                     "data_sources": {
                         "history": latest_bar.get("source"),
                         "snapshot": (snapshot or {}).get("source"),
@@ -2322,14 +2333,17 @@ class AnalysisService:
         enriched = frame.copy()
         if "feature_dates" not in enriched.columns:
             enriched["feature_dates"] = [{} for _ in range(len(enriched))]
-        daily_basic = _records_by_code(self._latest_tushare_rows("tushare_daily_basic", as_of_date))
-        moneyflow = _records_by_code(self._latest_tushare_rows("tushare_moneyflow", as_of_date))
-        limits = _records_by_code(self._latest_tushare_rows("tushare_limit_list_d", as_of_date))
-        cyq_perf = _records_by_code(self._latest_tushare_rows("tushare_cyq_perf", as_of_date))
-        top_list = _records_by_code(self._latest_top_list_rows(as_of_date))
-        top_inst = _records_by_code(self._latest_sum_rows("tushare_top_inst", "net_buy", "top_inst_net_buy", as_of_date))
-        hot_money = _records_by_code(self._latest_sum_rows("tushare_hm_detail", "net_amount", "hot_money_net_amount", as_of_date))
-        chips = _records_by_code(self._latest_chip_rows(as_of_date))
+        reference_date = _analysis_frame_date(enriched, as_of_date)
+        daily_basic = _records_by_code(self._latest_tushare_rows("tushare_daily_basic", reference_date))
+        moneyflow = _records_by_code(self._latest_tushare_rows("tushare_moneyflow", reference_date))
+        limits = _records_by_code(self._tushare_rows_on_date("tushare_limit_list_d", reference_date))
+        last_limits = _records_by_code(self._latest_tushare_rows("tushare_limit_list_d", reference_date))
+        cyq_perf = _records_by_code(self._latest_tushare_rows("tushare_cyq_perf", reference_date))
+        top_list = _records_by_code(self._top_list_rows_on_date(reference_date))
+        last_top_list = _records_by_code(self._latest_top_list_rows(reference_date))
+        top_inst = _records_by_code(self._sum_rows_on_date("tushare_top_inst", "net_buy", "top_inst_net_buy", reference_date))
+        hot_money = _records_by_code(self._sum_rows_on_date("tushare_hm_detail", "net_amount", "hot_money_net_amount", reference_date))
+        chips = _records_by_code(self._latest_chip_rows(reference_date))
 
         for index, row in enriched.iterrows():
             code = str(row.get("code"))
@@ -2366,6 +2380,10 @@ class AnalysisService:
                 sources["moneyflow"] = flow.get("source") or "Tushare moneyflow"
                 feature_dates["moneyflow"] = _date_text(flow.get("trade_date"))
 
+            last_limit = last_limits.get(code)
+            days_since_limit = _days_since_event(reference_date, (last_limit or {}).get("trade_date"))
+            if days_since_limit is not None:
+                enriched.at[index, "days_since_limit_event"] = days_since_limit
             limit_row = limits.get(code)
             if limit_row:
                 enriched.at[index, "limit_type"] = limit_row.get("limit_type")
@@ -2403,6 +2421,10 @@ class AnalysisService:
                 feature_dates["cyq_chips"] = _date_text(chip.get("trade_date"))
 
             top = top_list.get(code)
+            last_top = last_top_list.get(code)
+            days_since_top = _days_since_event(reference_date, (last_top or {}).get("trade_date"))
+            if days_since_top is not None:
+                enriched.at[index, "days_since_top_list"] = days_since_top
             if top:
                 _assign_first_number(enriched, index, "top_list_net_amount", top.get("top_list_net_amount"))
                 _assign_first_number(enriched, index, "top_list_amount_rate", top.get("top_list_amount_rate"))
@@ -2443,6 +2465,40 @@ class AnalysisService:
             params,
         )
 
+    def _tushare_rows_on_date(self, table: str, trade_date: Optional[date]) -> List[Dict[str, Any]]:
+        if not trade_date:
+            return []
+        return self.db.query(
+            f"""
+            SELECT *
+            FROM {table}
+            WHERE trade_date = ?
+            """,
+            [trade_date],
+        )
+
+    def _sum_rows_on_date(
+        self,
+        table: str,
+        value_column: str,
+        output_column: str,
+        trade_date: Optional[date],
+    ) -> List[Dict[str, Any]]:
+        if not trade_date:
+            return []
+        return self.db.query(
+            f"""
+            SELECT code,
+                   trade_date,
+                   SUM({value_column}) AS {output_column},
+                   MAX(source) AS source
+            FROM {table}
+            WHERE trade_date = ?
+            GROUP BY code, trade_date
+            """,
+            [trade_date],
+        )
+
     def _latest_sum_rows(
         self,
         table: str,
@@ -2469,6 +2525,24 @@ class AnalysisService:
             GROUP BY t.code, t.trade_date
             """,
             params,
+        )
+
+    def _top_list_rows_on_date(self, trade_date: Optional[date]) -> List[Dict[str, Any]]:
+        if not trade_date:
+            return []
+        return self.db.query(
+            """
+            SELECT t.code,
+                   t.trade_date,
+                   SUM(t.net_amount) AS top_list_net_amount,
+                   MAX(t.amount_rate) AS top_list_amount_rate,
+                   string_agg(COALESCE(t.reason, ''), ' / ') AS top_list_reason,
+                   MAX(t.source) AS source
+            FROM tushare_top_list t
+            WHERE t.trade_date = ?
+            GROUP BY t.code, t.trade_date
+            """,
+            [trade_date],
         )
 
     def _latest_top_list_rows(self, as_of_date: Optional[date] = None) -> List[Dict[str, Any]]:
@@ -2529,16 +2603,17 @@ class AnalysisService:
         codes = {str(code) for code in enriched["code"].dropna().tolist()}
         if not codes:
             return enriched
+        reference_date = _analysis_frame_date(enriched, as_of_date)
         members = [
             row
             for row in self.db.query(
                 """
-                SELECT code, con_code
+                SELECT code, con_code, in_date, out_date
                 FROM tushare_ths_member
                 WHERE code IS NOT NULL AND con_code IS NOT NULL
                 """
             )
-            if str(row.get("code")) in codes
+            if str(row.get("code")) in codes and _theme_member_active(row, reference_date)
         ]
         if not members:
             return enriched
@@ -2552,19 +2627,14 @@ class AnalysisService:
             codes_by_theme.setdefault(theme, set()).add(code)
 
         limit_codes: set[str] = set()
-        latest_limit_date = (
-            self.db.scalar("SELECT MAX(trade_date) FROM tushare_limit_list_d WHERE trade_date <= ?", [as_of_date])
-            if as_of_date
-            else self.db.scalar("SELECT MAX(trade_date) FROM tushare_limit_list_d")
-        )
-        if latest_limit_date:
+        if reference_date:
             for row in self.db.query(
                 """
                 SELECT code, limit_type
                 FROM tushare_limit_list_d
                 WHERE trade_date = ?
                 """,
-                [latest_limit_date],
+                [reference_date],
             ):
                 limit_type = str(row.get("limit_type") or "").upper()
                 if "U" in limit_type or "UP" in limit_type or "涨停" in limit_type:
@@ -2666,6 +2736,48 @@ def _first_record(frame: pd.DataFrame, code: str) -> Optional[Dict[str, Any]]:
     return found.iloc[0].to_dict()
 
 
+def _analysis_frame_date(frame: pd.DataFrame, as_of_date: Optional[date] = None) -> Optional[date]:
+    explicit = _date_value(as_of_date)
+    if explicit:
+        return explicit
+    if frame.empty or "bar_date" not in frame:
+        return None
+    dates = [_date_value(value) for value in frame["bar_date"].dropna().tolist()]
+    dates = [value for value in dates if value is not None]
+    return max(dates) if dates else None
+
+
+def _days_since_event(reference_date: Optional[date], event_date: Any) -> Optional[int]:
+    reference = _date_value(reference_date)
+    event = _date_value(event_date)
+    if reference is None or event is None:
+        return None
+    return max(0, (reference - event).days)
+
+
+def _theme_member_active(row: Dict[str, Any], as_of_date: Optional[date]) -> bool:
+    reference = _date_value(as_of_date)
+    if reference is None:
+        return True
+    in_date = _date_value(row.get("in_date"))
+    out_date = _date_value(row.get("out_date"))
+    if in_date is not None and in_date > reference:
+        return False
+    if out_date is not None and out_date < reference:
+        return False
+    return True
+
+
+def _truthy_flag(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "t", "y", "yes", "是"}
+
+
 def _first_number(*values: Any) -> Optional[float]:
     for value in values:
         parsed = safe_float(value)
@@ -2710,7 +2822,7 @@ def _jsonable(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _date_value(value: Any) -> Optional[date]:
-    if value is None:
+    if value is None or value == "":
         return None
     if isinstance(value, datetime):
         return value.date()

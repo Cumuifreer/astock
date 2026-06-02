@@ -36,12 +36,7 @@ class CandidateSummaryService:
         matched_rules: Optional[List[Dict[str, Any]]] = None,
         risk_items: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        identity = self.prepare_summary_identity(run_id, code, candidate, matched_rules, risk_items)
-        cached = self.read_summary(run_id, code, input_hash=identity["input_hash"])
-        if cached.get("status") in {"completed_full", "completed_partial"} and cached.get("summary"):
-            return cached["summary"]
-        result = self.generate_and_store(identity)
-        return result.get("summary") or {}
+        raise RuntimeError("候选解释同步入口已禁用；请通过异步任务生成 AI 解读。")
 
     def prepare_summary_identity(
         self,
@@ -155,6 +150,8 @@ class CandidateSummaryService:
         }
 
     def generate_and_store(self, identity: Dict[str, Any], task_id: Optional[str] = None) -> Dict[str, Any]:
+        if task_id:
+            self._assert_task_owner(identity, task_id)
         generated_at = datetime.utcnow().isoformat(timespec="seconds")
         candidate = identity["candidate"]
         matched = identity["matched_rules"]
@@ -183,6 +180,8 @@ class CandidateSummaryService:
         status: str,
         task_id: Optional[str] = None,
     ) -> None:
+        if task_id:
+            self._assert_task_owner(identity, task_id)
         now = datetime.utcnow().isoformat(timespec="seconds")
         self.db.upsert(
             "candidate_ai_summaries",
@@ -208,13 +207,62 @@ class CandidateSummaryService:
         )
 
     def mark_queued(self, identity: Dict[str, Any], task_id: str) -> None:
+        self._assert_no_active_owner_conflict(identity, task_id)
         self._mark_status(identity, status="queued", task_id=task_id)
 
     def mark_running(self, identity: Dict[str, Any], task_id: str) -> None:
+        self._assert_task_owner(identity, task_id)
         self._mark_status(identity, status="running", task_id=task_id)
 
     def mark_failed(self, identity: Dict[str, Any], task_id: str, error_message: str) -> None:
+        identity = self._failure_identity_for_owner(identity, task_id)
         self._mark_status(identity, status="failed", task_id=task_id, error_message=error_message)
+
+    def _owner_row(self, run_id: str, code: str) -> Optional[Dict[str, Any]]:
+        rows = self.db.query(
+            """
+            SELECT status, task_id, input_hash
+            FROM candidate_ai_summaries
+            WHERE run_id = ? AND code = ?
+            LIMIT 1
+            """,
+            [run_id, code],
+        )
+        return rows[0] if rows else None
+
+    def _assert_no_active_owner_conflict(self, identity: Dict[str, Any], task_id: str) -> None:
+        row = self._owner_row(identity["run_id"], identity["code"])
+        if not row or row.get("status") not in {"queued", "running"}:
+            return
+        same_task = str(row.get("task_id") or "") == str(task_id)
+        same_input = str(row.get("input_hash") or "") == str(identity.get("input_hash") or "")
+        if same_task and same_input:
+            return
+        raise RuntimeError("候选解释任务归属不匹配，拒绝覆盖活动任务。")
+
+    def _assert_task_owner(self, identity: Dict[str, Any], task_id: str) -> None:
+        row = self._owner_row(identity["run_id"], identity["code"])
+        if not row:
+            return
+        row_task_id = str(row.get("task_id") or "")
+        row_input_hash = str(row.get("input_hash") or "")
+        if row_task_id and row_task_id != str(task_id):
+            raise RuntimeError("候选解释任务归属不匹配，拒绝旧任务写回。")
+        if row_input_hash and row_input_hash != str(identity.get("input_hash") or ""):
+            raise RuntimeError("候选解释任务归属不匹配，拒绝旧输入写回。")
+
+    def _failure_identity_for_owner(self, identity: Dict[str, Any], task_id: str) -> Dict[str, Any]:
+        row = self._owner_row(identity["run_id"], identity["code"])
+        if not row:
+            return identity
+        if str(row.get("task_id") or "") != str(task_id):
+            self._assert_task_owner(identity, task_id)
+        row_input_hash = str(row.get("input_hash") or "")
+        if row_input_hash and row_input_hash != str(identity.get("input_hash") or ""):
+            failed_identity = dict(identity)
+            failed_identity["input_hash"] = row_input_hash
+            return failed_identity
+        return identity
 
     def _mark_status(
         self,

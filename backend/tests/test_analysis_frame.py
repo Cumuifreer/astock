@@ -1,3 +1,5 @@
+import pandas as pd
+
 from backend.app.db import Database
 from backend.app.schema import migrate
 from backend.app.services.analysis_service import AnalysisService
@@ -92,6 +94,285 @@ def test_analysis_frame_keeps_zero_snapshot_values(tmp_path):
     assert row["turnover_rate"] == 0.0
     assert row["float_market_value"] == 0.0
     assert row["volume_ratio"] == 0.0
+
+
+def test_analysis_frame_filters_stale_current_bars_and_merges_stock_basic_st(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "stock_basic",
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "exchange": "SZ",
+                "list_date": "1991-04-03",
+                "source": "test",
+                "is_st": False,
+                "suspended": False,
+                "updated_at": "2026-05-20T15:00:00",
+            },
+            {
+                "code": "000002.SZ",
+                "name": "ST 测试",
+                "exchange": "SZ",
+                "list_date": "1991-04-03",
+                "source": "test",
+                "is_st": True,
+                "suspended": False,
+                "updated_at": "2026-05-20T15:00:00",
+            },
+            {
+                "code": "000003.SZ",
+                "name": "过期 K 线",
+                "exchange": "SZ",
+                "list_date": "1991-04-03",
+                "source": "test",
+                "is_st": False,
+                "suspended": False,
+                "updated_at": "2026-05-20T15:00:00",
+            },
+        ],
+        ["code"],
+    )
+    db.upsert(
+        "historical_bars",
+        [
+            {
+                "code": "000001.SZ",
+                "date": "2026-05-20",
+                "open": 9.8,
+                "high": 10.1,
+                "low": 9.7,
+                "close": 10.0,
+                "prev_close": 9.8,
+                "volume": 1000.0,
+                "amount": 10_000.0,
+                "turn": 2.0,
+                "pct_chg": 2.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Tushare daily",
+                "updated_at": "2026-05-20T15:00:00",
+            },
+            {
+                "code": "000002.SZ",
+                "date": "2026-05-20",
+                "open": 8.8,
+                "high": 9.1,
+                "low": 8.7,
+                "close": 9.0,
+                "prev_close": 8.8,
+                "volume": 1000.0,
+                "amount": 10_000.0,
+                "turn": 2.0,
+                "pct_chg": 2.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Tushare daily",
+                "updated_at": "2026-05-20T15:00:00",
+            },
+            {
+                "code": "000003.SZ",
+                "date": "2026-05-19",
+                "open": 7.8,
+                "high": 8.1,
+                "low": 7.7,
+                "close": 8.0,
+                "prev_close": 7.8,
+                "volume": 1000.0,
+                "amount": 10_000.0,
+                "turn": 2.0,
+                "pct_chg": 2.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Tushare daily",
+                "updated_at": "2026-05-19T15:00:00",
+            },
+        ],
+        ["code", "date"],
+    )
+
+    frame = AnalysisService(db)._build_analysis_frame(DEFAULT_STRATEGY_CONFIG)
+
+    assert set(frame["code"]) == {"000001.SZ", "000002.SZ"}
+    assert bool(frame[frame["code"] == "000002.SZ"].iloc[0]["is_st"]) is True
+
+
+def test_analysis_frame_uses_event_features_only_on_analysis_date_and_keeps_age(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "historical_bars",
+        [
+            {
+                "code": "000001.SZ",
+                "date": "2026-05-20",
+                "open": 9.8,
+                "high": 10.1,
+                "low": 9.7,
+                "close": 10.0,
+                "prev_close": 9.8,
+                "volume": 1000.0,
+                "amount": 10_000.0,
+                "turn": 2.0,
+                "pct_chg": 2.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Tushare daily",
+                "updated_at": "2026-05-20T15:00:00",
+            }
+        ],
+        ["code", "date"],
+    )
+    db.upsert(
+        "tushare_limit_list_d",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": "2026-05-19",
+                "name": "平安银行",
+                "close": 10.0,
+                "pct_chg": 10.0,
+                "limit_type": "U",
+                "up_stat": "1/1",
+                "fd_amount": 100000000.0,
+                "first_time": "09:40:00",
+                "last_time": "14:50:00",
+                "open_times": 0,
+                "source": "Tushare limit_list_d",
+                "updated_at": "2026-05-19T15:00:00",
+            }
+        ],
+        ["code", "trade_date"],
+    )
+    db.upsert(
+        "tushare_top_list",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": "2026-05-19",
+                "name": "平安银行",
+                "net_amount": 8_000_000.0,
+                "amount_rate": 2.5,
+                "reason": "日涨幅偏离值达7%",
+                "source": "Tushare top_list",
+                "updated_at": "2026-05-19T17:00:00",
+            }
+        ],
+        ["code", "trade_date", "reason"],
+    )
+
+    row = AnalysisService(db)._build_analysis_frame(DEFAULT_STRATEGY_CONFIG).iloc[0]
+
+    assert row.get("limit_type") is None or pd.isna(row.get("limit_type"))
+    assert row.get("top_list_net_amount") is None or pd.isna(row.get("top_list_net_amount"))
+    assert row["days_since_limit_event"] == 1
+    assert row["days_since_top_list"] == 1
+
+
+def test_theme_metrics_use_as_of_membership_and_exact_limit_event_date(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "historical_bars",
+        [
+            {
+                "code": "000001.SZ",
+                "date": "2026-05-20",
+                "open": 9.8,
+                "high": 10.1,
+                "low": 9.7,
+                "close": 10.0,
+                "prev_close": 9.8,
+                "volume": 1000.0,
+                "amount": 10_000.0,
+                "turn": 2.0,
+                "pct_chg": 2.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Tushare daily",
+                "updated_at": "2026-05-20T15:00:00",
+            },
+            {
+                "code": "000002.SZ",
+                "date": "2026-05-20",
+                "open": 9.8,
+                "high": 10.1,
+                "low": 9.7,
+                "close": 10.0,
+                "prev_close": 9.8,
+                "volume": 1000.0,
+                "amount": 10_000.0,
+                "turn": 2.0,
+                "pct_chg": 2.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Tushare daily",
+                "updated_at": "2026-05-20T15:00:00",
+            },
+        ],
+        ["code", "date"],
+    )
+    db.upsert(
+        "tushare_ths_member",
+        [
+            {
+                "code": "000001.SZ",
+                "name": "平安银行",
+                "con_code": "885001.TI",
+                "con_name": "测试题材",
+                "weight": None,
+                "in_date": "2026-01-01",
+                "out_date": None,
+                "is_new": "Y",
+                "source": "Tushare ths_member",
+                "updated_at": "2026-05-20T15:00:00",
+            },
+            {
+                "code": "000002.SZ",
+                "name": "万科A",
+                "con_code": "885001.TI",
+                "con_name": "测试题材",
+                "weight": None,
+                "in_date": "2026-01-01",
+                "out_date": "2026-05-19",
+                "is_new": "N",
+                "source": "Tushare ths_member",
+                "updated_at": "2026-05-20T15:00:00",
+            },
+        ],
+        ["code", "con_code"],
+    )
+    db.upsert(
+        "tushare_limit_list_d",
+        [
+            {
+                "code": "000002.SZ",
+                "trade_date": "2026-05-19",
+                "name": "万科A",
+                "close": 10.0,
+                "pct_chg": 10.0,
+                "limit_type": "U",
+                "up_stat": "1/1",
+                "fd_amount": 100000000.0,
+                "first_time": "09:40:00",
+                "last_time": "14:50:00",
+                "open_times": 0,
+                "source": "Tushare limit_list_d",
+                "updated_at": "2026-05-19T15:00:00",
+            }
+        ],
+        ["code", "trade_date"],
+    )
+
+    row = AnalysisService(db)._build_analysis_frame(DEFAULT_STRATEGY_CONFIG, as_of_date="2026-05-20")
+    active = row[row["code"] == "000001.SZ"].iloc[0]
+    expired = row[row["code"] == "000002.SZ"].iloc[0]
+
+    assert active["topic_count"] == 1
+    assert active["theme_limit_count"] == 0
+    assert expired["topic_count"] == 0
 
 
 def test_analysis_frame_enriches_theme_metrics(tmp_path):

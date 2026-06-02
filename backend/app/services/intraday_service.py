@@ -60,9 +60,7 @@ class IntradayRadarService:
     def get_config(self) -> Dict[str, Any]:
         row = self.db.query("SELECT config_json FROM intraday_radar_config WHERE id = 'default'")
         if not row:
-            config = normalize_intraday_config(DEFAULT_INTRADAY_RADAR_CONFIG)
-            self.save_config(config)
-            return config
+            return normalize_intraday_config(DEFAULT_INTRADAY_RADAR_CONFIG)
         return normalize_intraday_config(json.loads(row[0]["config_json"] or "{}"))
 
     def save_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -95,6 +93,8 @@ class IntradayRadarService:
             code = item.get("code")
             if not code:
                 continue
+            if not _trusted_intraday_snapshot(item):
+                continue
             rows.append(
                 {
                     "code": code,
@@ -111,6 +111,8 @@ class IntradayRadarService:
                     "created_at": datetime.utcnow(),
                 }
             )
+        if not rows:
+            return 0
         return self.db.upsert("intraday_snapshots", rows, ["code", "sample_at"])
 
     def run_radar(
@@ -193,45 +195,32 @@ class IntradayRadarService:
         return len(strict_limited)
 
     def latest(self, limit: int = 100) -> Dict[str, Any]:
-        sample_at = self.db.scalar("SELECT MAX(sample_at) FROM intraday_radar_rankings")
         config = self.get_config()
+        sample_at = self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots")
         if not sample_at:
-            sample_at = self.db.scalar("SELECT MAX(sample_at) FROM intraday_radar_candidates")
-            if not sample_at:
-                latest_sample = self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots")
-                return {
-                    "config": config,
-                    "sample_at": latest_sample,
-                    "sample_count": self._sample_count(latest_sample),
-                    "summary": {
-                        "candidate_count": 0,
-                        "strict_count": 0,
-                        "score_count": 0,
-                        "zero_reason": "盘中雷达尚未生成。",
-                    },
-                    "rows": [],
-                    "strict_rows": [],
-                    "score_rows": [],
-                }
-            strict_rows = self._legacy_candidate_rows(sample_at, limit)
-            strict_count = self._legacy_candidate_count(sample_at)
             return {
                 "config": config,
-                "sample_at": sample_at,
-                "sample_count": self._sample_count(sample_at),
+                "sample_at": None,
+                "sample_count": 0,
                 "summary": {
-                    "candidate_count": strict_count,
-                    "strict_count": strict_count,
+                    "candidate_count": 0,
+                    "strict_count": 0,
                     "score_count": 0,
+                    "zero_reason": "盘中雷达尚未生成。",
                 },
-                "rows": strict_rows,
-                "strict_rows": strict_rows,
+                "rows": [],
+                "strict_rows": [],
                 "score_rows": [],
             }
         strict_rows = self._ranking_rows(sample_at, RADAR_MODE_STRICT, limit)
         score_rows = self._ranking_rows(sample_at, RADAR_MODE_SCORE, limit)
         strict_count = self._ranking_count(sample_at, RADAR_MODE_STRICT)
         score_count = self._ranking_count(sample_at, RADAR_MODE_SCORE)
+        if strict_count == 0 and score_count == 0:
+            legacy_count = self._legacy_candidate_count(sample_at)
+            if legacy_count:
+                strict_rows = self._legacy_candidate_rows(sample_at, limit)
+                strict_count = legacy_count
         return {
             "config": config,
             "sample_at": sample_at,
@@ -240,6 +229,11 @@ class IntradayRadarService:
                 "candidate_count": strict_count,
                 "strict_count": strict_count,
                 "score_count": score_count,
+                **(
+                    {"zero_reason": "最新采样没有符合盘中雷达条件的候选。"}
+                    if strict_count == 0 and score_count == 0
+                    else {}
+                ),
             },
             "rows": strict_rows,
             "strict_rows": strict_rows,
@@ -939,6 +933,57 @@ def _decode_candidate_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         row["metrics"] = json.loads(row.pop("metrics_json") or "{}")
         row["chart_url"] = f"https://finance.sina.com.cn/realstock/company/{to_sina_chart_symbol(row['code'])}/nc.shtml"
     return rows
+
+
+def _trusted_intraday_snapshot(item: Dict[str, Any]) -> bool:
+    source = str(item.get("source") or "")
+    freshness = str(item.get("freshness") or "").strip().lower()
+    if freshness and freshness not in {"realtime", "real_time", "intraday"}:
+        return False
+    if "日线回退" in source or "daily_fallback" in source.lower():
+        return False
+    if _snapshot_is_st_or_suspended(item, source):
+        return False
+
+    latest = safe_float(item.get("latest_price"))
+    high = safe_float(item.get("high"))
+    low = safe_float(item.get("low"))
+    pct_chg = safe_float(item.get("pct_chg"))
+    amount = safe_float(item.get("amount"))
+    volume = safe_float(item.get("volume"))
+    if latest is None or latest <= 0:
+        return False
+    if high is not None and high <= 0:
+        return False
+    if low is not None and low <= 0:
+        return False
+    if high is not None and low is not None and high < low:
+        return False
+    if amount is not None and amount < 0:
+        return False
+    if volume is not None and volume < 0:
+        return False
+    if pct_chg is not None and not -40.0 <= pct_chg <= 40.0:
+        return False
+    return True
+
+
+def _snapshot_is_st_or_suspended(item: Dict[str, Any], source: str) -> bool:
+    name = str(item.get("name") or "").strip().upper()
+    if name.startswith("ST") or name.startswith("*ST"):
+        return True
+    status = item.get("tradestatus")
+    if status is None:
+        status = item.get("trade_status")
+    if status is None:
+        status = item.get("status")
+    if status is False:
+        return True
+    status_text = str(status or "").strip().lower()
+    if status_text in {"0", "false", "停牌", "suspended", "halt", "halted", "paused"}:
+        return True
+    source_text = source.lower()
+    return "停牌" in source or "suspended" in source_text or "halted" in source_text
 
 
 def _date_value(value: Any) -> Optional[date]:

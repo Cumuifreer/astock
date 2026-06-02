@@ -127,6 +127,121 @@ def test_intraday_radar_scores_latest_snapshot_against_platform(tmp_path):
     assert "突破上沿" in " / ".join(row["reasons"])
 
 
+def test_intraday_latest_uses_latest_snapshot_even_when_no_candidates(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+
+    service = IntradayRadarService(db)
+    first = datetime(2026, 5, 21, 10, 0)
+    second = datetime(2026, 5, 21, 10, 30)
+    service.record_snapshots(
+        pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "平安银行",
+                    "latest_price": 10.55,
+                    "pct_chg": 4.2,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "Tushare 实时日线",
+                }
+            ]
+        ),
+        sample_at=first,
+        trade_date="2026-05-21",
+    )
+    service.run_radar(sample_at=first, config={"min_amount": 0, "platform_bull_amount_advantage": 0})
+    service.record_snapshots(
+        pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "平安银行",
+                    "latest_price": 8.8,
+                    "pct_chg": -3.0,
+                    "high": 9.0,
+                    "low": 8.6,
+                    "volume": 500_000.0,
+                    "amount": 5_000_000.0,
+                    "source": "Tushare 实时日线",
+                }
+            ]
+        ),
+        sample_at=second,
+        trade_date="2026-05-21",
+    )
+    service.run_radar(sample_at=second, config={"min_amount": 0, "platform_bull_amount_advantage": 0})
+
+    result = service.latest(limit=10)
+
+    assert result["sample_at"] == second
+    assert result["sample_count"] == 1
+    assert result["rows"] == []
+    assert result["strict_rows"] == []
+    assert result["score_rows"] == []
+    assert result["summary"]["strict_count"] == 0
+    assert result["summary"]["score_count"] == 0
+    assert result["summary"]["zero_reason"]
+
+
+def test_intraday_get_config_returns_default_without_persisting(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = IntradayRadarService(db)
+
+    config = service.get_config()
+
+    assert config["enabled"] is True
+    assert db.scalar("SELECT COUNT(*) FROM intraday_radar_config") == 0
+
+
+def test_intraday_record_snapshots_filters_untrusted_rows_before_insert(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = IntradayRadarService(db)
+    sample_at = datetime(2026, 5, 21, 10, 0)
+
+    written = service.record_snapshots(
+        pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "平安银行",
+                    "latest_price": 10.5,
+                    "pct_chg": 4.0,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 1_000_000.0,
+                    "amount": 12_000_000.0,
+                    "tradestatus": "1",
+                    "source": "Tushare 实时日线",
+                    "freshness": "realtime",
+                },
+                { "code": "000002.SZ", "name": "负价格", "latest_price": -1, "high": 10.0, "low": 9.0, "amount": 1_000_000.0 },
+                { "code": "000003.SZ", "name": "高低错", "latest_price": 10.0, "high": 9.0, "low": 10.0, "amount": 1_000_000.0 },
+                { "code": "000004.SZ", "name": "涨幅错", "latest_price": 10.0, "pct_chg": 88.0, "high": 10.0, "low": 9.0, "amount": 1_000_000.0 },
+                { "code": "000005.SZ", "name": "负金额", "latest_price": 10.0, "high": 10.0, "low": 9.0, "amount": -1.0 },
+                { "code": "000006.SZ", "name": "ST测试", "latest_price": 10.0, "high": 10.0, "low": 9.0, "amount": 1_000_000.0 },
+                { "code": "000007.SZ", "name": "停牌", "latest_price": 10.0, "high": 10.0, "low": 9.0, "amount": 1_000_000.0, "tradestatus": "0" },
+                { "code": "000008.SZ", "name": "源停牌", "latest_price": 10.0, "high": 10.0, "low": 9.0, "amount": 1_000_000.0, "source": "停牌快照" },
+                { "code": "000009.SZ", "name": "日线回退", "latest_price": 10.0, "high": 10.0, "low": 9.0, "amount": 1_000_000.0, "source": "Tushare 日线回退", "freshness": "daily_fallback" },
+            ]
+        ),
+        sample_at=sample_at,
+        trade_date="2026-05-21",
+    )
+
+    rows = db.query("SELECT code FROM intraday_snapshots ORDER BY code")
+
+    assert written == 1
+    assert rows == [{"code": "000001.SZ"}]
+
+
 def test_intraday_radar_keeps_strict_and_score_views_for_same_snapshot(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -726,6 +841,46 @@ def test_intraday_task_records_snapshot_and_runs_radar(tmp_path, monkeypatch):
     assert radar["rows"][0]["status"] == "刚突破"
 
 
+def test_intraday_task_rejects_frame_date_mismatch_unless_forced(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    task_id = "intraday-stale"
+    service._write_task(task_id, kind="intraday", status="running", stage="启动")
+    stale_frame = pd.DataFrame(
+        [
+            {
+                "code": "000001.SZ",
+                "date": "2026-05-22",
+                "name": "平安银行",
+                "latest_price": 10.55,
+                "pct_chg": 4.2,
+                "high": 10.6,
+                "low": 9.9,
+                "volume": 3_100_000.0,
+                "amount": 62_000_000.0,
+                "source": "Tushare 实时日线",
+                "freshness": "realtime",
+            }
+        ]
+    )
+    monkeypatch.setattr(service, "_fetch_intraday_snapshot_frame", lambda include_bj, exclude_star, warnings: stale_frame)
+
+    service._run_intraday_sample(task_id, {"sample_at": "2026-05-23T10:00:00"})
+
+    task = db.query("SELECT status, error_message FROM task_runs WHERE id = ?", [task_id])[0]
+    assert task["status"] == "failed"
+    assert "快照日期" in task["error_message"]
+    assert db.scalar("SELECT COUNT(*) FROM intraday_snapshots") == 0
+
+    forced_task_id = "intraday-stale-force"
+    service._write_task(forced_task_id, kind="intraday", status="running", stage="启动")
+    service._run_intraday_sample(forced_task_id, {"sample_at": "2026-05-23T10:00:00", "force": True})
+    forced_task = db.query("SELECT status FROM task_runs WHERE id = ?", [forced_task_id])[0]
+    assert forced_task["status"] == "completed_full"
+    assert db.scalar("SELECT COUNT(*) FROM intraday_snapshots") == 1
+
+
 def test_intraday_task_refreshes_market_environment_and_concept_heat(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -835,6 +990,37 @@ def test_intraday_snapshot_prefers_tushare_realtime(tmp_path, monkeypatch):
     frame = service._fetch_intraday_snapshot_frame(include_bj=False, exclude_star=False, warnings=[])
 
     assert frame.iloc[0]["source"] == "Tushare 实时日线"
+
+
+def test_intraday_snapshot_rejects_daily_fallback_freshness(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+
+    class FakeTushareSource:
+        def fetch_realtime_daily(self, include_bj=False, exclude_star=False):
+            return pd.DataFrame(
+                [
+                    {
+                        "code": "000001.SZ",
+                        "date": "2026-05-21",
+                        "name": "平安银行",
+                        "latest_price": 10.55,
+                        "pct_chg": 4.2,
+                        "high": 10.6,
+                        "low": 9.9,
+                        "volume": 3_100_000.0,
+                        "amount": 62_000_000.0,
+                        "source": "Tushare 日线回退",
+                        "freshness": "daily_fallback",
+                    }
+                ]
+            )
+
+    monkeypatch.setattr("backend.app.services.update_service.TushareRealtimeSource", FakeTushareSource)
+
+    with pytest.raises(RuntimeError, match="非盘中实时"):
+        service._fetch_intraday_snapshot_frame(include_bj=False, exclude_star=False, warnings=[])
 
 
 def test_daily_update_snapshot_prefers_tushare_realtime(tmp_path, monkeypatch):

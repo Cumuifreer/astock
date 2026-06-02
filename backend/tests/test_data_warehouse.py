@@ -75,6 +75,12 @@ def seed_stock_basics(db: Database) -> None:
     )
 
 
+def refreshed_capabilities(db: Database):
+    service = DataService(db)
+    service.refresh_capabilities()
+    return service.capabilities()
+
+
 def test_stock_warehouse_search_qualifies_joined_code_columns(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -143,6 +149,60 @@ def test_stock_warehouse_filters_inactive_status_and_falls_back_for_exact_code_s
 def test_capability_definitions_declare_coverage_kind_explicitly():
     assert CAPABILITY_DEFINITIONS
     assert all(definition.get("coverage_kind") in {"stock", "event", "dataset"} for definition in CAPABILITY_DEFINITIONS.values())
+
+
+def test_capabilities_reads_cached_rows_without_writing(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "data_capabilities",
+        [
+            {
+                "capability": "股票基础信息",
+                "actual_sources": ["本地缓存"],
+                "fallback_sources": ["Tushare stock_basic", "本地缓存"],
+                "coverage_count": 4,
+                "missing_count": 0,
+                "latest_update": datetime(2026, 5, 24, 9, 0),
+                "last_failure_reason": None,
+                "uses_cache": True,
+                "can_backfill": True,
+                "participates_in_analysis": True,
+                "updated_at": datetime(2026, 5, 24, 9, 1),
+            }
+        ],
+        ["capability"],
+    )
+    original_execute = db.execute
+
+    def read_only_execute(sql, params=None, write=False):
+        if write:
+            raise AssertionError("capabilities() must not write while serving GET requests")
+        return original_execute(sql, params, write=write)
+
+    def forbidden_upsert(*_args, **_kwargs):
+        raise AssertionError("capabilities() must not refresh cached capability rows")
+
+    monkeypatch.setattr(db, "execute", read_only_execute)
+    monkeypatch.setattr(db, "upsert", forbidden_upsert)
+
+    rows = DataService(db).capabilities()
+
+    assert rows == [
+        {
+            "capability": "股票基础信息",
+            "actual_sources": ["本地缓存"],
+            "fallback_sources": ["Tushare stock_basic", "本地缓存"],
+            "coverage_count": 4,
+            "missing_count": 0,
+            "latest_update": datetime(2026, 5, 24, 9, 0),
+            "last_failure_reason": None,
+            "uses_cache": True,
+            "can_backfill": True,
+            "participates_in_analysis": True,
+            "updated_at": datetime(2026, 5, 24, 9, 1),
+        }
+    ]
 
 
 def test_stock_warehouse_turnover_rate_prefers_tushare_daily_basic(tmp_path):
@@ -268,7 +328,7 @@ def test_capabilities_count_snapshot_float_market_value(tmp_path):
     migrate(db)
     seed_stock_basics(db)
 
-    capabilities = DataService(db).capabilities()
+    capabilities = refreshed_capabilities(db)
     float_market_value = next(row for row in capabilities if row["capability"] == "流通市值")
 
     assert float_market_value["coverage_count"] == 1
@@ -296,7 +356,7 @@ def test_capabilities_use_active_stocks_as_denominator(tmp_path):
         ["code"],
     )
 
-    capabilities = {row["capability"]: row for row in DataService(db).capabilities()}
+    capabilities = {row["capability"]: row for row in refreshed_capabilities(db)}
 
     assert capabilities["股票基础信息"]["coverage_count"] == 4
     assert capabilities["股票基础信息"]["missing_count"] == 0
@@ -467,7 +527,7 @@ def test_capabilities_hide_stale_fallback_failures_when_current_source_is_health
         ["source", "capability"],
     )
 
-    capabilities = {row["capability"]: row for row in DataService(db).capabilities()}
+    capabilities = {row["capability"]: row for row in refreshed_capabilities(db)}
 
     assert capabilities["当天行情快照"]["missing_count"] == 0
     assert capabilities["当天行情快照"]["last_failure_reason"] is None
@@ -522,7 +582,7 @@ def test_capabilities_ignore_inactive_old_data_in_stock_coverage(tmp_path):
         ["code", "date"],
     )
 
-    capabilities = {row["capability"]: row for row in DataService(db).capabilities()}
+    capabilities = {row["capability"]: row for row in refreshed_capabilities(db)}
 
     assert capabilities["历史 K 线"]["coverage_count"] == 0
     assert capabilities["历史 K 线"]["missing_count"] == 4
@@ -533,7 +593,7 @@ def test_capabilities_include_tushare_enrichment_layers(tmp_path):
     migrate(db)
     seed_stock_basics(db)
 
-    capabilities = DataService(db).capabilities()
+    capabilities = refreshed_capabilities(db)
     by_name = {row["capability"]: row for row in capabilities}
 
     for name in ["每日指标", "技术因子", "资金流向", "涨跌停", "筹码分布", "概念/行业成分", "龙虎榜/游资"]:
@@ -582,7 +642,7 @@ def test_capabilities_treat_event_datasets_as_event_counts_and_drop_legacy_conce
         ["code", "trade_date"],
     )
 
-    capabilities = DataService(db).capabilities()
+    capabilities = refreshed_capabilities(db)
     by_name = {row["capability"]: row for row in capabilities}
 
     assert "概念标签" not in by_name

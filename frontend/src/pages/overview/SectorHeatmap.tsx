@@ -17,9 +17,11 @@ export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
   const [mode, setMode] = useState<HeatMode>('concept');
   const queryType = mode === 'industry' ? 'industry' : 'concept';
   const queryMetric = mode === 'money' ? 'moneyflow' : mode === 'limit' ? 'limit' : 'heat';
+  const shouldFetchHeatmap = mode !== 'concept' || !sectors.length;
   const heatmap = useQuery({
     queryKey: ['sector-heatmap', queryType, queryMetric],
     queryFn: () => getSectorHeatmap(queryType, queryMetric, 80),
+    enabled: shouldFetchHeatmap,
   });
   const rows = normalizeRows<SectorHeatNode>(heatmap.data);
   const sourceRows = rows.length || mode !== 'concept' ? rows : sectors;

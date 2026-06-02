@@ -1,13 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getTaskFlow, getTaskProgressNodes, getTasks } from '../../api/data';
+import { getRuntimeHealth, getTaskFlow, getTaskProgressNodes, getTasks } from '../../api/data';
 import { queryKeys } from '../../api/queryKeys';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
 import { DataTable } from '../../design/DataTable';
 import { LoadingState } from '../../design/LoadingState';
 import { Progress } from '../../design/Progress';
-import { useBootstrap } from '../../hooks/useBootstrap';
 import { useTaskTerminalInvalidation } from '../../hooks/useTaskTerminalInvalidation';
 import { dateTimeToMs, formatChinaDateTime, formatDateTime } from '../../utils/date';
 import { flowProgress, normalizeRows, taskProgressValue } from '../../utils/metrics';
@@ -16,32 +15,37 @@ import type { TaskRun } from '../../types';
 import type { TaskFlowNode, TaskProgressNode } from '../../api/data';
 
 const activeRefreshInterval = 2500;
+const standbyRefreshInterval = 60_000;
 const staleHeartbeatMs = 60_000;
 
 export function StatusPage() {
   const [showMaintenance, setShowMaintenance] = useState(false);
-  const bootstrap = useBootstrap();
   const activeTasks = useQuery({
     queryKey: queryKeys.tasks.active(),
     queryFn: () => getTasks({ status: 'queued,running', limit: 50 }),
-    refetchInterval: activeRefreshInterval,
+    refetchInterval: (query) =>
+      hasActiveRows(normalizeRows<TaskRun>(query.state.data as { rows?: TaskRun[] } | TaskRun[] | undefined)) ? activeRefreshInterval : standbyRefreshInterval,
   });
+  const activeRows = normalizeRows<TaskRun>(activeTasks.data);
+  const taskPollingActive = hasActiveRows(activeRows);
   const recentTasks = useQuery({
     queryKey: queryKeys.tasks.recent(),
     queryFn: () => getTasks({ status: 'completed_full,completed_partial,failed', limit: 50 }),
-    refetchInterval: activeRefreshInterval,
+    refetchInterval: taskPollingActive ? activeRefreshInterval : standbyRefreshInterval,
   });
-  const fallbackTasks = [bootstrap.data?.update_status, bootstrap.data?.analyze_status, bootstrap.data?.backtest_status, bootstrap.data?.intraday_status, bootstrap.data?.brief_status].filter(Boolean) as TaskRun[];
-  const activeRows = normalizeRows<TaskRun>(activeTasks.data);
+  const runtimeHealth = useQuery({
+    queryKey: queryKeys.runtimeHealth(),
+    queryFn: getRuntimeHealth,
+    refetchInterval: taskPollingActive ? activeRefreshInterval : standbyRefreshInterval,
+  });
   const recentRows = normalizeRows<TaskRun>(recentTasks.data);
-  const bootstrapActiveRows = fallbackTasks.filter((task) => ['queued', 'running'].includes(task.status));
-  const effectiveActiveRows = activeTasks.isSuccess ? activeRows : activeRows.length ? activeRows : bootstrapActiveRows;
+  const effectiveActiveRows = activeRows;
   const runningTasks = effectiveActiveRows.filter((task) => task.status === 'running');
   const queuedTasks = effectiveActiveRows.filter((task) => task.status === 'queued');
   const failedTasks = recentRows.filter((task) => task.status === 'failed');
   const activeTask = runningTasks[0] || queuedTasks[0] || null;
-  const scheduler = bootstrap.data?.runtime_health?.scheduler;
-  const llm = bootstrap.data?.runtime_health?.llm;
+  const scheduler = runtimeHealth.data?.scheduler;
+  const llm = runtimeHealth.data?.llm;
   const taskFlow = useQuery({
     queryKey: queryKeys.tasks.flow(activeTask?.id),
     queryFn: () => getTaskFlow(activeTask?.id || ''),
@@ -72,9 +76,9 @@ export function StatusPage() {
     ],
     [],
   );
-  useTaskTerminalInvalidation(recentRows);
+  useTaskTerminalInvalidation(recentRows, recentTasks.isFetched);
 
-  if (bootstrap.isLoading || activeTasks.isLoading) return <LoadingState label="读取任务状态" />;
+  if (activeTasks.isLoading) return <LoadingState label="读取任务状态" />;
 
   return (
     <div className="page-grid">
@@ -240,6 +244,10 @@ function systemLabel(task?: TaskRun | null) {
   if (task.kind === 'backtest') return task.status === 'queued' ? '等待回测' : '正在回测';
   if (String(task.kind) === 'candidate_ai_summary') return task.status === 'queued' ? '等待解释' : '正在解释';
   return task.status === 'queued' ? '等待任务' : '正在运行';
+}
+
+function hasActiveRows(rows: TaskRun[]) {
+  return rows.some((task) => ['queued', 'running'].includes(task.status));
 }
 
 function kindLabel(kind?: string | null) {

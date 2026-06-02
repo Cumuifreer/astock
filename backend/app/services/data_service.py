@@ -378,6 +378,7 @@ class DataService:
             "state": state,
             "pulse": pulse,
             "sector_heatmap": sector_nodes,
+            "latest_brief": self.latest_daily_brief(),
             "action_items": self._daily_action_items(state, sector_nodes),
             "data_freshness": self._data_freshness(),
             "realtime_capabilities": {
@@ -1212,13 +1213,12 @@ class DataService:
         return decoded
 
     def capabilities(self) -> List[Dict[str, Any]]:
-        self.refresh_capabilities()
         rows = self.db.query("SELECT * FROM data_capabilities ORDER BY capability")
-        if {row["capability"] for row in rows} != set(CAPABILITY_DEFINITIONS):
-            rows = self.db.query("SELECT * FROM data_capabilities ORDER BY capability")
         for row in rows:
-            row["actual_sources"] = json.loads(row.get("actual_sources") or "[]")
-            row["fallback_sources"] = json.loads(row.get("fallback_sources") or "[]")
+            actual_sources = row.get("actual_sources")
+            fallback_sources = row.get("fallback_sources")
+            row["actual_sources"] = actual_sources if isinstance(actual_sources, list) else json.loads(actual_sources or "[]")
+            row["fallback_sources"] = fallback_sources if isinstance(fallback_sources, list) else json.loads(fallback_sources or "[]")
         return rows
 
     def refresh_capabilities(self) -> None:

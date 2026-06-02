@@ -26,7 +26,7 @@ export function IntradayBoard({ rows, tone, hideSampleMetrics, hideThemeMetrics,
           {
             code: row.code,
             name: row.name,
-            entry_price: row.metrics?.latest_price || null,
+            entry_price: row.latest_price ?? null,
             reasons: row.reasons || row.signal_tags || [],
             metrics: row.metrics || {},
             hypothesis: (row.reasons || row.signal_tags || []).slice(0, 2).join('；'),

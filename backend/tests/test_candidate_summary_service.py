@@ -11,19 +11,34 @@ def test_candidate_summary_returns_rule_fallback_without_api_key(tmp_path):
     migrate(db)
     service = CandidateSummaryService(db, api_key="")
 
-    result = service.summarize(
-        "run-1",
-        "000001.SZ",
-        {"code": "000001.SZ", "name": "平安银行", "reasons": ["RPS 强", "量能确认"], "metrics": {}},
+    identity = service.prepare_summary_identity(
+        run_id="run-1",
+        code="000001.SZ",
+        candidate={"code": "000001.SZ", "name": "平安银行", "reasons": ["RPS 强", "量能确认"], "metrics": {}},
         matched_rules=[],
         risk_items=[],
     )
+    result = service.generate_and_store(identity)
+    summary = result["summary"]
 
-    assert result["enabled"] is False
-    assert result["fallback_reason"] == "missing_api_key"
-    assert result["summary"].startswith("平安银行")
-    assert result["opportunities"] == ["RPS 强", "量能确认"]
-    assert result["prompt_version"]
+    assert summary["enabled"] is False
+    assert summary["fallback_reason"] == "missing_api_key"
+    assert summary["summary"].startswith("平安银行")
+    assert summary["opportunities"] == ["RPS 强", "量能确认"]
+    assert summary["prompt_version"]
+
+
+def test_candidate_summary_sync_entrypoint_is_disabled(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = CandidateSummaryService(db, api_key="")
+
+    try:
+        service.summarize("run-1", "000001.SZ", {"code": "000001.SZ", "name": "平安银行"}, [], [])
+    except RuntimeError as exc:
+        assert "异步任务" in str(exc)
+    else:
+        raise AssertionError("synchronous candidate summary entrypoint must stay disabled")
 
 
 def test_candidate_summary_status_uses_input_hash_and_prompt_version(tmp_path):
@@ -71,7 +86,7 @@ def test_candidate_summary_persists_fallback_result(tmp_path):
     assert cached["task_id"] == "ai-summary-test"
 
 
-def test_candidate_summary_caches_llm_result(tmp_path, monkeypatch):
+def test_candidate_summary_reads_llm_result_from_worker_store(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     service = CandidateSummaryService(db, api_key="configured")
@@ -88,16 +103,23 @@ def test_candidate_summary_caches_llm_result(tmp_path, monkeypatch):
 
     monkeypatch.setattr(service, "_call_llm", fake_call)
 
-    first = service.summarize("run-1", "000001.SZ", {"code": "000001.SZ", "name": "平安银行"}, [], [])
-    second = service.summarize("run-1", "000001.SZ", {"code": "000001.SZ", "name": "平安银行"}, [], [])
+    identity = service.prepare_summary_identity(
+        run_id="run-1",
+        code="000001.SZ",
+        candidate={"code": "000001.SZ", "name": "平安银行"},
+        matched_rules=[],
+        risk_items=[],
+    )
+    first = service.generate_and_store(identity)
+    second = service.read_summary("run-1", "000001.SZ", input_hash=identity["input_hash"])
 
-    assert first["enabled"] is True
-    assert second["summary"] == "平安银行 自然语言解释"
-    assert second["prompt_version"] == first["prompt_version"]
+    assert first["summary"]["enabled"] is True
+    assert second["summary"]["summary"] == "平安银行 自然语言解释"
+    assert second["summary"]["prompt_version"] == first["summary"]["prompt_version"]
     assert calls["count"] == 1
 
 
-def test_candidate_summary_ignores_old_prompt_cache(tmp_path, monkeypatch):
+def test_candidate_summary_ignores_old_prompt_cache(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert(
@@ -114,19 +136,11 @@ def test_candidate_summary_ignores_old_prompt_cache(tmp_path, monkeypatch):
         ["run_id", "code"],
     )
     service = CandidateSummaryService(db, api_key="configured")
-    calls = {"count": 0}
 
-    def fake_call(candidate, matched_rules, risk_items):
-        calls["count"] += 1
-        return {"summary": "新解读", "opportunities": ["新机会"], "risks": ["新风险"], "watch_plan": ["新观察"]}
+    result = service.read_summary("run-1", "000001.SZ", input_hash="expected-new-hash")
 
-    monkeypatch.setattr(service, "_call_llm", fake_call)
-
-    result = service.summarize("run-1", "000001.SZ", {"code": "000001.SZ", "name": "平安银行"}, [], [])
-
-    assert result["summary"] == "新解读"
-    assert result["prompt_version"]
-    assert calls["count"] == 1
+    assert result["status"] == "stale"
+    assert result["summary"]["summary"] == "旧缓存"
 
 
 def test_candidate_summary_reports_llm_error_fallback(tmp_path, monkeypatch):
@@ -139,7 +153,14 @@ def test_candidate_summary_reports_llm_error_fallback(tmp_path, monkeypatch):
 
     monkeypatch.setattr(service, "_call_llm", fail_call)
 
-    result = service.summarize("run-1", "000001.SZ", {"code": "000001.SZ", "name": "平安银行"}, [], [])
+    identity = service.prepare_summary_identity(
+        run_id="run-1",
+        code="000001.SZ",
+        candidate={"code": "000001.SZ", "name": "平安银行"},
+        matched_rules=[],
+        risk_items=[],
+    )
+    result = service.generate_and_store(identity)["summary"]
 
     assert result["enabled"] is False
     assert result["fallback_reason"] == "llm_error"
@@ -157,7 +178,14 @@ def test_candidate_summary_reports_invalid_response_fallback(tmp_path, monkeypat
 
     monkeypatch.setattr(service, "_call_llm", invalid_call)
 
-    result = service.summarize("run-1", "000001.SZ", {"code": "000001.SZ", "name": "平安银行"}, [], [])
+    identity = service.prepare_summary_identity(
+        run_id="run-1",
+        code="000001.SZ",
+        candidate={"code": "000001.SZ", "name": "平安银行"},
+        matched_rules=[],
+        risk_items=[],
+    )
+    result = service.generate_and_store(identity)["summary"]
 
     assert result["enabled"] is False
     assert result["fallback_reason"] == "invalid_response"
@@ -224,3 +252,58 @@ def test_candidate_summary_prepares_authoritative_evidence_from_candidate_result
     assert identity["candidate"]["metrics"]["volume_ratio"] == 1.8
     assert identity["matched_rules"] == [{"indicator_id": "rps20", "matched": True}]
     assert identity["risk_items"] == [{"indicator_id": "turnover", "reason": "换手偏高"}]
+
+
+def test_candidate_summary_persist_rejects_stale_task_owner(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = CandidateSummaryService(db, api_key="")
+    identity = service.prepare_summary_identity(
+        run_id="run-1",
+        code="000001.SZ",
+        candidate={"code": "000001.SZ", "name": "平安银行"},
+        matched_rules=[],
+        risk_items=[],
+    )
+
+    owner_cases = [
+        {"task_id": "new-task", "input_hash": identity["input_hash"]},
+        {"task_id": "old-task", "input_hash": "new-input-hash"},
+    ]
+    for owner in owner_cases:
+        db.upsert(
+            "candidate_ai_summaries",
+            [
+                {
+                    "run_id": "run-1",
+                    "code": "000001.SZ",
+                    "status": "running",
+                    "task_id": owner["task_id"],
+                    "input_hash": owner["input_hash"],
+                    "prompt_version": identity["prompt_version"],
+                    "summary_json": None,
+                    "llm_model": "model-a",
+                    "generated_at": None,
+                    "updated_at": datetime.utcnow(),
+                }
+            ],
+            ["run_id", "code"],
+        )
+
+        try:
+            service.persist_summary(
+                identity,
+                {"summary": "旧任务结果", "generated_at": datetime.utcnow().isoformat(timespec="seconds")},
+                status="completed_partial",
+                task_id="old-task",
+            )
+        except RuntimeError as exc:
+            assert "任务归属" in str(exc)
+        else:
+            raise AssertionError("stale task owner must not overwrite candidate summary")
+
+        row = db.query("SELECT status, task_id, input_hash, summary_json FROM candidate_ai_summaries WHERE run_id = ? AND code = ?", ["run-1", "000001.SZ"])[0]
+        assert row["status"] == "running"
+        assert row["task_id"] == owner["task_id"]
+        assert row["input_hash"] == owner["input_hash"]
+        assert row["summary_json"] is None

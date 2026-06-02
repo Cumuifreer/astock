@@ -7,7 +7,7 @@ from backend.app.db import Database
 from backend.app.schema import migrate
 from backend.app.services.data_service import DataService
 from backend.app.services.analysis_service import AnalysisService
-from backend.app.services.backtest_service import BacktestService, compute_forward_labels
+from backend.app.services.backtest_service import BacktestService, compute_forward_labels, _simulate_trade
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG
 
 
@@ -125,6 +125,84 @@ def test_forward_labels_use_next_trading_open_and_future_bars():
     assert labels["hit_5pct_10d"] is True
     assert labels["hit_8pct_10d"] is True
     assert labels["hit_stop_5pct_10d"] is True
+
+
+def test_backtest_explicit_latest_end_date_is_clamped_to_label_horizon(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    start = date(2026, 1, 1)
+    db.upsert(
+        "historical_bars",
+        [
+            {
+                "code": "000001.SZ",
+                "date": start + timedelta(days=index),
+                "open": 10 + index * 0.1,
+                "high": 10.3 + index * 0.1,
+                "low": 9.8 + index * 0.1,
+                "close": 10.1 + index * 0.1,
+                "prev_close": 10 + index * 0.1,
+                "volume": 1000 + index,
+                "amount": 200_000_000,
+                "turn": 2.0,
+                "pct_chg": 1.0,
+                "tradestatus": "1",
+                "is_st": False,
+                "source": "Baostock",
+                "updated_at": "2026-01-01T00:00:00",
+            }
+            for index in range(30)
+        ],
+        ["code", "date"],
+    )
+
+    _, sampled_dates, options = BacktestService(db)._resolve_options(
+        {
+            "end_date": "2026-01-30",
+            "step": 1,
+            "config": {"min_price": 0, "min_amount": 0},
+        }
+    )
+
+    assert options["requested_end_date"] == "2026-01-30"
+    assert options["end_date"] == "2026-01-10"
+    assert options["end_date_adjusted_for_label_horizon"] is True
+    assert sampled_dates[-1] == date(2026, 1, 10)
+
+
+def test_portfolio_hold_days_matches_forward_label_horizon():
+    start = date(2026, 1, 1)
+    rows = []
+    for index in range(12):
+        day = start + timedelta(days=index)
+        future_index = max(0, (day - date(2026, 1, 5)).days)
+        rows.append(
+            {
+                "code": "000001.SZ",
+                "date": day,
+                "open": 10.0 if day > date(2026, 1, 5) else 9.7,
+                "high": 10.0 + future_index,
+                "low": 9.5,
+                "close": 10.0 + future_index,
+                "prev_close": 9.9 + future_index,
+            }
+        )
+
+    trade = _simulate_trade(
+        pd.DataFrame(rows),
+        "000001.SZ",
+        "平安银行",
+        date(2026, 1, 5),
+        hold_days=5,
+        transaction_cost=0,
+        slippage=0,
+    )
+
+    assert trade is not None
+    assert trade["entry_date"] == date(2026, 1, 6)
+    assert trade["exit_date"] == date(2026, 1, 10)
+    assert trade["exit_price"] == 15.0
+    assert trade["return_pct"] == pytest.approx(0.5)
 
 
 def test_data_service_returns_latest_backtest_result(tmp_path):

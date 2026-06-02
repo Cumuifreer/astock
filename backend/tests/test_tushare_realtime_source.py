@@ -55,6 +55,25 @@ class CapturingTusharePro:
         )
 
 
+class DailyFallbackOnlyPro:
+    def daily(self, trade_date=""):
+        return pd.DataFrame(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": trade_date,
+                    "name": "平安银行",
+                    "close": 10.5,
+                    "pre_close": 10.0,
+                    "high": 10.8,
+                    "low": 10.0,
+                    "vol": 1200,
+                    "amount": 12_600.0,
+                }
+            ]
+        )
+
+
 def test_tushare_realtime_daily_normalizes_snapshot_fields():
     source = TushareRealtimeSource(pro=FakeTusharePro())
 
@@ -82,6 +101,17 @@ def test_tushare_realtime_daily_requests_all_beijing_prefixes_when_enabled():
     assert "4*.BJ" in pro.requested_code
     assert "8*.BJ" in pro.requested_code
     assert "9*.BJ" in pro.requested_code
+
+
+def test_tushare_daily_fallback_is_marked_non_realtime():
+    source = TushareRealtimeSource(pro=DailyFallbackOnlyPro())
+
+    frame = source.fetch_realtime_daily(include_bj=False, exclude_star=False)
+
+    row = frame.iloc[0].to_dict()
+    assert row["source"] == "Tushare 日线回退"
+    assert row["freshness"] == "daily_fallback"
+    assert frame.attrs["freshness"] == "daily_fallback"
 
 
 class FakeTushareEnrichmentPro:

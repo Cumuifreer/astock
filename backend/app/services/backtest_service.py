@@ -231,15 +231,21 @@ class BacktestService:
         if not dates:
             raise RuntimeError("本地仓库暂无历史 K 线，无法回测。")
 
+        label_safe_index = max(0, len(dates) - LABEL_HORIZON - 1)
+        requested_end_date = None
+        end_date_adjusted = False
         end_request = _date_value(payload.get("end_date"))
         if end_request:
             end_candidates = [item for item in dates if item <= end_request]
             if not end_candidates:
                 raise RuntimeError("回测结束日期早于本地历史数据。")
-            end_date = end_candidates[-1]
-            end_index = dates.index(end_date)
+            requested_end_date = end_request.isoformat()
+            requested_end_index = dates.index(end_candidates[-1])
+            end_index = min(requested_end_index, label_safe_index)
+            end_date_adjusted = end_index < requested_end_index
+            end_date = dates[end_index]
         else:
-            end_index = max(0, len(dates) - LABEL_HORIZON - 1)
+            end_index = label_safe_index
             end_date = dates[end_index]
 
         start_request = _date_value(payload.get("start_date"))
@@ -271,6 +277,8 @@ class BacktestService:
             "step": step,
             "sampled_dates": len(sampled_dates),
             "label_horizon": LABEL_HORIZON,
+            "requested_end_date": requested_end_date,
+            "end_date_adjusted_for_label_horizon": end_date_adjusted,
             "entry_rule": "next_open",
             "float_market_value_policy": float_policy,
         }
@@ -718,7 +726,7 @@ def _simulate_trade(
     frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.date
     frame = frame.dropna(subset=["date"]).sort_values("date")
     future = frame[frame["date"] > as_of].copy()
-    if len(future) < 2:
+    if future.empty:
         return None
     entry = future.iloc[0]
     entry_open = safe_float(entry.get("open")) or safe_float(entry.get("close"))
@@ -727,7 +735,7 @@ def _simulate_trade(
         return None
     if _likely_limit_up(entry):
         return None
-    exit_index = min(max(1, hold_days), len(future) - 1)
+    exit_index = min(max(1, hold_days) - 1, len(future) - 1)
     exit_row = future.iloc[exit_index]
     exit_price = safe_float(exit_row.get("close")) or safe_float(exit_row.get("open"))
     exit_date = _date_value(exit_row.get("date"))

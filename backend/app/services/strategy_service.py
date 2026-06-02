@@ -102,7 +102,7 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
     "sort_by": "signal_score",
     "missing_float_market_value_policy": "allow",
     "include_bj": False,
-    "exclude_star_board": False,
+    "exclude_star_board": True,
     "analysis_engines": [],
     "strategy_rules": [],
     "strategy_interactions": [],

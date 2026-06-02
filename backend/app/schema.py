@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from datetime import datetime
@@ -15,7 +16,7 @@ from backend.app.services.strategy_service import (
 )
 
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 MIGRATIONS = [
@@ -387,6 +388,7 @@ MIGRATIONS = [
         warning TEXT,
         summary_json TEXT,
         payload_json TEXT,
+        payload_hash TEXT,
         queue_order BIGINT,
         cancel_requested BOOLEAN DEFAULT FALSE,
         started_at TIMESTAMP,
@@ -399,7 +401,14 @@ MIGRATIONS = [
     ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS payload_json TEXT
     """,
     """
+    ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS payload_hash TEXT
+    """,
+    """
     ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS queue_order BIGINT
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_task_runs_active_payload
+    ON task_runs(kind, status, payload_hash)
     """,
     """
     CREATE TABLE IF NOT EXISTS analysis_runs (
@@ -859,6 +868,7 @@ MIGRATIONS = [
 def migrate(db: Database) -> None:
     for sql in MIGRATIONS:
         db.execute(sql, write=True)
+    backfill_task_payload_hashes(db)
     db.upsert(
         "schema_migrations",
         [{"version": SCHEMA_VERSION, "applied_at": datetime.utcnow()}],
@@ -866,6 +876,40 @@ def migrate(db: Database) -> None:
     )
     seed_strategy_presets(db)
     backfill_strategy_versions(db)
+
+
+def backfill_task_payload_hashes(db: Database) -> None:
+    rows = db.query(
+        """
+        SELECT id, payload_json
+        FROM task_runs
+        WHERE payload_hash IS NULL OR payload_hash = ''
+        """
+    )
+    for row in rows:
+        payload = {}
+        if row.get("payload_json"):
+            try:
+                payload = json.loads(row["payload_json"] or "{}")
+            except Exception:
+                payload = {}
+        db.execute(
+            "UPDATE task_runs SET payload_hash = ? WHERE id = ?",
+            [_task_payload_hash(payload), row["id"]],
+            write=True,
+        )
+
+
+def _task_payload_hash(payload: dict) -> str:
+    comparable = {key: value for key, value in (payload or {}).items() if key != "run_id"}
+    canonical = json.dumps(
+        comparable,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def seed_strategy_presets(db: Database) -> None:
