@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from datetime import date, datetime
@@ -8,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from backend.app.db import Database
+from backend.app.services.analysis_service import AnalysisService, _jsonable, apply_strategy_filters
 from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
 
 RADAR_MODE_STRICT = "strict"
@@ -77,6 +79,180 @@ class IntradayRadarService:
             ["id"],
         )
         return normalized
+
+    def strategy_tracking_config(self, strategy_service: Any) -> Dict[str, Any]:
+        selected_id = self.db.scalar(
+            "SELECT strategy_preset_id FROM intraday_strategy_tracking_config WHERE id = 'default'"
+        )
+        preset = strategy_service.get_preset(str(selected_id)) if selected_id else None
+        status = "selected" if preset else "missing"
+        if not selected_id:
+            preset = self._default_tracking_preset(strategy_service)
+            selected_id = preset.get("id") if preset else None
+            status = "default" if preset else "missing"
+        return {
+            "strategy_preset_id": selected_id,
+            "strategy_status": status,
+            "persisted": status == "selected",
+            "updated_at": self.db.scalar("SELECT updated_at FROM intraday_strategy_tracking_config WHERE id = 'default'"),
+        }
+
+    def set_strategy_tracking_config(self, strategy_preset_id: str, strategy_service: Any) -> Dict[str, Any]:
+        preset_id = str(strategy_preset_id or "").strip()
+        if not preset_id or not strategy_service.get_preset(preset_id):
+            raise ValueError("策略预设不存在。")
+        self.db.upsert(
+            "intraday_strategy_tracking_config",
+            [{"id": "default", "strategy_preset_id": preset_id, "updated_at": datetime.utcnow()}],
+            ["id"],
+        )
+        return self.strategy_tracking_config(strategy_service)
+
+    def tracking_uses_strategy(self, strategy_preset_id: str) -> bool:
+        selected_id = self.db.scalar(
+            "SELECT strategy_preset_id FROM intraday_strategy_tracking_config WHERE id = 'default'"
+        )
+        return bool(selected_id and str(selected_id) == str(strategy_preset_id))
+
+    def run_strategy_tracking(
+        self,
+        strategy_service: Any,
+        sample_at: Optional[datetime | str] = None,
+    ) -> int:
+        target_sample = _sample_value(sample_at) or self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots")
+        if not target_sample:
+            return 0
+        target_sample_text = _sample_text(target_sample)
+        config = self.strategy_tracking_config(strategy_service)
+        preset_id = str(config.get("strategy_preset_id") or "")
+        preset = strategy_service.get_preset(preset_id) if preset_id else None
+        if not preset:
+            return 0
+
+        strategy = dict(preset.get("config") or {})
+        strategy_name = str(preset.get("name") or strategy.get("strategy_name") or "未命名策略")
+        strategy["strategy_name"] = strategy_name
+        strategy["name"] = strategy_name
+        strategy["preset_name"] = strategy_name
+        run_id = _tracking_run_id(target_sample_text, preset_id)
+        previous_codes = self._previous_tracking_codes(preset_id, target_sample_text)
+        rows = AnalysisService(self.db)._build_analysis_frame(strategy)
+        candidates, _funnel, zero_reason = apply_strategy_filters(rows, strategy) if not rows.empty else ([], [], "本地行情不足，无法运行策略跟踪。")
+        current_codes = {str(item.get("code")) for item in candidates if item.get("code")}
+        now = datetime.utcnow()
+        summary = {
+            "candidate_count": len(candidates),
+            "zero_reason": zero_reason,
+            "strategy_preset_id": preset_id,
+            "strategy_name": strategy_name,
+            "new_count": len(current_codes - previous_codes),
+            "continued_count": len(current_codes & previous_codes),
+            "dropped_count": len(previous_codes - current_codes),
+        }
+        self.db.upsert(
+            "intraday_strategy_tracking_runs",
+            [
+                {
+                    "id": run_id,
+                    "sample_at": target_sample_text,
+                    "strategy_preset_id": preset_id,
+                    "strategy_name": strategy_name,
+                    "strategy_version_id": preset.get("latest_version_id"),
+                    "status": "completed",
+                    "summary_json": json.dumps(summary, ensure_ascii=False),
+                    "zero_reason": zero_reason,
+                    "created_at": now,
+                }
+            ],
+            ["id"],
+        )
+        self.db.execute(
+            "DELETE FROM intraday_strategy_tracking_candidates WHERE run_id = ?",
+            [run_id],
+            write=True,
+        )
+        candidate_rows = []
+        for rank, candidate in enumerate(candidates, start=1):
+            code = str(candidate.get("code") or "")
+            if not code:
+                continue
+            candidate_rows.append(
+                {
+                    "run_id": run_id,
+                    "rank": rank,
+                    "code": code,
+                    "name": candidate.get("name"),
+                    "latest_price": safe_float(candidate.get("latest_price")),
+                    "pct_chg": safe_float(candidate.get("pct_chg")),
+                    "amount": safe_float(candidate.get("amount")),
+                    "volume": safe_float(candidate.get("volume")),
+                    "turnover_rate": safe_float(candidate.get("turnover_rate")),
+                    "amplitude": safe_float(candidate.get("amplitude")),
+                    "rps20": safe_float(candidate.get("rps20")),
+                    "rps60": safe_float(candidate.get("rps60")),
+                    "rps120": safe_float(candidate.get("rps120")),
+                    "ma_short": safe_float(candidate.get("ma_short")),
+                    "ma_long": safe_float(candidate.get("ma_long")),
+                    "float_market_value": safe_float(candidate.get("float_market_value")),
+                    "signal_type": candidate.get("signal_type"),
+                    "signal_score": safe_float(candidate.get("signal_score")),
+                    "tracking_status": "continued" if code in previous_codes else "new",
+                    "reasons_json": json.dumps(candidate.get("reasons") or [], ensure_ascii=False),
+                    "metrics_json": json.dumps(_jsonable(candidate), ensure_ascii=False),
+                    "created_at": now,
+                }
+            )
+        self.db.upsert("intraday_strategy_tracking_candidates", candidate_rows, ["run_id", "code"])
+        return len(candidate_rows)
+
+    def strategy_tracking_latest(self, strategy_service: Any, limit: int = 80) -> Dict[str, Any]:
+        config = self.strategy_tracking_config(strategy_service)
+        preset_id = str(config.get("strategy_preset_id") or "")
+        preset = strategy_service.get_preset(preset_id) if preset_id else None
+        if not preset:
+            return {
+                "config": {**config, "strategy_status": "missing"},
+                "strategy": None,
+                "sample_at": self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots"),
+                "summary": {"candidate_count": 0, "zero_reason": "当前跟踪策略不可用，请重新选择。"},
+                "rows": [],
+            }
+        run = self.db.query(
+            """
+            SELECT *
+            FROM intraday_strategy_tracking_runs
+            WHERE strategy_preset_id = ?
+            ORDER BY sample_at DESC, created_at DESC
+            LIMIT 1
+            """,
+            [preset_id],
+        )
+        if not run:
+            return {
+                "config": config,
+                "strategy": _tracking_strategy_payload(preset),
+                "sample_at": self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots"),
+                "summary": {"candidate_count": 0, "zero_reason": "策略跟踪尚未生成。"},
+                "rows": [],
+            }
+        run_row = run[0]
+        rows = self.db.query(
+            """
+            SELECT *
+            FROM intraday_strategy_tracking_candidates
+            WHERE run_id = ?
+            ORDER BY rank, code
+            LIMIT ?
+            """,
+            [run_row["id"], max(1, min(int(limit or 80), 300))],
+        )
+        return {
+            "config": config,
+            "strategy": _tracking_strategy_payload(preset),
+            "sample_at": run_row.get("sample_at"),
+            "summary": json.loads(run_row.get("summary_json") or "{}"),
+            "rows": _decode_tracking_rows(rows),
+        }
 
     def record_snapshots(
         self,
@@ -342,6 +518,36 @@ class IntradayRadarService:
             "risk": risk[:limit],
             "theme_pulse": self._theme_pulse(),
         }
+
+    def _default_tracking_preset(self, strategy_service: Any) -> Optional[Dict[str, Any]]:
+        presets = strategy_service.list_presets()
+        for preset in presets:
+            if preset.get("is_default"):
+                return preset
+        return presets[0] if presets else None
+
+    def _previous_tracking_codes(self, strategy_preset_id: str, sample_at: str) -> set[str]:
+        rows = self.db.query(
+            """
+            SELECT r.sample_at, c.code
+            FROM intraday_strategy_tracking_runs r
+            JOIN intraday_strategy_tracking_candidates c ON c.run_id = r.id
+            WHERE r.strategy_preset_id = ?
+              AND r.sample_at < CAST(? AS TIMESTAMP)
+            ORDER BY r.sample_at DESC, c.rank
+            """,
+            [strategy_preset_id, sample_at],
+        )
+        codes: set[str] = set()
+        latest_sample = None
+        for row in rows:
+            if latest_sample is None:
+                latest_sample = row.get("sample_at")
+            if row.get("sample_at") != latest_sample:
+                break
+            if row.get("code"):
+                codes.add(str(row["code"]))
+        return codes
 
     def _board_candidate(
         self,
@@ -933,6 +1139,32 @@ def _decode_candidate_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         row["metrics"] = json.loads(row.pop("metrics_json") or "{}")
         row["chart_url"] = f"https://finance.sina.com.cn/realstock/company/{to_sina_chart_symbol(row['code'])}/nc.shtml"
     return rows
+
+
+def _decode_tracking_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    for row in rows:
+        row["reasons"] = json.loads(row.pop("reasons_json") or "[]")
+        row["metrics"] = json.loads(row.pop("metrics_json") or "{}")
+        row["chart_url"] = f"https://finance.sina.com.cn/realstock/company/{to_sina_chart_symbol(row['code'])}/nc.shtml"
+    return rows
+
+
+def _tracking_run_id(sample_at: str, strategy_preset_id: str) -> str:
+    digest = hashlib.sha1(strategy_preset_id.encode("utf-8")).hexdigest()[:10]
+    stamp = _sample_value(sample_at).strftime("%Y%m%d%H%M%S") if _sample_value(sample_at) else str(sample_at).replace(":", "")
+    return f"intraday-strategy-{stamp}-{digest}"
+
+
+def _tracking_strategy_payload(preset: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": preset.get("id"),
+        "name": preset.get("name"),
+        "is_system": preset.get("is_system"),
+        "is_default": preset.get("is_default"),
+        "latest_version_id": preset.get("latest_version_id"),
+        "latest_version_number": preset.get("latest_version_number"),
+        "summary": preset.get("latest_version_summary"),
+    }
 
 
 def _trusted_intraday_snapshot(item: Dict[str, Any]) -> bool:

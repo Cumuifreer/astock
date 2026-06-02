@@ -540,6 +540,11 @@ button {
   color: var(--text-primary);
 }
 
+.select-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .select-content,
 .popover-content,
 .tooltip-content {
@@ -711,6 +716,30 @@ button {
   display: grid;
   max-width: 440px;
   margin-top: var(--space-3);
+}
+
+.strategy-tracking-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.strategy-tracking-select {
+  display: grid;
+  min-width: min(360px, 100%);
+  gap: 6px;
+}
+
+.strategy-tracking-select > span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.strategy-tracking-select .select-trigger {
+  width: 100%;
 }
 
 .strategy-name-input,

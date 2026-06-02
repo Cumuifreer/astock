@@ -21,6 +21,7 @@ export const queryKeys = {
   },
   intraday: {
     boards: () => ['intraday-boards'] as const,
+    strategyTracking: () => ['intraday-strategy-tracking'] as const,
     timeline: (code?: string, tradeDate?: string | null) => ['intraday-timeline', code, tradeDate] as const,
   },
 };

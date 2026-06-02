@@ -16,7 +16,7 @@ from backend.app.services.strategy_service import (
 )
 
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 TASK_RUN_COLUMNS = [
     "id",
@@ -684,6 +684,53 @@ MIGRATIONS = [
         metrics_json TEXT,
         created_at TIMESTAMP,
         PRIMARY KEY (sample_at, radar_mode, code)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS intraday_strategy_tracking_config (
+        id TEXT PRIMARY KEY,
+        strategy_preset_id TEXT,
+        updated_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS intraday_strategy_tracking_runs (
+        id TEXT PRIMARY KEY,
+        sample_at TIMESTAMP,
+        strategy_preset_id TEXT,
+        strategy_name TEXT,
+        strategy_version_id TEXT,
+        status TEXT,
+        summary_json TEXT,
+        zero_reason TEXT,
+        created_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS intraday_strategy_tracking_candidates (
+        run_id TEXT,
+        rank INTEGER,
+        code TEXT,
+        name TEXT,
+        latest_price DOUBLE,
+        pct_chg DOUBLE,
+        amount DOUBLE,
+        volume DOUBLE,
+        turnover_rate DOUBLE,
+        amplitude DOUBLE,
+        rps20 DOUBLE,
+        rps60 DOUBLE,
+        rps120 DOUBLE,
+        ma_short DOUBLE,
+        ma_long DOUBLE,
+        float_market_value DOUBLE,
+        signal_type TEXT,
+        signal_score DOUBLE,
+        tracking_status TEXT,
+        reasons_json TEXT,
+        metrics_json TEXT,
+        created_at TIMESTAMP,
+        PRIMARY KEY (run_id, code)
     )
     """,
     """

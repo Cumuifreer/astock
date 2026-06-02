@@ -7,6 +7,7 @@ import pytest
 from backend.app.db import Database
 from backend.app.schema import migrate
 from backend.app.services.intraday_service import IntradayRadarService
+from backend.app.services.strategy_service import StrategyService
 from backend.app.services.update_service import UpdateService
 
 
@@ -791,6 +792,101 @@ def test_intraday_radar_strict_applies_intraday_pct_change_floor(tmp_path):
     assert result["summary"]["score_count"] == 1
 
 
+def test_intraday_strategy_tracking_persists_preset_id_and_uses_latest_config(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+    sample_at = datetime(2026, 5, 21, 10, 0)
+    db.upsert(
+        "daily_snapshots",
+        [
+            {
+                "code": "000001.SZ",
+                "date": "2026-05-21",
+                "name": "平安银行",
+                "latest_price": 10.55,
+                "pct_chg": 4.2,
+                "high": 10.6,
+                "low": 9.9,
+                "volume": 3_100_000.0,
+                "amount": 62_000_000.0,
+                "turnover_rate": 2.0,
+                "float_market_value": 1_000_000_000.0,
+                "source": "Tushare 实时日线",
+                "updated_at": "2026-05-21T10:00:00",
+            }
+        ],
+        ["code", "date"],
+    )
+    IntradayRadarService(db).record_snapshots(
+        pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "平安银行",
+                    "latest_price": 10.55,
+                    "pct_chg": 4.2,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "Tushare 实时日线",
+                    "freshness": "realtime",
+                }
+            ]
+        ),
+        sample_at=sample_at,
+        trade_date="2026-05-21",
+    )
+    strategy_service = StrategyService(db)
+    preset = strategy_service.save_preset(
+        "盘中跟踪策略",
+        {"min_amount": 20_000_000, "min_price": 4.0, "candidate_limit": 10},
+    )
+    service = IntradayRadarService(db)
+
+    config = service.set_strategy_tracking_config(preset["id"], strategy_service)
+    first_count = service.run_strategy_tracking(strategy_service, sample_at=sample_at)
+    first = service.strategy_tracking_latest(strategy_service)
+    strategy_service.save_preset(
+        "盘中跟踪策略",
+        {**preset["config"], "min_amount": 100_000_000, "candidate_limit": 10},
+        preset_id=preset["id"],
+    )
+    second_count = service.run_strategy_tracking(strategy_service, sample_at=sample_at)
+    second = service.strategy_tracking_latest(strategy_service)
+
+    assert config["strategy_preset_id"] == preset["id"]
+    assert first_count == 1
+    assert first["config"]["strategy_preset_id"] == preset["id"]
+    assert first["strategy"]["id"] == preset["id"]
+    assert first["rows"][0]["code"] == "000001.SZ"
+    assert first["rows"][0]["tracking_status"] == "new"
+    assert second_count == 0
+    assert second["config"]["strategy_preset_id"] == preset["id"]
+    assert second["strategy"]["id"] == preset["id"]
+    assert second["rows"] == []
+    assert second["summary"]["zero_reason"]
+
+
+def test_intraday_strategy_tracking_keeps_deleted_selection_unavailable(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    strategy_service = StrategyService(db)
+    preset = strategy_service.save_preset("临时跟踪策略", {"min_amount": 20_000_000})
+    service = IntradayRadarService(db)
+    service.set_strategy_tracking_config(preset["id"], strategy_service)
+
+    strategy_service.delete_preset(preset["id"])
+    latest = service.strategy_tracking_latest(strategy_service)
+
+    assert latest["config"]["strategy_preset_id"] == preset["id"]
+    assert latest["config"]["strategy_status"] == "missing"
+    assert latest["strategy"] is None
+    assert latest["rows"] == []
+
+
 def test_intraday_task_records_snapshot_and_runs_radar(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -839,6 +935,57 @@ def test_intraday_task_records_snapshot_and_runs_radar(tmp_path, monkeypatch):
     assert task["kind"] == "intraday"
     assert radar["summary"]["candidate_count"] == 1
     assert radar["rows"][0]["status"] == "刚突破"
+
+
+def test_intraday_task_runs_strategy_tracking_after_snapshot(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+    IntradayRadarService(db).save_config({"min_amount": 0, "platform_bull_amount_advantage": 0, "candidate_limit": 10})
+    strategy_service = StrategyService(db)
+    preset = strategy_service.save_preset(
+        "盘中跟踪策略",
+        {"min_amount": 20_000_000, "min_price": 4.0, "candidate_limit": 10},
+    )
+    IntradayRadarService(db).set_strategy_tracking_config(preset["id"], strategy_service)
+
+    service = UpdateService(db)
+    service.configure_runners(strategy_service=strategy_service)
+
+    class ImmediateExecutor:
+        def submit(self, fn, *args):
+            fn(*args)
+
+    monkeypatch.setattr(service, "executor", ImmediateExecutor())
+    monkeypatch.setattr(
+        service,
+        "_fetch_intraday_snapshot_frame",
+        lambda include_bj, exclude_star, warnings: pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "平安银行",
+                    "latest_price": 10.55,
+                    "pct_chg": 4.2,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "Tushare 实时日线",
+                    "freshness": "realtime",
+                }
+            ]
+        ),
+    )
+
+    task_id = service.start_intraday_sample({"sample_at": "2026-05-21T10:00:00"})
+    task = db.query("SELECT summary_json FROM task_runs WHERE id = ?", [task_id])[0]
+    tracking = IntradayRadarService(db).strategy_tracking_latest(strategy_service)
+
+    assert json.loads(task["summary_json"])["strategy_tracking_count"] == 1
+    assert tracking["strategy"]["id"] == preset["id"]
+    assert tracking["rows"][0]["code"] == "000001.SZ"
 
 
 def test_intraday_task_rejects_frame_date_mismatch_unless_forced(tmp_path, monkeypatch):

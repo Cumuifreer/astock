@@ -498,6 +498,7 @@ class UpdateService:
         self.analysis_runner: Any = None
         self.backtest_runner: Any = None
         self.candidate_summary_runner: Any = None
+        self.strategy_service: Any = None
         self._queue_lock = threading.RLock()
         self._queue_worker_active = False
         self.public_guard = SourceGuard(
@@ -512,6 +513,7 @@ class UpdateService:
         analysis_runner: Any = None,
         backtest_runner: Any = None,
         candidate_summary_runner: Any = None,
+        strategy_service: Any = None,
     ) -> None:
         if analysis_runner is not None:
             self.analysis_runner = analysis_runner
@@ -519,6 +521,8 @@ class UpdateService:
             self.backtest_runner = backtest_runner
         if candidate_summary_runner is not None:
             self.candidate_summary_runner = candidate_summary_runner
+        if strategy_service is not None:
+            self.strategy_service = strategy_service
 
     def recover_interrupted_tasks(self) -> None:
         now = datetime.utcnow()
@@ -3276,6 +3280,15 @@ class UpdateService:
                 success=1 if snapshot_count else 0,
             )
             candidate_count = self.intraday_service.run_radar(sample_at=sample_at)
+            strategy_tracking_count = 0
+            if self.strategy_service is not None:
+                try:
+                    strategy_tracking_count = self.intraday_service.run_strategy_tracking(
+                        self.strategy_service,
+                        sample_at=sample_at,
+                    )
+                except Exception as exc:
+                    warnings.append(f"策略跟踪失败：{exc}")
             radar_result = self.intraday_service.latest(limit=1)
             self._patch_task(
                 task_id,
@@ -3292,6 +3305,7 @@ class UpdateService:
                     "market_environment_count": market_environment_count,
                     "sector_heat_count": sector_heat_count,
                     "candidate_count": candidate_count,
+                    "strategy_tracking_count": strategy_tracking_count,
                     "strict_count": radar_result.get("summary", {}).get("strict_count", candidate_count),
                     "score_count": radar_result.get("summary", {}).get("score_count", 0),
                     "sample_at": sample_at.isoformat(timespec="seconds"),

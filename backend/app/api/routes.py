@@ -31,7 +31,7 @@ backtest_service = BacktestService(db, analysis_service)
 intraday_service = IntradayRadarService(db)
 watchlist_service = WatchlistService(db)
 candidate_summary_service = CandidateSummaryService(db)
-update_service.configure_runners(analysis_service, backtest_service, candidate_summary_service)
+update_service.configure_runners(analysis_service, backtest_service, candidate_summary_service, strategy_service)
 update_service.recover_interrupted_tasks()
 update_service.kick_queue()
 
@@ -228,6 +228,27 @@ def intraday_boards(
     limit: int = Query(default=80, ge=1, le=300),
 ) -> Dict[str, Any]:
     return intraday_service.boards(limit=limit)
+
+
+@router.get("/intraday/strategy-tracking")
+def intraday_strategy_tracking(
+    limit: int = Query(default=80, ge=1, le=300),
+) -> Dict[str, Any]:
+    return intraday_service.strategy_tracking_latest(strategy_service, limit=limit)
+
+
+@router.put("/intraday/strategy-tracking/config")
+def save_intraday_strategy_tracking_config(payload: Dict[str, Any]) -> Dict[str, Any]:
+    preset_id = str(payload.get("strategy_preset_id") or payload.get("preset_id") or "").strip()
+    try:
+        config = intraday_service.set_strategy_tracking_config(preset_id, strategy_service)
+        intraday_service.run_strategy_tracking(strategy_service)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "config": config,
+        "strategy_tracking": intraday_service.strategy_tracking_latest(strategy_service),
+    }
 
 
 @router.get("/intraday/timeline/{code}")
@@ -505,6 +526,7 @@ def save_strategy(payload: Dict[str, Any]) -> Dict[str, Any]:
         preset_id=payload.get("id"),
         set_default=bool(payload.get("set_default")),
     )
+    _refresh_intraday_tracking_if_selected(preset.get("id"))
     return {"preset": preset}
 
 
@@ -537,3 +559,23 @@ def set_default_strategy(preset_id: str) -> Dict[str, Any]:
 @router.post("/strategies/system/reset")
 def reset_system_strategies() -> Dict[str, Any]:
     return {"rows": strategy_service.restore_system_defaults()}
+
+
+def _refresh_intraday_tracking_if_selected(preset_id: Optional[str]) -> None:
+    if not preset_id:
+        return
+    uses_strategy = getattr(intraday_service, "tracking_uses_strategy", None)
+    current_config = getattr(intraday_service, "strategy_tracking_config", None)
+    run_tracking = getattr(intraday_service, "run_strategy_tracking", None)
+    if not callable(uses_strategy) or not callable(run_tracking):
+        return
+    try:
+        if uses_strategy(preset_id):
+            run_tracking(strategy_service)
+            return
+        if callable(current_config):
+            config = current_config(strategy_service)
+            if str(config.get("strategy_preset_id") or "") == str(preset_id):
+                run_tracking(strategy_service)
+    except Exception:
+        return

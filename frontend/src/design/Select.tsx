@@ -12,12 +12,13 @@ type SelectProps = {
   onChange: (value: string) => void;
   placeholder?: string;
   label?: string;
+  disabled?: boolean;
 };
 
-export function Select({ value, options, onChange, placeholder = '选择', label }: SelectProps) {
+export function Select({ value, options, onChange, placeholder = '选择', label, disabled = false }: SelectProps) {
   return (
-    <RadixSelect.Root value={value} onValueChange={onChange}>
-      <RadixSelect.Trigger className="select-trigger" aria-label={label || placeholder}>
+    <RadixSelect.Root value={value} onValueChange={onChange} disabled={disabled}>
+      <RadixSelect.Trigger className="select-trigger" aria-label={label || placeholder} disabled={disabled}>
         <RadixSelect.Value placeholder={placeholder} />
         <RadixSelect.Icon>
           <ChevronDown size={15} />

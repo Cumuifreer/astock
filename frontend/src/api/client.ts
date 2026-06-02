@@ -25,6 +25,10 @@ export function post<T>(path: string, payload: ApiRecord = {}): Promise<T> {
   return request<T>(path, { method: 'POST', body: JSON.stringify(payload) });
 }
 
+export function put<T>(path: string, payload: ApiRecord = {}): Promise<T> {
+  return request<T>(path, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
 export function patch<T>(path: string, payload: ApiRecord = {}): Promise<T> {
   return request<T>(path, { method: 'PATCH', body: JSON.stringify(payload) });
 }

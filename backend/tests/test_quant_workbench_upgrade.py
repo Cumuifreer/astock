@@ -1048,6 +1048,104 @@ def test_candidate_ai_summary_routes_split_read_and_task_start(tmp_path, monkeyp
     }
 
 
+def test_intraday_strategy_tracking_routes_read_update_and_recompute(tmp_path, monkeypatch):
+    routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
+    calls = []
+
+    class FakeStrategyService:
+        def get_preset(self, preset_id):
+            return {"id": preset_id, "name": "跟踪策略", "config": {}, "latest_version_summary": "摘要"}
+
+    class FakeIntradayService:
+        def strategy_tracking_latest(self, strategy_service, limit=80):
+            return {
+                "config": {"strategy_preset_id": "custom-1", "strategy_status": "selected"},
+                "strategy": {"id": "custom-1", "name": "跟踪策略"},
+                "sample_at": "2026-05-21T10:00:00",
+                "summary": {"candidate_count": 1},
+                "rows": [{"code": "000001.SZ"}],
+            }
+
+        def set_strategy_tracking_config(self, preset_id, strategy_service):
+            calls.append(("set", preset_id))
+            return {"strategy_preset_id": preset_id, "strategy_status": "selected"}
+
+        def run_strategy_tracking(self, strategy_service):
+            calls.append(("run", "latest"))
+            return 1
+
+    monkeypatch.setattr(routes, "strategy_service", FakeStrategyService())
+    monkeypatch.setattr(routes, "intraday_service", FakeIntradayService())
+    client = TestClient(routes.router)
+
+    read = client.get("/api/intraday/strategy-tracking")
+    updated = client.put("/api/intraday/strategy-tracking/config", json={"strategy_preset_id": "custom-1"})
+
+    assert read.status_code == 200
+    assert read.json()["strategy"]["id"] == "custom-1"
+    assert updated.status_code == 200
+    assert calls == [("set", "custom-1"), ("run", "latest")]
+    assert updated.json()["strategy_tracking"]["summary"]["candidate_count"] == 1
+
+
+def test_save_strategy_refreshes_selected_intraday_tracking(tmp_path, monkeypatch):
+    routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
+    calls = []
+
+    class FakeStrategyService:
+        def save_preset(self, name, config, preset_id=None, set_default=False):
+            return {"id": preset_id or "custom-1", "name": name, "config": config}
+
+    class FakeIntradayService:
+        def tracking_uses_strategy(self, preset_id):
+            calls.append(("uses", preset_id))
+            return True
+
+        def run_strategy_tracking(self, strategy_service):
+            calls.append(("run", "latest"))
+            return 1
+
+    monkeypatch.setattr(routes, "strategy_service", FakeStrategyService())
+    monkeypatch.setattr(routes, "intraday_service", FakeIntradayService())
+    client = TestClient(routes.router)
+
+    response = client.post("/api/strategies", json={"id": "custom-1", "name": "跟踪策略", "config": {"min_amount": 1}})
+
+    assert response.status_code == 200
+    assert calls == [("uses", "custom-1"), ("run", "latest")]
+
+
+def test_save_strategy_refreshes_effective_default_intraday_tracking(tmp_path, monkeypatch):
+    routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
+    calls = []
+
+    class FakeStrategyService:
+        def save_preset(self, name, config, preset_id=None, set_default=False):
+            return {"id": preset_id or "custom-1", "name": name, "config": config}
+
+    class FakeIntradayService:
+        def tracking_uses_strategy(self, preset_id):
+            calls.append(("uses", preset_id))
+            return False
+
+        def strategy_tracking_config(self, strategy_service):
+            calls.append(("config", "effective"))
+            return {"strategy_preset_id": "custom-1", "strategy_status": "default"}
+
+        def run_strategy_tracking(self, strategy_service):
+            calls.append(("run", "latest"))
+            return 1
+
+    monkeypatch.setattr(routes, "strategy_service", FakeStrategyService())
+    monkeypatch.setattr(routes, "intraday_service", FakeIntradayService())
+    client = TestClient(routes.router)
+
+    response = client.post("/api/strategies", json={"id": "custom-1", "name": "跟踪策略", "config": {"min_amount": 1}})
+
+    assert response.status_code == 200
+    assert calls == [("uses", "custom-1"), ("config", "effective"), ("run", "latest")]
+
+
 def test_legacy_candidate_ai_summary_post_is_gone(tmp_path, monkeypatch):
     routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
 
