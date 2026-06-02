@@ -460,8 +460,7 @@ MIGRATIONS = [
     ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN DEFAULT FALSE
     """,
     """
-    CREATE INDEX IF NOT EXISTS idx_task_runs_active_payload
-    ON task_runs(kind, status, payload_hash)
+    DROP INDEX IF EXISTS idx_task_runs_active_payload
     """,
     """
     CREATE TABLE IF NOT EXISTS analysis_runs (
@@ -995,12 +994,6 @@ def _rebuild_task_runs(db: Database, rows: list[dict]) -> None:
             conn.execute(TASK_RUN_CREATE_SQL)
             for row in rows:
                 conn.execute(insert_sql, [row.get(column) for column in TASK_RUN_COLUMNS])
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_task_runs_active_payload
-                ON task_runs(kind, status, payload_hash)
-                """
-            )
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")

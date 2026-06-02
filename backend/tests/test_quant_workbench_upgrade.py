@@ -164,6 +164,29 @@ def test_schema_backfills_legacy_task_runs_without_duplicate_ids(tmp_path):
         )
 
 
+def test_schema_drops_task_runs_active_payload_index_for_duckdb_upserts(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_task_runs_active_payload
+        ON task_runs(kind, status, payload_hash)
+        """,
+        write=True,
+    )
+
+    migrate(db)
+
+    indexes = db.query(
+        """
+        SELECT index_name
+        FROM duckdb_indexes()
+        WHERE table_name = 'task_runs'
+        """
+    )
+    assert "idx_task_runs_active_payload" not in {row["index_name"] for row in indexes}
+
+
 def test_market_overview_uses_environment_and_sector_heatmap(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
