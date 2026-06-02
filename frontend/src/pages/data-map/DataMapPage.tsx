@@ -20,6 +20,7 @@ import { CapabilityCard } from './CapabilityCard';
 
 const groups: Array<{ title: string; names: string[] }> = [
   { title: '核心数据', names: ['股票基础信息', '历史 K 线', '历史行情', '当天行情快照', '今日行情', '流通市值', '换手率', 'RPS', '振幅'] },
+  { title: '状态/交易约束', names: ['ST / 停牌状态'] },
   { title: '补充数据', names: ['每日指标', '每日交易指标', '技术因子', '资金流向', '筹码分布', '筹码数据', '概念/行业成分', '题材板块'] },
   { title: '事件数据', names: ['涨跌停', '涨跌停事件', '龙虎榜/游资', '龙虎榜数据'] },
   { title: '市场上下文', names: ['市场环境', '板块热力', '资讯简报'] },
@@ -55,6 +56,7 @@ export function DataMapPage() {
     mutationFn: (capability: Capability) => startUpdate({ mode: 'capability_backfill', capability: capability.capability }),
     onMutate: (capability) => setBackfillingCapability(capability.capability),
     onSuccess: (_result, capability) => showToast(`已开始补齐${friendlyCapability(capability.capability)}，可在任务状态查看进度。`, 'success'),
+    onError: (error) => showToast(error instanceof Error ? error.message : '补齐任务启动失败', 'danger'),
     onSettled: () => {
       setBackfillingCapability(null);
       void queryClient.invalidateQueries({ queryKey: ['capabilities'] });
@@ -312,20 +314,20 @@ function DataHealth({
 function SourceDiagnosticsPanel({ diagnostics, loading }: { diagnostics?: SourceDiagnostics; loading: boolean }) {
   const healthCards = useMemo(
     () => [
-      ['数据配置', diagnostics?.tushare_token_configured ? '已配置' : '未配置', diagnostics?.last_tushare_error],
-      ['今日行情', statusLabel(diagnostics?.realtime_status), userSourceLabel(diagnostics?.last_snapshot_source)],
-      ['历史行情', statusLabel(diagnostics?.history_status), userSourceLabel(diagnostics?.last_history_source)],
+      ['Tushare 配置', diagnostics?.tushare_token_configured ? '已配置' : '未配置', diagnostics?.last_tushare_error],
+      ['今日行情', statusLabel(diagnostics?.snapshot_source?.status || diagnostics?.realtime_status), sourceContractLabel(diagnostics?.snapshot_source, diagnostics?.last_snapshot_source)],
+      ['历史行情', statusLabel(diagnostics?.history_source?.status || diagnostics?.history_status), sourceContractLabel(diagnostics?.history_source, diagnostics?.last_history_source)],
       ['补充交易数据', statusLabel(diagnostics?.enrichment_status), diagnostics?.tushare_http_url_configured ? '已配置' : '缺少中转配置'],
     ],
     [diagnostics],
   );
-  if (loading) return <LoadingState label="读取数据源诊断" />;
+  if (loading) return <LoadingState label="读取 Tushare 诊断" />;
   return (
     <section className="surface pad">
       <div className="section-heading">
         <div>
-          <h2>数据源诊断</h2>
-          <p>维护者可在这里查看配置、最近失败原因和数据切换情况。</p>
+          <h2>Tushare 同步诊断</h2>
+          <p>查看 Tushare 配置、最近失败原因和本地 DuckDB 缓存状态。</p>
         </div>
       </div>
       <div className="grid-4">
@@ -339,6 +341,14 @@ function SourceDiagnosticsPanel({ diagnostics, loading }: { diagnostics?: Source
       </div>
     </section>
   );
+}
+
+function sourceContractLabel(contract?: { expected_source?: string; actual_source?: string }, legacySource?: string | null) {
+  const expected = contract?.expected_source;
+  const actual = contract?.actual_source || legacySource;
+  if (!expected && !actual) return '本地缓存';
+  if (!actual || actual === expected) return userSourceLabel(actual || expected);
+  return `${userSourceLabel(actual)} / 期望 ${userSourceLabel(expected)}`;
 }
 
 function dataMapTabFromHash() {
@@ -413,8 +423,8 @@ function shortValue(value: unknown) {
 function statusLabel(value: unknown) {
   const labels: Record<string, string> = {
     normal: '正常',
-    failed: '失败',
-    fallback: '回退',
+    failed: '同步失败',
+    fallback: '本地缓存',
     partial: '部分失败',
     unknown: '未知',
   };
@@ -424,9 +434,9 @@ function statusLabel(value: unknown) {
 function userSourceLabel(value: unknown) {
   const text = String(value || '');
   if (!text) return '';
-  if (/daily|snapshot|实时|新浪/i.test(text)) return '今日行情';
-  if (/history|historical|qfq|历史/i.test(text)) return '历史行情';
-  return '数据源切换';
+  if (/tushare/i.test(text)) return 'Tushare';
+  if (/local|cache|duckdb|本地|缓存/i.test(text)) return '本地 DuckDB';
+  return '本地 DuckDB';
 }
 
 function friendlyCapability(value: string) {

@@ -119,6 +119,7 @@ class DailyBriefService:
         report_date: Optional[date] = None,
         progress: Optional[Callable[[str, int, int], None]] = None,
     ) -> Dict[str, Any]:
+        raise RuntimeError("资讯简报生成已禁用；只读取 DuckDB 已有简报。")
         brief_date = report_date or datetime.now(CHINA_TZ).date()
         enabled_sources = [source for source in self.sources if source.get("enabled", True)]
         progress = progress or (lambda stage, processed, total: None)

@@ -41,7 +41,7 @@ test('overview removes daily action list and opens brief sources by default', ()
   const overview = read('pages/overview/OverviewPage.tsx');
   assert.doesNotMatch(overview, /DailyActionList/);
   assert.match(overview, /市场简报/);
-  assert.match(overview, /重新生成简报/);
+  assert.doesNotMatch(overview, /重新生成简报/);
   assert.match(overview, /查看引用来源/);
   assert.match(overview, /<details[^>]+open/);
 });

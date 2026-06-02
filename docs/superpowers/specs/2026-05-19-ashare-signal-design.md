@@ -10,9 +10,9 @@ The app is a FastAPI backend with a DuckDB warehouse and a Vite React frontend s
 
 ## Data Sources
 
-Baostock is the historical K-line primary source and provides front-adjusted bars, turnover, ST status, suspension status, volume, and amount. AkShare Sina is the main full-market snapshot source. AkShare Tencent is detected dynamically and used as a snapshot fallback when the installed AkShare version exposes a compatible Tencent snapshot interface; otherwise its unavailable reason is persisted and displayed. AData is optional and participates as a fallback for stock basics, historical bars, snapshots, and float-market-value enrichment when installed and non-empty.
+Tushare is the only external market-data source. It provides historical daily data, adjustment factors, realtime daily snapshots, daily metrics, technical factors, money flow, limit events, chip data, concept membership, and Dragon Tiger List data when the account has permission.
 
-No EM-related market source is called directly or listed as a source.
+DuckDB is the local cache and analysis store. Pages read cached market data, task state, and diagnostics from DuckDB when a page refreshes, the service restarts, or Tushare is temporarily unavailable.
 
 ## Data Model
 
@@ -20,7 +20,7 @@ DuckDB stores normalized stock basics, historical bars, snapshots, float market 
 
 ## Task Flow
 
-Data update and analysis are separate background tasks. Starting a task immediately returns a task id. The status endpoints expose stage, source, current stock, totals, success, failure, skipped counts, warnings, and summary. Analysis reads only local DuckDB data and never calls external sources.
+Data update and analysis are separate background tasks. Starting a task immediately returns a task id. The status endpoints expose stage, Tushare sync status, current stock, totals, success, failure, skipped counts, warnings, and summary. Analysis reads only local DuckDB data and never calls external sources.
 
 ## Strategy
 
@@ -28,7 +28,7 @@ Strategies are JSON configs persisted as named presets. The system seeds default
 
 ## Indicators
 
-Amplitude is computed from local K-lines as `(high - low) / prev_close`. RPS20, RPS60, and RPS120 are computed from local close-price returns and ranked by percentile across the current stock universe. Turnover comes from Baostock `turn`, with missing coverage tracked and displayed. Float market value comes from local cache first and AData-derived float shares times latest price when available; missing values can skip or relax market-cap filtering by strategy.
+Amplitude is computed from local K-lines as `(high - low) / prev_close`. RPS20, RPS60, and RPS120 are computed from local close-price returns and ranked by percentile across the current stock universe. Turnover and float market value come from cached Tushare fields when synced; missing values can skip or relax the affected strategy filter.
 
 ## Frontend
 

@@ -107,7 +107,7 @@ class IntradayRadarService:
                     "low": safe_float(item.get("low")),
                     "volume": safe_float(item.get("volume")),
                     "amount": safe_float(item.get("amount")),
-                    "source": item.get("source") or "AkShare 新浪",
+                    "source": item.get("source") or "Tushare 实时日线",
                     "created_at": datetime.utcnow(),
                 }
             )

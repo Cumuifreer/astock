@@ -194,13 +194,8 @@ def test_history_update_prefers_tushare_batch_and_refreshes_qfq_window(tmp_path,
                 ]
             )
 
-    class FailingBaostockSource:
-        def fetch_history(self, *_args, **_kwargs):
-            raise AssertionError("Baostock should not be used when Tushare history is available")
-
     monkeypatch.setattr(update_module, "_tushare_history_configured", lambda: True, raising=False)
     monkeypatch.setattr(update_module, "TushareEnrichmentSource", FakeTushareHistorySource)
-    monkeypatch.setattr(update_module, "BaostockSource", FailingBaostockSource)
 
     success, failed, skipped = UpdateService(db)._update_history(
         [{"code": "000001.SZ", "latest_history_date": "2026-05-21"}, {"code": "600000.SH"}],

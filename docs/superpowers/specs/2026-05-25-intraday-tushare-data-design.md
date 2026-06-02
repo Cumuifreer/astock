@@ -2,7 +2,7 @@
 
 ## Goal
 
-Upgrade the intraday radar from a sparse fixed-time sampler to a Tushare-first, 10-minute intraday workflow. The change should improve signal freshness without bloating the UI or database, and it should remove AData completely from the active codebase.
+Upgrade the intraday radar from a sparse fixed-time sampler to a Tushare-only, 10-minute intraday workflow. The change should improve signal freshness without bloating the UI or database, while keeping DuckDB as the local cache shown in user-facing status.
 
 ## Scope
 
@@ -12,10 +12,10 @@ This design covers:
 - One shared schedule source for the script, backend scheduler, runtime health API, and frontend display.
 - A compressed frontend schedule display for dense intraday slots.
 - Post-history cleanup of intraday snapshot storage.
-- Complete removal of AData integrations.
+- Removal of non-Tushare market-data integrations from the active data-source story.
 - Tushare data expansion plan and data map coverage updates.
 
-This design does not implement all Tushare enrichment data in the first code pass. The first pass prepares the cadence, cleanup, source removal, and data map structure. Tushare enrichment should then land in staged follow-up work.
+This design does not implement all Tushare enrichment data in the first code pass. The first pass prepares the cadence, cleanup, source cleanup, and data map structure. Tushare enrichment should then land in staged follow-up work.
 
 ## Intraday Schedule
 
@@ -73,19 +73,14 @@ The review window should be configurable through `ASHARE_INTRADAY_RETENTION_DAYS
 
 ## Source Strategy
 
-Tushare becomes the primary source for intraday snapshots and future enrichment.
+Tushare is the only external source for intraday snapshots and future enrichment.
 
-AData should be completely removed:
+The active source story should be:
 
-- Remove `backend/app/sources/adata_source.py`.
-- Remove imports and fallback calls from update/probe/history/snapshot flows.
-- Remove AData from capability fallback source labels.
-- Remove package dependency if present.
-- Update tests and README references.
-
-AkShare should remain only as an emergency fallback for intraday/daily snapshots when Tushare is unavailable or unconfigured. It should not be treated as the preferred path.
-
-Baostock should remain temporarily for historical K-line and stock basic fallback. Replacing Baostock with Tushare historical daily data is valuable, but should be done as a separate migration because historical K-line is the system's base layer.
+- Tushare writes historical bars, realtime snapshots, and enrichment tables.
+- DuckDB keeps the latest successful local cache for page reads, analysis, and status views.
+- Data map and README references show Tushare sync state and DuckDB cache state only.
+- Dependency and adapter cleanup should be handled by backend migration work, not by frontend copy.
 
 ## Tushare Enrichment Plan
 
@@ -127,25 +122,25 @@ Each row should report:
 - Coverage count.
 - Missing count.
 - Latest update date.
-- Actual sources.
+- Visible source labels.
 - Whether it participates in analysis.
 - Whether it can be backfilled.
 
-Existing rows should also reflect the new source strategy:
+Existing rows should also reflect the current source strategy:
 
-- 当天行情快照: Tushare realtime first, AkShare fallback, local cache.
-- 历史 K 线: Baostock first for now, Tushare migration planned, local cache.
-- 流通市值/换手率: Tushare daily_basic should become the preferred source after integration.
+- 当天行情快照: Tushare realtime plus DuckDB cache.
+- 历史 K 线: Tushare daily, adjustment factors, and DuckDB cache.
+- 流通市值/换手率: Tushare daily_basic plus DuckDB cache.
 
 ## Testing
 
 Backend tests should cover:
 
-- Schedule parser accepts valid `ASHARE_INTRADAY_SCHEDULE`, ignores malformed entries with a warning, and falls back to the default schedule if no valid entries remain.
+- Schedule parser accepts valid `ASHARE_INTRADAY_SCHEDULE`, ignores malformed entries with a warning, and uses the default schedule if no valid entries remain.
 - Scheduler and runtime health use the same parsed slots.
 - 10-minute default contains 25 slots and still deduplicates task IDs.
 - Cleanup removes eligible old intraday rows and preserves today's rows.
-- AData imports and fallback paths are gone.
+- Non-Tushare market-data imports and alternate-source paths are gone.
 - Capabilities include the new Tushare rows.
 
 Frontend tests or build verification should cover:

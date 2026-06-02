@@ -20,8 +20,6 @@ from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.market_utils import safe_float
 from backend.app.services.sector_filters import concept_theme_filter_sql
 from backend.app.services.strategy_service import normalize_strategy_config
-from backend.app.sources.akshare_source import AkShareSource
-from backend.app.sources.baostock_source import BaostockSource
 from backend.app.sources.base import SourceGuard
 from backend.app.sources.tushare_source import TushareEnrichmentSource, TushareRealtimeSource
 
@@ -46,7 +44,7 @@ DEFAULT_DATA_DAG: List[Dict[str, Any]] = [
         "dependencies": [],
         "freshness_policy": "long_lived",
         "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.98},
-        "request_policy": {"source": "baostock", "rate_limit_group": "baostock"},
+        "request_policy": {"source": "tushare", "rate_limit_group": "stock_basic"},
     },
     {
         "id": "daily_snapshot",
@@ -383,6 +381,21 @@ def _clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
 
 
+def _task_payload_fingerprint(payload: Dict[str, Any]) -> str:
+    comparable = {
+        key: value
+        for key, value in (payload or {}).items()
+        if key != "run_id"
+    }
+    return json.dumps(
+        comparable,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
 class TaskBusy(RuntimeError):
     pass
 
@@ -415,17 +428,12 @@ class UpdateService:
         self.analysis_runner: Any = None
         self.backtest_runner: Any = None
         self.candidate_summary_runner: Any = None
-        self._queue_lock = threading.Lock()
+        self._queue_lock = threading.RLock()
         self._queue_worker_active = False
         self.public_guard = SourceGuard(
             db,
             min_delay=settings.public_source_min_delay,
             max_delay=settings.public_source_max_delay,
-        )
-        self.baostock_guard = SourceGuard(
-            db,
-            min_delay=settings.baostock_min_delay,
-            max_delay=settings.baostock_max_delay,
         )
         self.tushare_rate_limiter = TushareRateLimiter()
 
@@ -519,31 +527,43 @@ class UpdateService:
         self._ensure_queue_worker()
 
     def start_update(self, options: Optional[Dict[str, Any]] = None) -> str:
-        task_id = f"update-{uuid.uuid4().hex[:12]}"
-        self._enqueue_task(
-            task_id,
-            kind="update",
-            stage="准备更新",
-            source=None,
-            summary={},
-            payload=options or {},
-        )
-        return task_id
+        payload = options or {}
+        with self._queue_lock:
+            existing = self._active_task_for_payload("update", payload)
+            if existing:
+                return str(existing["id"])
+            task_id = f"update-{uuid.uuid4().hex[:12]}"
+            self._enqueue_task(
+                task_id,
+                kind="update",
+                stage="准备更新",
+                source=None,
+                summary={},
+                payload=payload,
+            )
+            return task_id
 
     def start_analysis(self, config: Dict[str, Any], analysis_runner: Any) -> tuple[str, str]:
         self.analysis_runner = analysis_runner
         frozen_config = json.loads(json.dumps(config, ensure_ascii=False))
-        task_id = f"analyze-{uuid.uuid4().hex[:12]}"
-        run_id = f"analysis-{uuid.uuid4().hex[:12]}"
-        self._enqueue_task(
-            task_id,
-            kind="analyze",
-            stage="准备分析",
-            source="本地仓库",
-            summary={"analysis_run_id": run_id},
-            payload={"config": frozen_config, "run_id": run_id},
-        )
-        return task_id, run_id
+        with self._queue_lock:
+            existing = self._active_task_for_payload("analyze", {"config": frozen_config})
+            if existing:
+                existing_payload = json.loads(existing.get("payload_json") or "{}")
+                existing_summary = json.loads(existing.get("summary_json") or "{}")
+                run_id = existing_payload.get("run_id") or existing_summary.get("analysis_run_id") or ""
+                return str(existing["id"]), str(run_id)
+            task_id = f"analyze-{uuid.uuid4().hex[:12]}"
+            run_id = f"analysis-{uuid.uuid4().hex[:12]}"
+            self._enqueue_task(
+                task_id,
+                kind="analyze",
+                stage="准备分析",
+                source="本地仓库",
+                summary={"analysis_run_id": run_id},
+                payload={"config": frozen_config, "run_id": run_id},
+            )
+            return task_id, run_id
 
     def start_candidate_ai_summary(self, payload: Dict[str, Any], candidate_summary_runner: Any) -> tuple[str, Dict[str, Any]]:
         self.candidate_summary_runner = candidate_summary_runner
@@ -551,26 +571,27 @@ class UpdateService:
         code = str(payload.get("code") or "")
         if not run_id or not code:
             raise ValueError("run_id 和 code 不能为空。")
-        identity = candidate_summary_runner.prepare_from_result(run_id=run_id, code=code, require_existing=True)
-        existing = candidate_summary_runner.read_summary(run_id, code, input_hash=identity["input_hash"])
-        existing_status = str(existing.get("status") or "")
-        reusable_completed = existing_status in {"completed_full", "completed_partial"}
-        reusable_active = existing_status in {"queued", "running"} and self._task_is_active(existing.get("task_id"))
-        if not payload.get("force") and (reusable_completed or reusable_active):
-            identity["status"] = existing.get("status")
-            return str(existing.get("task_id") or ""), identity
-        task_id = f"ai-summary-{uuid.uuid4().hex[:12]}"
-        candidate_summary_runner.mark_queued(identity, task_id=task_id)
-        self._enqueue_task(
-            task_id,
-            kind="candidate_ai_summary",
-            stage="准备生成候选解释",
-            source="LLM",
-            summary={"run_id": run_id, "code": code, "input_hash": identity["input_hash"]},
-            payload={"run_id": run_id, "code": code, "input_hash": identity["input_hash"]},
-        )
-        identity["status"] = "queued"
-        return task_id, identity
+        with self._queue_lock:
+            identity = candidate_summary_runner.prepare_from_result(run_id=run_id, code=code, require_existing=True)
+            existing = candidate_summary_runner.read_summary(run_id, code, input_hash=identity["input_hash"])
+            existing_status = str(existing.get("status") or "")
+            reusable_completed = existing_status in {"completed_full", "completed_partial"}
+            reusable_active = existing_status in {"queued", "running"} and self._task_is_active(existing.get("task_id"))
+            if not payload.get("force") and (reusable_completed or reusable_active):
+                identity["status"] = existing.get("status")
+                return str(existing.get("task_id") or ""), identity
+            task_id = f"ai-summary-{uuid.uuid4().hex[:12]}"
+            candidate_summary_runner.mark_queued(identity, task_id=task_id)
+            self._enqueue_task(
+                task_id,
+                kind="candidate_ai_summary",
+                stage="准备生成候选解释",
+                source="LLM",
+                summary={"run_id": run_id, "code": code, "input_hash": identity["input_hash"]},
+                payload={"run_id": run_id, "code": code, "input_hash": identity["input_hash"]},
+            )
+            identity["status"] = "queued"
+            return task_id, identity
 
     def _task_is_active(self, task_id: Any) -> bool:
         if not task_id:
@@ -580,37 +601,44 @@ class UpdateService:
 
     def start_backtest(self, payload: Dict[str, Any], backtest_runner: Any) -> tuple[str, str]:
         self.backtest_runner = backtest_runner
-        task_id = f"backtest-{uuid.uuid4().hex[:12]}"
-        run_id = f"backtest-{uuid.uuid4().hex[:12]}"
         now = datetime.utcnow()
         frozen_payload = json.loads(json.dumps(payload or {}, ensure_ascii=False))
         frozen_payload["config"] = normalize_strategy_config(frozen_payload.get("config") or {})
-        frozen_payload["run_id"] = run_id
-        self._enqueue_task(
-            task_id,
-            kind="backtest",
-            stage="准备回测",
-            source="本地仓库",
-            summary={"backtest_run_id": run_id},
-            payload=frozen_payload,
-            started_at=now,
-        )
-        self.db.upsert(
-            "backtest_runs",
-            [
-                {
-                    "id": run_id,
-                    "status": "queued",
-                    "started_at": now,
-                    "finished_at": None,
-                    "config_json": json.dumps(frozen_payload["config"], ensure_ascii=False),
-                    "summary_json": "{}",
-                    "error_message": None,
-                }
-            ],
-            ["id"],
-        )
-        return task_id, run_id
+        with self._queue_lock:
+            existing = self._active_task_for_payload("backtest", frozen_payload)
+            if existing:
+                existing_payload = json.loads(existing.get("payload_json") or "{}")
+                existing_summary = json.loads(existing.get("summary_json") or "{}")
+                run_id = existing_payload.get("run_id") or existing_summary.get("backtest_run_id") or ""
+                return str(existing["id"]), str(run_id)
+            task_id = f"backtest-{uuid.uuid4().hex[:12]}"
+            run_id = f"backtest-{uuid.uuid4().hex[:12]}"
+            frozen_payload["run_id"] = run_id
+            self._enqueue_task(
+                task_id,
+                kind="backtest",
+                stage="准备回测",
+                source="本地仓库",
+                summary={"backtest_run_id": run_id},
+                payload=frozen_payload,
+                started_at=now,
+            )
+            self.db.upsert(
+                "backtest_runs",
+                [
+                    {
+                        "id": run_id,
+                        "status": "queued",
+                        "started_at": now,
+                        "finished_at": None,
+                        "config_json": json.dumps(frozen_payload["config"], ensure_ascii=False),
+                        "summary_json": "{}",
+                        "error_message": None,
+                    }
+                ],
+                ["id"],
+            )
+            return task_id, run_id
 
     def start_signal_evaluation(self, payload: Dict[str, Any], backtest_runner: Any) -> tuple[str, str]:
         return self._start_backtest_job(
@@ -642,38 +670,63 @@ class UpdateService:
         run_table: str,
     ) -> tuple[str, str]:
         self.backtest_runner = backtest_runner
-        task_id = f"backtest-{uuid.uuid4().hex[:12]}"
-        run_id = f"{run_prefix}-{uuid.uuid4().hex[:12]}"
         now = datetime.utcnow()
         frozen_payload = json.loads(json.dumps(payload or {}, ensure_ascii=False))
         frozen_payload["config"] = normalize_strategy_config(frozen_payload.get("config") or {})
-        frozen_payload["run_id"] = run_id
         frozen_payload["backtest_mode"] = mode
-        self._enqueue_task(
-            task_id,
-            kind="backtest",
-            stage=task_stage,
-            source="本地仓库",
-            summary={"backtest_run_id": run_id, "backtest_mode": mode},
-            payload=frozen_payload,
-            started_at=now,
+        with self._queue_lock:
+            existing = self._active_task_for_payload("backtest", frozen_payload)
+            if existing:
+                existing_payload = json.loads(existing.get("payload_json") or "{}")
+                existing_summary = json.loads(existing.get("summary_json") or "{}")
+                run_id = existing_payload.get("run_id") or existing_summary.get("backtest_run_id") or ""
+                return str(existing["id"]), str(run_id)
+            task_id = f"backtest-{uuid.uuid4().hex[:12]}"
+            run_id = f"{run_prefix}-{uuid.uuid4().hex[:12]}"
+            frozen_payload["run_id"] = run_id
+            self._enqueue_task(
+                task_id,
+                kind="backtest",
+                stage=task_stage,
+                source="本地仓库",
+                summary={"backtest_run_id": run_id, "backtest_mode": mode},
+                payload=frozen_payload,
+                started_at=now,
+            )
+            self.db.upsert(
+                run_table,
+                [
+                    {
+                        "id": run_id,
+                        "status": "queued",
+                        "started_at": now,
+                        "finished_at": None,
+                        "config_json": json.dumps(frozen_payload, ensure_ascii=False),
+                        "summary_json": "{}",
+                        "error_message": None,
+                    }
+                ],
+                ["id"],
+            )
+            return task_id, run_id
+
+    def _active_task_for_payload(self, kind: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        target = _task_payload_fingerprint(payload)
+        rows = self.db.query(
+            """
+            SELECT id, payload_json, summary_json
+            FROM task_runs
+            WHERE kind = ?
+              AND status IN ('queued', 'running')
+            ORDER BY started_at, id
+            """,
+            [kind],
         )
-        self.db.upsert(
-            run_table,
-            [
-                {
-                    "id": run_id,
-                    "status": "queued",
-                    "started_at": now,
-                    "finished_at": None,
-                    "config_json": json.dumps(frozen_payload, ensure_ascii=False),
-                    "summary_json": "{}",
-                    "error_message": None,
-                }
-            ],
-            ["id"],
-        )
-        return task_id, run_id
+        for row in rows:
+            existing_payload = json.loads(row.get("payload_json") or "{}")
+            if _task_payload_fingerprint(existing_payload) == target:
+                return row
+        return None
 
     def start_intraday_sample(self, options: Optional[Dict[str, Any]] = None) -> str:
         existing = self.db.scalar(
@@ -693,7 +746,7 @@ class UpdateService:
             task_id,
             kind="intraday",
             stage="准备盘中采样",
-            source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
+            source="Tushare 实时日线",
             summary={},
             payload=options or {},
         )
@@ -721,7 +774,7 @@ class UpdateService:
             task_id,
             kind="intraday",
             stage="准备盘中采样",
-            source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
+            source="Tushare 实时日线",
             summary={"schedule_key": schedule_key, "scheduled": True},
             payload={
                 "sample_at": slot.isoformat(timespec="seconds"),
@@ -732,54 +785,13 @@ class UpdateService:
         return task_id
 
     def ensure_daily_brief(self) -> Optional[str]:
-        existing = self.db.scalar(
-            """
-            SELECT id
-            FROM task_runs
-            WHERE kind = 'brief'
-              AND status IN ('queued', 'running')
-            ORDER BY started_at
-            LIMIT 1
-            """
-        )
-        if existing:
-            return str(existing)
-        latest = self.daily_brief_service.latest()
-        if latest and not self.daily_brief_service.should_regenerate(latest):
-            return None
-        reason = "llm_configured_retry" if latest else "empty"
-        return self.start_daily_brief({"reason": reason})
+        return None
 
     def start_daily_brief(self, options: Optional[Dict[str, Any]] = None) -> str:
-        task_id = f"brief-{uuid.uuid4().hex[:12]}"
-        self._enqueue_task(
-            task_id,
-            kind="brief",
-            stage="准备资讯简报",
-            source="多源资讯",
-            summary={},
-            payload=options or {},
-        )
-        return task_id
+        raise RuntimeError("资讯简报生成已禁用；只读取 DuckDB 已有简报。")
 
     def start_scheduled_daily_brief(self, scheduled_at: datetime) -> Optional[str]:
-        brief_date = scheduled_at.date()
-        task_id = f"brief-auto-{brief_date:%Y%m%d}-{scheduled_at:%H%M}"
-        if self.db.scalar("SELECT id FROM task_runs WHERE id = ?", [task_id]):
-            return None
-        self._enqueue_task(
-            task_id,
-            kind="brief",
-            stage="准备资讯简报",
-            source="多源资讯",
-            summary={"scheduled": True, "schedule_key": scheduled_at.strftime("%Y-%m-%d %H:%M")},
-            payload={
-                "scheduled": True,
-                "report_date": brief_date.isoformat(),
-                "schedule_key": scheduled_at.strftime("%Y-%m-%d %H:%M"),
-            },
-        )
-        return task_id
+        return None
 
     def _enqueue_task(
         self,
@@ -914,39 +926,25 @@ class UpdateService:
         include_bj = bool(options.get("include_bj", settings.include_bj))
         exclude_star = bool(options.get("exclude_star_board", settings.exclude_star_board))
         results = []
+        stock_source = TushareEnrichmentSource()
+        realtime_source = TushareRealtimeSource()
         probes = [
             (
-                self.baostock_guard,
-                "Baostock",
+                self.public_guard,
+                "Tushare stock_basic",
                 "股票基础信息",
-                lambda: BaostockSource().fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
+                lambda: stock_source.fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
             ),
             (
                 self.public_guard,
-                "AkShare 新浪",
+                "Tushare 实时日线",
                 "当天行情快照",
-                lambda: AkShareSource().fetch_sina_snapshot(include_bj=include_bj, exclude_star=exclude_star),
-            ),
-            (
-                self.public_guard,
-                "AkShare 腾讯",
-                "当天行情快照",
-                lambda: AkShareSource().fetch_tencent_snapshot(include_bj=include_bj, exclude_star=exclude_star),
+                lambda: realtime_source.fetch_realtime_daily(
+                    include_bj=include_bj,
+                    exclude_star=exclude_star,
+                ),
             ),
         ]
-        if _tushare_realtime_configured():
-            probes.insert(
-                1,
-                (
-                    self.public_guard,
-                    "Tushare 实时日线",
-                    "盘中行情快照",
-                    lambda: TushareRealtimeSource().fetch_realtime_daily(
-                        include_bj=include_bj,
-                        exclude_star=exclude_star,
-                    ),
-                ),
-            )
         for guard, source, capability, fetcher in probes:
             result = guard.call(
                 source,
@@ -1080,7 +1078,7 @@ class UpdateService:
         start = target_history_date - timedelta(days=settings.default_history_days)
         end = target_history_date
         try:
-            self._patch_task(task_id, stage="刷新股票池", source="Baostock")
+            self._patch_task(task_id, stage="刷新股票池", source="Tushare stock_basic")
             self.record_checkpoint(task_id, "stock_basic", "股票基础信息", target_history_date, "all", "running")
             try:
                 stock_count = self._update_basics(force, include_bj, exclude_star, warnings)
@@ -1101,7 +1099,7 @@ class UpdateService:
             self._patch_task(
                 task_id,
                 stage="刷新快照",
-                source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
+                source="Tushare 实时日线",
             )
             self.record_checkpoint(task_id, "daily_snapshot", "当天行情快照", target_history_date, "all", "running")
             try:
@@ -1115,7 +1113,7 @@ class UpdateService:
                     "completed" if snapshot_count else "partial",
                     rows_written=snapshot_count,
                     payload={
-                        "source": "Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
+                        "source": "Tushare 实时日线",
                         "warnings": warnings[-2:],
                     },
                 )
@@ -1137,7 +1135,7 @@ class UpdateService:
             self._patch_task(
                 task_id,
                 stage="轻量补齐历史 K 线" if incremental_history else "刷新历史 K 线",
-                source="Tushare daily 前复权" if _tushare_history_configured() else "Baostock",
+                source="Tushare daily 前复权",
                 total=total,
             )
             self.record_checkpoint(
@@ -1147,7 +1145,7 @@ class UpdateService:
                 target_history_date,
                 "all",
                 "running",
-                payload={"stock_count": total, "source": "Tushare daily 前复权" if _tushare_history_configured() else "Baostock"},
+                payload={"stock_count": total, "source": "Tushare daily 前复权"},
             )
             try:
                 history_success, history_failed, history_skipped = self._update_history(
@@ -1513,7 +1511,7 @@ class UpdateService:
         if capability == "股票基础信息":
             count = self._update_basics(True, include_bj, exclude_star, warnings)
             return {
-                "source": "Baostock",
+                "source": "Tushare stock_basic",
                 "success": count,
                 "failed": 0,
                 "skipped": 0,
@@ -2940,7 +2938,7 @@ class UpdateService:
             self._patch_task(
                 task_id,
                 stage="拉取盘中快照",
-                source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
+                source="Tushare 实时日线",
                 total=3,
                 processed=0,
                 success=0,
@@ -3000,41 +2998,17 @@ class UpdateService:
             )
 
     def _run_daily_brief(self, task_id: str, options: Dict[str, Any]) -> None:
-        report_date = None
-        if options.get("report_date"):
-            report_date = date.fromisoformat(str(options["report_date"])[:10])
-        try:
-            def progress(stage: str, processed: int, total: int) -> None:
-                self._patch_task(
-                    task_id,
-                    stage=stage,
-                    source="多源资讯",
-                    processed=processed,
-                    total=total,
-                )
-
-            summary = self.daily_brief_service.generate(report_date=report_date, progress=progress)
-            self._patch_task(
-                task_id,
-                status=summary.get("status") or "completed_partial",
-                stage="资讯简报完成",
-                source="多源资讯",
-                success=1 if summary.get("article_count") else 0,
-                failed=0,
-                warning=summary.get("visible_warning"),
-                summary=summary,
-                finished_at=datetime.utcnow(),
-            )
-        except Exception as exc:
-            self._patch_task(
-                task_id,
-                status="failed",
-                stage="资讯简报失败",
-                failed=1,
-                error_message=str(exc),
-                warning=str(exc),
-                finished_at=datetime.utcnow(),
-            )
+        message = "资讯简报生成已禁用；只读取 DuckDB 已有简报。"
+        self._patch_task(
+            task_id,
+            status="failed",
+            stage="资讯简报已禁用",
+            source="本地仓库",
+            failed=1,
+            error_message=message,
+            warning=message,
+            finished_at=datetime.utcnow(),
+        )
 
     def _fetch_intraday_snapshot_frame(
         self,
@@ -3042,47 +3016,20 @@ class UpdateService:
         exclude_star: bool,
         warnings: List[str],
     ) -> pd.DataFrame:
-        if _tushare_realtime_configured():
-            ts_source = TushareRealtimeSource()
-            ts_result = self.public_guard.call(
-                "Tushare 实时日线",
-                "盘中行情快照",
-                lambda: ts_source.fetch_realtime_daily(include_bj=include_bj, exclude_star=exclude_star),
-                ttl_minutes=5,
-                max_attempts=1,
-                timeout_seconds=settings.tushare_timeout_seconds,
-            )
-            if ts_result.status == "available":
-                return ts_result.frame
-            if ts_result.message:
-                warnings.append(f"Tushare 实时日线失败：{ts_result.message}")
-
-        ak = AkShareSource()
+        ts_source = TushareRealtimeSource()
         result = self.public_guard.call(
-            "AkShare 新浪",
+            "Tushare 实时日线",
             "盘中行情快照",
-            lambda: ak.fetch_sina_snapshot(include_bj=include_bj, exclude_star=exclude_star),
-            ttl_minutes=15,
-            max_attempts=2,
-            timeout_seconds=120,
+            lambda: ts_source.fetch_realtime_daily(include_bj=include_bj, exclude_star=exclude_star),
+            ttl_minutes=5,
+            max_attempts=1,
+            timeout_seconds=settings.tushare_timeout_seconds,
         )
-        chosen = result
-        if result.status != "available":
-            warnings.append(f"新浪盘中快照失败：{result.message}")
-            chosen = self.public_guard.call(
-                "AkShare 腾讯",
-                "盘中行情快照",
-                lambda: ak.fetch_tencent_snapshot(include_bj=include_bj, exclude_star=exclude_star),
-                ttl_minutes=15,
-                max_attempts=1,
-                timeout_seconds=120,
-            )
-        if chosen.status != "available":
-            if chosen.message:
-                warnings.append(f"腾讯盘中快照跳过：{chosen.message}")
-        if chosen.status != "available":
-            raise RuntimeError(chosen.message or "盘中快照不可用。")
-        return chosen.frame
+        if result.status == "available":
+            return result.frame
+        message = result.message or "Tushare 实时日线不可用。"
+        warnings.append(f"Tushare 实时日线失败：{message}")
+        raise RuntimeError(f"Tushare 实时日线不可用：{message}")
 
     def _upsert_realtime_daily_snapshots(
         self,
@@ -3109,7 +3056,7 @@ class UpdateService:
                     "amount": safe_float(item.get("amount")),
                     "turnover_rate": safe_float(item.get("turnover_rate")),
                     "float_market_value": safe_float(item.get("float_market_value")),
-                    "source": item.get("source") or "盘中实时日线",
+                    "source": item.get("source") or "Tushare 实时日线",
                     "updated_at": datetime.utcnow(),
                 }
             )
@@ -3136,21 +3083,21 @@ class UpdateService:
                 payload={"rows": existing, "cache": True},
             )
             return int(existing)
-        baostock = BaostockSource()
-        try:
-            frame = baostock.fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star)
-            rows_written += self.db.upsert("stock_basic", frame.to_dict("records"), ["code"])
-            self.baostock_guard.record(
-                "Baostock",
-                "股票基础信息",
-                "available",
-                payload={"rows": len(frame)},
-            )
-        except Exception as exc:
-            warnings.append(f"Baostock 股票池失败：{exc}")
-            self.baostock_guard.record("Baostock", "股票基础信息", "failed", message=str(exc))
-
-        return rows_written or int(existing)
+        source = TushareEnrichmentSource()
+        result = self.public_guard.call(
+            "Tushare stock_basic",
+            "股票基础信息",
+            lambda: source.fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
+            ttl_minutes=settings.source_probe_ttl_minutes,
+            max_attempts=1,
+            timeout_seconds=settings.tushare_timeout_seconds,
+        )
+        if result.status == "available":
+            rows_written = self.db.upsert("stock_basic", result.frame.to_dict("records"), ["code"])
+            return rows_written or int(existing)
+        message = result.message or "Tushare stock_basic 不可用。"
+        warnings.append(f"Tushare 股票池失败：{message}")
+        raise RuntimeError(f"Tushare stock_basic 不可用：{message}")
 
     def _update_snapshots(
         self,
@@ -3170,49 +3117,20 @@ class UpdateService:
                 payload={"rows": today_rows, "cache": True},
             )
             return int(today_rows)
-        if _tushare_realtime_configured():
-            ts_source = TushareRealtimeSource()
-            ts_result = self.public_guard.call(
-                "Tushare 实时日线",
-                "当天行情快照",
-                lambda: ts_source.fetch_realtime_daily(include_bj=include_bj, exclude_star=exclude_star),
-                ttl_minutes=5,
-                max_attempts=1,
-                timeout_seconds=settings.tushare_timeout_seconds,
-            )
-            if ts_result.status == "available":
-                return self._upsert_realtime_daily_snapshots(ts_result.frame)
-            if ts_result.message:
-                warnings.append(f"Tushare 实时日线快照失败：{ts_result.message}")
-        ak = AkShareSource()
+        ts_source = TushareRealtimeSource()
         result = self.public_guard.call(
-            "AkShare 新浪",
+            "Tushare 实时日线",
             "当天行情快照",
-            lambda: ak.fetch_sina_snapshot(include_bj=include_bj, exclude_star=exclude_star),
-            ttl_minutes=settings.source_probe_ttl_minutes,
-            max_attempts=2,
+            lambda: ts_source.fetch_realtime_daily(include_bj=include_bj, exclude_star=exclude_star),
+            ttl_minutes=5,
+            max_attempts=1,
+            timeout_seconds=settings.tushare_timeout_seconds,
         )
-        chosen = result
         if result.status != "available":
-            warnings.append(f"新浪快照失败：{result.message}")
-            chosen = self.public_guard.call(
-                "AkShare 腾讯",
-                "当天行情快照",
-                lambda: ak.fetch_tencent_snapshot(include_bj=include_bj, exclude_star=exclude_star),
-                ttl_minutes=settings.source_probe_ttl_minutes,
-                max_attempts=1,
-            )
-        if chosen.status != "available":
-            if chosen.message:
-                warnings.append(f"腾讯快照跳过：{chosen.message}")
-        if chosen.status == "available":
-            records = chosen.frame.to_dict("records")
-            count = self.db.upsert("daily_snapshots", records, ["code", "date"])
-            self._merge_snapshot_names(chosen.frame)
-            return count
-        if chosen.message:
-            warnings.append(f"快照全部降级到本地缓存：{chosen.message}")
-        return int(today_rows)
+            message = result.message or "Tushare 实时日线不可用。"
+            warnings.append(f"Tushare 实时日线快照失败：{message}")
+            raise RuntimeError(f"Tushare 实时日线不可用：{message}")
+        return self._upsert_realtime_daily_snapshots(result.frame)
 
     def _history_stocks_for_update(
         self,
@@ -3290,90 +3208,22 @@ class UpdateService:
         incremental: bool = False,
         target_history_date: Optional[date] = None,
     ) -> tuple:
-        if _tushare_history_configured():
-            try:
-                return self._update_tushare_history(stocks, start, end, task_id)
-            except Exception as exc:
-                self.public_guard.record(
-                    "Tushare daily 前复权",
-                    "历史 K 线",
-                    "failed",
-                    message=str(exc),
-                    ttl_minutes=15,
-                )
-                self._patch_task(
-                    task_id,
-                    source="Baostock",
-                    warning=f"Tushare 历史 K 线失败，回退 Baostock：{exc}",
-                )
-
-        baostock = BaostockSource()
-        success = 0
-        failed = 0
-        skipped = 0
-        total = len(stocks)
-        target = target_history_date or self._target_history_date()
-        for index, row in enumerate(stocks, start=1):
-            code = row["code"]
-            latest = row.get("latest_history_date")
-            if latest is None:
-                latest = self.db.scalar("SELECT MAX(date) FROM historical_bars WHERE code = ?", [code])
-            if incremental and latest and not force and str(latest) >= target.isoformat():
-                skipped += 1
-                self._patch_task(
-                    task_id,
-                    current_stock=code,
-                    processed=index,
-                    skipped=skipped,
-                    success=success,
-                    failed=failed,
-                )
-                continue
-            fetch_start = self._history_fetch_start(start, latest, incremental=incremental)
-            if incremental and fetch_start > end:
-                skipped += 1
-                self._patch_task(
-                    task_id,
-                    current_stock=code,
-                    processed=index,
-                    skipped=skipped,
-                    success=success,
-                    failed=failed,
-                )
-                continue
-            try:
-                self.baostock_guard.sleep()
-                frame = baostock.fetch_history(code, fetch_start, end)
-                if frame.empty:
-                    raise RuntimeError("Baostock 历史行情为空")
-                self.db.upsert("historical_bars", frame.to_dict("records"), ["code", "date"])
-                success += 1
-            except Exception as exc:
-                failed += 1
-                self.baostock_guard.record(
-                    "Baostock",
-                    "历史 K 线",
-                    "failed",
-                    message=f"{code}: {exc}",
-                    ttl_minutes=15,
-                )
+        try:
+            return self._update_tushare_history(stocks, start, end, task_id)
+        except Exception as exc:
+            self.public_guard.record(
+                "Tushare daily 前复权",
+                "历史 K 线",
+                "failed",
+                message=str(exc),
+                ttl_minutes=15,
+            )
             self._patch_task(
                 task_id,
-                current_stock=code,
-                total=total,
-                processed=index,
-                success=success,
-                failed=failed,
-                skipped=skipped,
+                source="Tushare daily 前复权",
+                warning=f"Tushare 历史 K 线失败：{exc}",
             )
-        if success:
-            self.baostock_guard.record(
-                "Baostock",
-                "历史 K 线",
-                "available",
-                payload={"success": success, "failed": failed, "skipped": skipped},
-            )
-        return success, failed, skipped
+            raise RuntimeError(f"Tushare 历史 K 线不可用：{exc}") from exc
 
     def _update_tushare_history(
         self,
@@ -3604,6 +3454,8 @@ class UpdateService:
             latest = safe_float(item.get("latest_price"))
             float_mv = safe_float(item.get("float_market_value"))
             source = item.get("source") or "本地缓存"
+            if any(name in str(source) for name in ("AkShare", "Baostock", "AData")):
+                source = "本地快照"
             float_shares = float_mv / latest if latest and latest > 0 and float_mv else None
             if float_mv is None and latest and latest > 0:
                 history = history_by_code.get(item["code"])
@@ -3612,7 +3464,7 @@ class UpdateService:
                 if volume and volume > 0 and turn and turn > 0:
                     float_shares = volume / (turn / 100)
                     float_mv = float_shares * latest
-                    source = "Baostock 换手率估算"
+                    source = "本地历史换手率估算"
             if float_mv is None:
                 continue
             rows.append(
@@ -3626,18 +3478,18 @@ class UpdateService:
                 }
             )
         count = self.db.upsert("float_market_values", rows, ["code", "date"])
-        estimated_count = sum(1 for row in rows if row["source"] == "Baostock 换手率估算")
+        estimated_count = sum(1 for row in rows if row["source"] == "本地历史换手率估算")
         direct_count = count - estimated_count
         if direct_count:
             self.public_guard.record(
-                "AkShare 新浪",
+                "Tushare 实时日线",
                 "流通市值",
                 "available",
                 payload={"rows": direct_count, "method": "snapshot_float_market_value"},
             )
         if estimated_count:
-            self.baostock_guard.record(
-                "Baostock",
+            self.public_guard.record(
+                "本地历史 K 线",
                 "流通市值",
                 "available",
                 payload={"rows": estimated_count, "method": "turnover_implied_float_market_value"},

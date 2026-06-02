@@ -1,4 +1,4 @@
-import { post, request } from './client';
+import { request } from './client';
 
 export type MarketState = {
   trade_date?: string;
@@ -77,8 +77,4 @@ export function getMarketOverview(): Promise<MarketOverview> {
 export function getSectorHeatmap(type = 'concept', metric = 'heat', limit = 80): Promise<{ rows?: SectorHeatNode[] } | SectorHeatNode[]> {
   const params = new URLSearchParams({ type, metric, limit: String(limit) });
   return request<{ rows?: SectorHeatNode[] } | SectorHeatNode[]>(`/api/market/sector-heatmap?${params.toString()}`);
-}
-
-export function regenerateMarketBrief(): Promise<Record<string, unknown>> {
-  return post('/api/daily-brief/regenerate', {});
 }

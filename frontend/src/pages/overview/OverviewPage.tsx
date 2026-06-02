@@ -1,11 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getMarketOverview, regenerateMarketBrief } from '../../api/market';
+import { useQuery } from '@tanstack/react-query';
+import { getMarketOverview } from '../../api/market';
 import type { DailyBrief } from '../../types';
 import { Badge } from '../../design/Badge';
-import { Button } from '../../design/Button';
 import { LoadingState } from '../../design/LoadingState';
 import { EmptyState } from '../../design/EmptyState';
-import { useToast } from '../../design/Toast';
 import { useBootstrap } from '../../hooks/useBootstrap';
 import { formatDate, formatDateTime } from '../../utils/date';
 import { MarketHero } from './MarketHero';
@@ -13,19 +11,10 @@ import { SectorHeatmap } from './SectorHeatmap';
 import { MarketFlowPanel } from './MarketFlowPanel';
 
 export function OverviewPage() {
-  const queryClient = useQueryClient();
-  const { showToast } = useToast();
   const bootstrap = useBootstrap();
   const overview = useQuery({
     queryKey: ['market-overview'],
     queryFn: getMarketOverview,
-  });
-  const briefMutation = useMutation({
-    mutationFn: regenerateMarketBrief,
-    onSuccess: () => {
-      showToast('市场简报已加入生成队列，可在任务状态查看进度。', 'success');
-      void queryClient.invalidateQueries({ queryKey: ['bootstrap'] });
-    },
   });
 
   if (overview.isLoading) return <LoadingState label="读取市场总览" />;
@@ -39,14 +28,14 @@ export function OverviewPage() {
       <MarketHero state={data.state} tradeDate={data.trade_date} />
       <MarketFlowPanel pulse={data.pulse} freshness={data.data_freshness || []} />
       <SectorHeatmap sectors={data.sector_heatmap || []} />
-      <DailyBriefPanel brief={bootstrap.data?.daily_brief || bootstrap.data?.overview?.latest_brief || null} onRegenerate={() => briefMutation.mutate()} busy={briefMutation.isPending} />
+      <DailyBriefPanel brief={bootstrap.data?.daily_brief || bootstrap.data?.overview?.latest_brief || null} />
     </div>
   );
 }
 
-function DailyBriefPanel({ brief, busy, onRegenerate }: { brief: DailyBrief | null; busy?: boolean; onRegenerate: () => void }) {
+function DailyBriefPanel({ brief }: { brief: DailyBrief | null }) {
   if (!brief) {
-    return <EmptyState title="市场简报生成中" description="系统会根据市场状态、板块热力和候选变化生成摘要。" />;
+    return <EmptyState title="暂无市场简报" description="这里只读取 DuckDB 里已有的本地简报。" />;
   }
   const rows = [
     ...(brief.article_flow?.tech || []),
@@ -58,14 +47,11 @@ function DailyBriefPanel({ brief, busy, onRegenerate }: { brief: DailyBrief | nu
       <div className="section-heading">
         <div>
           <h2>市场简报</h2>
-          <p>{brief.hero_headline || brief.daily_overview || '多源资讯摘要'}</p>
+          <p>{brief.hero_headline || brief.daily_overview || '本地简报摘要'}</p>
         </div>
         <div className="button-row">
           <Badge tone="info">{formatDate(brief.brief_date)}</Badge>
           <Badge>{formatDateTime(brief.generated_at)}</Badge>
-          <Button disabled={busy} onClick={onRegenerate} variant="secondary">
-            重新生成简报
-          </Button>
         </div>
       </div>
       <p className="card-copy">{brief.daily_overview}</p>

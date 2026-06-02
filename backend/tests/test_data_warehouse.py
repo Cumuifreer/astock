@@ -540,7 +540,8 @@ def test_capabilities_include_tushare_enrichment_layers(tmp_path):
         assert name in by_name
         assert "Tushare" in " ".join(by_name[name]["fallback_sources"])
     assert by_name["每日指标"]["participates_in_analysis"] is True
-    assert by_name["龙虎榜/游资"]["participates_in_analysis"] is False
+    for name in ["资金流向", "涨跌停", "筹码分布", "概念/行业成分", "龙虎榜/游资"]:
+        assert by_name[name]["participates_in_analysis"] is True
 
 
 def test_capabilities_treat_event_datasets_as_event_counts_and_drop_legacy_concept_label(tmp_path):

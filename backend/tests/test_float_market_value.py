@@ -3,7 +3,7 @@ from backend.app.schema import migrate
 from backend.app.services.update_service import UpdateService
 
 
-def test_float_market_value_is_estimated_from_baostock_turnover(tmp_path):
+def test_float_market_value_is_estimated_from_local_history_turnover(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert(
@@ -21,7 +21,7 @@ def test_float_market_value_is_estimated_from_baostock_turnover(tmp_path):
                 "amount": 12_000.0,
                 "turnover_rate": None,
                 "float_market_value": None,
-                "source": "AkShare 新浪",
+                "source": "Tushare 实时日线",
                 "updated_at": "2026-05-20T10:00:00",
             },
             {
@@ -36,7 +36,7 @@ def test_float_market_value_is_estimated_from_baostock_turnover(tmp_path):
                 "amount": 6_400.0,
                 "turnover_rate": None,
                 "float_market_value": None,
-                "source": "AkShare 新浪",
+                "source": "Tushare 实时日线",
                 "updated_at": "2026-05-20T10:00:00",
             },
         ],
@@ -59,7 +59,7 @@ def test_float_market_value_is_estimated_from_baostock_turnover(tmp_path):
                 "pct_chg": 3.1,
                 "tradestatus": "1",
                 "is_st": False,
-                "source": "Baostock",
+                "source": "Tushare daily 前复权",
                 "updated_at": "2026-05-19T15:00:00",
             },
             {
@@ -76,7 +76,7 @@ def test_float_market_value_is_estimated_from_baostock_turnover(tmp_path):
                 "pct_chg": -1.2,
                 "tradestatus": "1",
                 "is_st": False,
-                "source": "Baostock",
+                "source": "Tushare daily 前复权",
                 "updated_at": "2026-05-19T15:00:00",
             },
         ],
@@ -91,4 +91,4 @@ def test_float_market_value_is_estimated_from_baostock_turnover(tmp_path):
     assert rows[0]["code"] == "000001.SZ"
     assert rows[0]["float_shares"] == 50_000.0
     assert rows[0]["float_market_value"] == 500_000.0
-    assert rows[0]["source"] == "Baostock 换手率估算"
+    assert rows[0]["source"] == "本地历史换手率估算"

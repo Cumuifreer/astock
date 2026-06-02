@@ -2,57 +2,17 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from backend.app.db import Database
 from backend.app.schema import migrate
 from backend.app.services.daily_brief_scheduler import DailyBriefScheduler
-from backend.app.services.daily_brief_service import DEFAULT_DAILY_BRIEF_SOURCES
 from backend.app.services.daily_brief_service import DailyBriefService
 from backend.app.services.data_service import DataService
 from backend.app.services.update_service import UpdateService
 
 
-def test_daily_brief_service_normalizes_deepseek_model_alias(tmp_path):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = DailyBriefService(db, api_key="", model="v4-flash")
-
-    assert service.model == "deepseek-v4-flash"
-
-
-def test_default_daily_brief_sources_prefer_shanghai_reachable_feeds():
-    source_ids = {source["id"] for source in DEFAULT_DAILY_BRIEF_SOURCES}
-
-    removed_ids = {
-        "github-trending",
-        "v2ex-hot",
-        "linuxdo",
-        "deepmind-blog",
-        "huggingface-blog",
-        "bloomberg-markets",
-        "ft-companies",
-        "bbc-business",
-        "economist-finance",
-        "bbc-world",
-        "guardian-world",
-        "nyt-world",
-        "dw-chinese",
-        "aljazeera",
-        "the-diplomat",
-        "36kr-article",
-        "36kr-newsflash",
-    }
-    added_ids = {
-        "infoq-cn",
-        "chinadaily-bizchina",
-        "chinadaily-world",
-        "chinadaily-china",
-    }
-
-    assert source_ids.isdisjoint(removed_ids)
-    assert added_ids.issubset(source_ids)
-
-
-def test_daily_brief_service_generates_fallback_report_from_articles(tmp_path, monkeypatch):
+def test_daily_brief_generation_is_disabled_without_fetching_sources(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     service = DailyBriefService(
@@ -61,77 +21,11 @@ def test_daily_brief_service_generates_fallback_report_from_articles(tmp_path, m
         api_key="",
     )
 
-    monkeypatch.setattr(
-        service,
-        "_fetch_source",
-        lambda source: [
-            {
-                "source_id": "mock",
-                "source": "Mock Feed",
-                "category": "tech",
-                "title": "Open model release changes developer tooling",
-                "url": "https://example.com/open-model",
-                "excerpt": "A new open model release improves local developer tooling.",
-                "published_at": datetime(2026, 5, 23, 8, 0),
-            }
-        ],
-    )
-    summary = service.generate(report_date=datetime(2026, 5, 23).date())
-    latest = service.latest()
+    monkeypatch.setattr(service, "_fetch_source", lambda source: (_ for _ in ()).throw(AssertionError("must not fetch")))
 
-    assert summary["article_count"] == 1
-    assert summary["status"] == "completed_partial"
-    assert latest is not None
-    assert latest["hero_headline"]
-    assert latest["tech_briefs"][0]["url"] == "https://example.com/open-model"
-    assert "科技资讯" in latest["tech_briefs"][0]["title"]
-    assert "来自 Mock Feed" in latest["tech_briefs"][0]["summary"]
-    assert db.scalar("SELECT COUNT(*) FROM news_articles") == 1
-
-
-def test_daily_brief_service_filters_entertainment_from_brief_pool(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = DailyBriefService(
-        db,
-        sources=[{"id": "mock", "name": "Mock Feed", "type": "rss", "category": "finance", "enabled": True}],
-        api_key="",
-    )
-
-    monkeypatch.setattr(
-        service,
-        "_fetch_source",
-        lambda source: [
-            {
-                "source_id": "mock",
-                "source": "Mock Feed",
-                "category": "finance",
-                "title": "电影《给阿嬷的情书》票房突破十亿",
-                "url": "https://example.com/movie-box-office",
-                "excerpt": "影片上映后票房继续增长。",
-                "published_at": datetime(2026, 5, 24, 8, 0),
-            },
-            {
-                "source_id": "mock",
-                "source": "Mock Feed",
-                "category": "finance",
-                "title": "AI 基础设施公司完成 3 亿美元融资",
-                "url": "https://example.com/ai-funding",
-                "excerpt": "融资将用于扩建 GPU 集群。",
-                "published_at": datetime(2026, 5, 24, 8, 5),
-            },
-        ],
-    )
-
-    summary = service.generate(report_date=datetime(2026, 5, 24).date())
-    latest = DataService(db).latest_daily_brief()
-
-    assert summary["article_count"] == 1
-    assert db.scalar("SELECT COUNT(*) FROM news_articles") == 1
-    assert latest is not None
-    assert latest["finance_briefs"][0]["url"] == "https://example.com/ai-funding"
-    assert latest["article_flow"]["finance"][0]["url"] == "https://example.com/ai-funding"
-    assert "票房" not in json.dumps(latest, ensure_ascii=False, default=str)
+    with pytest.raises(RuntimeError, match="已禁用"):
+        service.generate(report_date=datetime(2026, 5, 23).date())
+    assert db.scalar("SELECT COUNT(*) FROM news_articles") == 0
 
 
 def test_daily_brief_api_backfills_article_flow_for_legacy_briefs(tmp_path):
@@ -222,299 +116,7 @@ def test_daily_brief_api_backfills_article_flow_for_legacy_briefs(tmp_path):
     assert "GitHub Trending" not in json.dumps(latest, ensure_ascii=False, default=str)
 
 
-def test_daily_brief_uses_llm_translated_article_flow_without_raw_append(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = DailyBriefService(
-        db,
-        sources=[{"id": "mock", "name": "Mock Feed", "type": "rss", "category": "tech", "enabled": True}],
-        api_key="configured",
-    )
-
-    monkeypatch.setattr(
-        service,
-        "_fetch_source",
-        lambda source: [
-            {
-                "source_id": "mock",
-                "source": "Mock Feed",
-                "category": "tech",
-                "title": "AI infra company releases new inference cluster",
-                "url": "https://example.com/inference-cluster",
-                "excerpt": "A new inference cluster targets low-latency workloads.",
-                "published_at": datetime(2026, 5, 24, 8, 0),
-            },
-            {
-                "source_id": "36kr-newsflash",
-                "source": "36氪快讯",
-                "category": "tech",
-                "title": "营销快讯应该被隐藏",
-                "url": "https://example.com/36kr-noise",
-                "excerpt": "这条来自 36 氪，不应出现在展示列表。",
-                "published_at": datetime(2026, 5, 24, 8, 1),
-            },
-        ],
-    )
-    monkeypatch.setattr(
-        service,
-        "_post_llm",
-        lambda client, payload: {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "hero_headline": "AI 基础设施继续演进",
-                                "daily_overview": "AI 推理基础设施继续演进，低延迟集群成为重点。",
-                                "tech_briefs": [
-                                    {
-                                        "title": "AI 推理集群发布",
-                                        "url": "https://example.com/inference-cluster",
-                                        "source": "Mock Feed",
-                                        "summary": "新的推理集群面向低延迟任务。",
-                                        "importance": 8,
-                                    }
-                                ],
-                                "finance_briefs": [],
-                                "politics_briefs": [],
-                                "article_flow": {
-                                    "tech": [
-                                        {
-                                            "title": "AI 推理集群发布",
-                                            "url": "https://example.com/inference-cluster",
-                                            "source": "Mock Feed",
-                                            "summary": "新的推理集群面向低延迟任务。",
-                                            "importance": 8,
-                                        }
-                                    ],
-                                    "finance": [],
-                                    "politics": [],
-                                },
-                                "editor_note": "关注 AI 基础设施的真实进展。",
-                                "keywords": ["AI", "推理集群"],
-                            },
-                            ensure_ascii=False,
-                        )
-                    }
-                }
-            ]
-        },
-    )
-
-    service.generate(report_date=datetime(2026, 5, 24).date())
-    latest = DataService(db).latest_daily_brief()
-
-    assert latest is not None
-    assert latest["article_flow"]["tech"] == [
-        {
-            "title": "AI 推理集群发布",
-            "url": "https://example.com/inference-cluster",
-            "source": "Mock Feed",
-            "category": "tech",
-            "summary": "新的推理集群面向低延迟任务。",
-            "published_at": "2026-05-24T08:00:00",
-        }
-    ]
-    assert "AI infra company releases" not in json.dumps(latest, ensure_ascii=False, default=str)
-    assert "36氪" not in json.dumps(latest, ensure_ascii=False, default=str)
-
-
-def test_daily_brief_article_flow_sorts_by_published_time_not_importance(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = DailyBriefService(
-        db,
-        sources=[{"id": "mock", "name": "Mock Feed", "type": "rss", "category": "finance", "enabled": True}],
-        api_key="configured",
-    )
-
-    monkeypatch.setattr(
-        service,
-        "_fetch_source",
-        lambda source: [
-            {
-                "source_id": "mock",
-                "source": "Mock Feed",
-                "category": "finance",
-                "title": "Older high importance market story",
-                "url": "https://example.com/old-important",
-                "excerpt": "Older but important.",
-                "published_at": datetime(2026, 5, 24, 8, 0),
-            },
-            {
-                "source_id": "mock",
-                "source": "Mock Feed",
-                "category": "finance",
-                "title": "Newer normal market story",
-                "url": "https://example.com/newer-normal",
-                "excerpt": "Newer but normal priority.",
-                "published_at": datetime(2026, 5, 24, 18, 0),
-            },
-        ],
-    )
-    monkeypatch.setattr(
-        service,
-        "_post_llm",
-        lambda client, payload: {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "hero_headline": "市场资讯更新",
-                                "daily_overview": "市场资讯按时间整理。",
-                                "tech_briefs": [],
-                                "finance_briefs": [
-                                    {
-                                        "title": "旧重点",
-                                        "url": "https://example.com/old-important",
-                                        "source": "Mock Feed",
-                                        "summary": "旧重点摘要。",
-                                        "importance": 10,
-                                    },
-                                    {
-                                        "title": "新普通",
-                                        "url": "https://example.com/newer-normal",
-                                        "source": "Mock Feed",
-                                        "summary": "新普通摘要。",
-                                        "importance": 3,
-                                    },
-                                ],
-                                "politics_briefs": [],
-                                "article_flow": {
-                                    "tech": [],
-                                    "finance": [
-                                        {
-                                            "title": "旧重点",
-                                            "url": "https://example.com/old-important",
-                                            "source": "Mock Feed",
-                                            "summary": "旧重点摘要。",
-                                            "importance": 10,
-                                        },
-                                        {
-                                            "title": "新普通",
-                                            "url": "https://example.com/newer-normal",
-                                            "source": "Mock Feed",
-                                            "summary": "新普通摘要。",
-                                            "importance": 3,
-                                        },
-                                    ],
-                                    "politics": [],
-                                },
-                                "editor_note": "按发布时间阅读。",
-                                "keywords": ["市场"],
-                            },
-                            ensure_ascii=False,
-                        )
-                    }
-                }
-            ]
-        },
-    )
-
-    service.generate(report_date=datetime(2026, 5, 24).date())
-    latest = DataService(db).latest_daily_brief()
-
-    assert latest is not None
-    finance_rows = latest["article_flow"]["finance"]
-    assert [row["url"] for row in finance_rows[:2]] == [
-        "https://example.com/newer-normal",
-        "https://example.com/old-important",
-    ]
-    assert finance_rows[0]["published_at"] == "2026-05-24T18:00:00"
-
-
-def test_daily_brief_service_condenses_source_failures_for_ui(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = DailyBriefService(
-        db,
-        sources=[
-            {"id": "mock-a", "name": "Mock A", "type": "rss", "category": "tech", "enabled": True},
-            {"id": "mock-b", "name": "Mock B", "type": "rss", "category": "finance", "enabled": True},
-        ],
-        api_key="",
-    )
-
-    def fail_source(source):
-        raise OSError("Network is unreachable")
-
-    monkeypatch.setattr(service, "_fetch_source", fail_source)
-    service.generate(report_date=datetime(2026, 5, 23).date())
-    latest = service.latest()
-
-    assert latest is not None
-    assert "2 个资讯源暂不可用" in latest["error_message"]
-    assert "Network is unreachable" not in latest["error_message"]
-    assert "Network is unreachable" in latest["payload"]["warnings"][0]
-
-
-def test_daily_brief_service_accepts_textual_importance_from_llm(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = DailyBriefService(
-        db,
-        sources=[{"id": "mock", "name": "Mock Feed", "type": "rss", "category": "tech", "enabled": True}],
-        api_key="configured",
-    )
-
-    monkeypatch.setattr(
-        service,
-        "_fetch_source",
-        lambda source: [
-            {
-                "source_id": "mock",
-                "source": "Mock Feed",
-                "category": "tech",
-                "title": "AI agents enter developer workflow",
-                "url": "https://example.com/agent-workflow",
-                "excerpt": "Developer tools are adding AI agents.",
-                "published_at": datetime(2026, 5, 24, 8, 0),
-            }
-        ],
-    )
-    monkeypatch.setattr(
-        service,
-        "_post_llm",
-        lambda client, payload: {
-            "choices": [
-                {
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "hero_headline": "AI 工具继续进入开发流程",
-                                "daily_overview": "多家技术来源显示，AI agent 正在进入开发者工具链。",
-                                "tech_briefs": [
-                                    {
-                                        "title": "AI agent 进入开发流程",
-                                        "url": "https://example.com/agent-workflow",
-                                        "source": "Mock Feed",
-                                        "summary": "开发者工具继续加入 agent 能力。",
-                                        "importance": "high",
-                                    }
-                                ],
-                                "finance_briefs": [],
-                                "politics_briefs": [],
-                                "editor_note": "关注工具链变化。",
-                                "keywords": ["AI", "开发工具"],
-                            },
-                            ensure_ascii=False,
-                        )
-                    }
-                }
-            ]
-        },
-    )
-
-    summary = service.generate(report_date=datetime(2026, 5, 24).date())
-    latest = service.latest()
-
-    assert summary["llm_used"] is True
-    assert latest["llm_model"] == "deepseek-v4-flash"
-    assert latest["tech_briefs"][0]["importance"] == 8
-
-
-def test_update_service_retries_fallback_brief_after_llm_is_configured(tmp_path, monkeypatch):
+def test_update_service_does_not_retry_fallback_brief_after_llm_is_configured(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert(
@@ -551,11 +153,11 @@ def test_update_service_retries_fallback_brief_after_llm_is_configured(tmp_path,
     monkeypatch.setattr(service, "executor", NoopExecutor())
     task_id = service.ensure_daily_brief()
 
-    assert task_id is not None
-    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 1
+    assert task_id is None
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 0
 
 
-def test_update_service_retries_legacy_llm_400_fallback_once(tmp_path, monkeypatch):
+def test_update_service_does_not_retry_legacy_llm_400_fallback(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert(
@@ -592,10 +194,11 @@ def test_update_service_retries_legacy_llm_400_fallback_once(tmp_path, monkeypat
     monkeypatch.setattr(service, "executor", NoopExecutor())
     task_id = service.ensure_daily_brief()
 
-    assert task_id is not None
+    assert task_id is None
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 0
 
 
-def test_update_service_retries_llm_brief_without_translated_article_flow(tmp_path, monkeypatch):
+def test_update_service_does_not_retry_llm_brief_without_translated_article_flow(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert(
@@ -632,7 +235,8 @@ def test_update_service_retries_llm_brief_without_translated_article_flow(tmp_pa
     monkeypatch.setattr(service, "executor", NoopExecutor())
     task_id = service.ensure_daily_brief()
 
-    assert task_id is not None
+    assert task_id is None
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 0
 
 
 def test_update_service_does_not_loop_on_current_llm_400_fallback(tmp_path, monkeypatch):
@@ -675,7 +279,7 @@ def test_update_service_does_not_loop_on_current_llm_400_fallback(tmp_path, monk
     assert task_id is None
 
 
-def test_update_service_enqueues_brief_when_empty(tmp_path, monkeypatch):
+def test_update_service_does_not_enqueue_brief_when_empty(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     service = UpdateService(db)
@@ -689,12 +293,39 @@ def test_update_service_enqueues_brief_when_empty(tmp_path, monkeypatch):
     task_id = service.ensure_daily_brief()
     duplicate = service.ensure_daily_brief()
 
-    assert task_id is not None
-    assert duplicate == task_id
-    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 1
+    assert task_id is None
+    assert duplicate is None
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 0
 
 
-def test_daily_brief_scheduler_enqueues_daily_slot_once(tmp_path, monkeypatch):
+def test_legacy_brief_task_dispatch_is_disabled(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    service._write_task(
+        "brief-legacy",
+        kind="brief",
+        status="running",
+        stage="准备资讯简报",
+        source=None,
+        summary={},
+        payload={},
+    )
+
+    def fail_generate(*_args, **_kwargs):
+        raise AssertionError("brief dispatch must not fetch external sources")
+
+    monkeypatch.setattr(service.daily_brief_service, "generate", fail_generate)
+
+    service._run_daily_brief("brief-legacy", {})
+    row = db.query("SELECT status, stage, error_message FROM task_runs WHERE id = 'brief-legacy'")[0]
+
+    assert row["status"] == "failed"
+    assert row["stage"] == "资讯简报已禁用"
+    assert "已禁用" in row["error_message"]
+
+
+def test_daily_brief_scheduler_does_not_enqueue_daily_slot(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     service = UpdateService(db)
@@ -710,14 +341,12 @@ def test_daily_brief_scheduler_enqueues_daily_slot_once(tmp_path, monkeypatch):
     task_id = scheduler.tick(now)
     duplicate = scheduler.tick(now)
 
-    row = db.query("SELECT id, status, payload_json FROM task_runs WHERE kind = 'brief'")[0]
-    assert task_id == "brief-auto-20260523-0820"
+    assert task_id is None
     assert duplicate is None
-    assert row["status"] == "queued"
-    assert '"scheduled": true' in row["payload_json"]
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 0
 
 
-def test_daily_brief_scheduler_supports_multiple_daily_slots(tmp_path, monkeypatch):
+def test_daily_brief_scheduler_multiple_daily_slots_stay_disabled(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     service = UpdateService(db)
@@ -739,13 +368,13 @@ def test_daily_brief_scheduler_supports_multiple_daily_slots(tmp_path, monkeypat
         for row in db.query("SELECT id FROM task_runs WHERE kind = 'brief' ORDER BY id")
     ]
     assert before_first is None
-    assert morning == "brief-auto-20260523-0820"
+    assert morning is None
     assert morning_duplicate is None
-    assert evening == "brief-auto-20260523-1820"
-    assert task_ids == ["brief-auto-20260523-0820", "brief-auto-20260523-1820"]
+    assert evening is None
+    assert task_ids == []
 
 
-def test_daily_brief_scheduler_catches_up_latest_due_slot(tmp_path, monkeypatch):
+def test_daily_brief_scheduler_catchup_stays_disabled(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     service = UpdateService(db)
@@ -759,5 +388,5 @@ def test_daily_brief_scheduler_catches_up_latest_due_slot(tmp_path, monkeypatch)
 
     task_id = scheduler.tick(datetime(2026, 5, 23, 19, 0, tzinfo=ZoneInfo("Asia/Shanghai")))
 
-    assert task_id == "brief-auto-20260523-1820"
-    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 1
+    assert task_id is None
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'brief'") == 0

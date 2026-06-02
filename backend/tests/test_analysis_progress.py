@@ -423,6 +423,32 @@ def test_candidate_ai_summary_task_enqueues_and_marks_result_queued(tmp_path, mo
     assert row == {"status": "queued", "task_id": task_id, "input_hash": "hash-1"}
 
 
+def test_core_task_starters_reuse_active_matching_payloads(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+
+    class NoopExecutor:
+        def submit(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(service, "executor", NoopExecutor())
+
+    update_first = service.start_update({"mode": "daily_light"})
+    update_second = service.start_update({"mode": "daily_light"})
+    analyze_first = service.start_analysis({"candidate_limit": 5}, AnalysisService(db))
+    analyze_second = service.start_analysis({"candidate_limit": 5}, AnalysisService(db))
+    backtest_first = service.start_backtest({"config": {"candidate_limit": 3}}, object())
+    backtest_second = service.start_backtest({"config": {"candidate_limit": 3}}, object())
+
+    assert update_second == update_first
+    assert analyze_second == analyze_first
+    assert backtest_second == backtest_first
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'update'") == 1
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'analyze'") == 1
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'backtest'") == 1
+
+
 def test_candidate_ai_summary_task_rejects_missing_candidate(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

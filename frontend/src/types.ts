@@ -81,10 +81,18 @@ export interface SourceDiagnostics {
   last_tushare_error: string | null;
   last_snapshot_source: string | null;
   last_history_source: string | null;
+  snapshot_source?: SourceContract;
+  history_source?: SourceContract;
   realtime_status: string;
   history_status: string;
   enrichment_status: string;
   rows: Array<Record<string, unknown>>;
+}
+
+export interface SourceContract {
+  expected_source: string;
+  actual_source: string;
+  status: string;
 }
 
 export interface IndicatorCategory {

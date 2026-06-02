@@ -48,7 +48,6 @@ def health() -> Dict[str, Any]:
 
 @router.get("/bootstrap")
 def bootstrap() -> Dict[str, Any]:
-    update_service.ensure_daily_brief()
     return {
         "overview": data_service.overview(),
         "capabilities": data_service.capabilities(),
@@ -252,14 +251,12 @@ def runtime_health() -> Dict[str, Any]:
 
 @router.get("/daily-brief")
 def daily_brief() -> Dict[str, Any]:
-    update_service.ensure_daily_brief()
     return {"brief": data_service.latest_daily_brief(), "task": data_service.latest_task("brief")}
 
 
 @router.post("/daily-brief/regenerate")
-def regenerate_daily_brief(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    task_id = update_service.start_daily_brief({**(payload or {}), "reason": "manual"})
-    return {"task_id": task_id, "status": "queued"}
+def regenerate_daily_brief(payload: Optional[Dict[str, Any]] = None) -> JSONResponse:
+    return JSONResponse(status_code=410, content={"detail": "资讯简报生成已禁用；此接口只保留读取本地 DuckDB 已有简报。"})
 
 
 @router.get("/watchlist")

@@ -9,25 +9,23 @@ A-Share Signal 是一个私人使用的 A 股技术分析 Web 应用。它只做
 - 前端：Vite + React + TypeScript，构建产物由后端托管。
 - 任务：数据更新和分析分开运行；点击后立即返回，前端轮询真实进度。
 - 盘中雷达：可手动或用定时器触发全市场快照采样，采样入库后自动生成独立观察榜，不覆盖正式分析报告。
-- 资讯简报：后台定时抓取多源资讯并用 LLM 生成中文摘要，首页会自动显示最近一份；没有简报时服务启动后会自动补一份。
+- 资讯简报：只读取 DuckDB 中已经存在的本地简报记录；服务启动、首页加载和定时器都不会创建新简报。
 
 ## 数据源
 
-- Tushare 历史日线：历史 K 线主源。通过 `daily`、`adj_factor` 和 `daily_basic` 批量生成前复权 K 线，保存成交量、成交额和换手率 `turn`；Tushare 不可用时回退 Baostock。
-- Baostock：股票基础信息主源，也是历史 K 线兜底源。
-- Tushare 实时日线：当天/盘中行情主源。配置 token 后，数据更新和盘中雷达都会优先用 Tushare 中转实时 K 线采样，并同步写入当天快照。
-- AkShare 新浪：盘中行情应急备用源。Tushare 不可用或未配置时，保存最新价、涨跌幅、最高、最低、成交量、成交额、名称等快照字段。
-- AkShare 腾讯：盘中行情第二备用源。系统会检测当前 AkShare 是否暴露兼容接口；不可用时会记录原因并在数据地图显示。
-- 本地缓存：页面刷新、服务重启、外部源失败时都从 DuckDB 恢复已有状态。
+- Tushare 历史日线：通过 `daily`、`adj_factor` 和 `daily_basic` 批量生成前复权 K 线，保存成交量、成交额和换手率 `turn`。
+- Tushare 实时日线：配置 token 后，数据更新和盘中雷达会用 Tushare 中转实时 K 线采样，并同步写入当天快照。
+- Tushare 增强数据：`daily_basic`、`stk_factor`、`moneyflow`、`limit_list_d`、`cyq_perf`、`cyq_chips`、`ths_member`、`top_list`、`top_inst`、`hm_detail` 会写入本地仓库供分析和个股档案使用。
+- 本地 DuckDB 缓存：页面刷新、服务重启或 Tushare 暂不可用时，前端读取已经入库的本地数据和任务状态。
 
-项目不接入东财 / EM 相关接口；数据源名称和数据地图中也不会把它列为可用来源。
+项目除 Tushare 外不接入其他行情接口；数据地图只展示 Tushare 同步状态和本地 DuckDB 缓存状态。
 
 ## 指标
 
 - 换手率：优先来自 Tushare `daily_basic` 并写入历史 K 线字段 `turn`；缺失会计入覆盖率，策略可选择跳过或降级。
 - RPS：直接用本地历史收盘价计算 RPS20、RPS60、RPS120。计算方式为近 N 日涨幅在本地股票池中的百分位排名乘以 100。
 - 振幅：直接用本地 K 线计算，`(high - low) / prev_close`。
-- 流通市值：优先使用本地缓存；Tushare 实时日线或 AkShare 快照提供流通市值字段时写入缓存。缺失时按策略配置跳过或降级，不会导致分析失败。
+- 流通市值：优先使用本地缓存；Tushare `daily_basic` 提供流通市值字段时写入缓存。缺失时按策略配置跳过或降级，不会导致分析失败。
 
 ## 盘中雷达
 
@@ -54,7 +52,7 @@ curl -sS http://127.0.0.1:8000/api/intraday
 
 `ASHARE_INTRADAY_SCHEDULE` 是脚本、后端 scheduler 和状态页共同使用的时间表。轻量服务器上不建议全市场 5 分钟一次。
 
-如果配置了 Tushare 实时日线，盘中雷达会优先使用它；失败时回退到 AkShare 新浪、AkShare 腾讯和本地缓存。Tushare 初始化集中在 `backend/app/sources/tushare_client.py`，所有调用都会设置中转地址 `pro._DataApi__http_url = "http://101.35.233.113:8020/"`。密钥只从环境变量或项目根目录 `.env` 读取，不要写进代码；可从 `.env.example` 复制本机配置：
+盘中雷达使用 Tushare 实时日线写入当天快照；Tushare 暂不可用时，页面继续展示 DuckDB 里已有的最近数据。Tushare 初始化集中在 `backend/app/sources/tushare_client.py`，所有调用都会设置中转地址 `pro._DataApi__http_url = "http://101.35.233.113:8020/"`。密钥只从环境变量或项目根目录 `.env` 读取，不要写进代码；可从 `.env.example` 复制本机配置：
 
 ```bash
 export ASHARE_TUSHARE_TOKEN=your-token
@@ -104,24 +102,7 @@ WantedBy=timers.target
 
 ## 资讯简报
 
-资讯简报会自动抓取国际科技、财经、时政等公开资讯源，保存原始条目和生成后的摘要到 DuckDB。默认每天北京时间 08:20 运行一次；也可以用逗号配置多个北京时间。 如果数据库里还没有任何简报，服务启动或打开首页时会自动排队生成第一份。
-
-LLM 默认使用 DeepSeek 兼容接口，密钥只从环境变量读取，不要写进仓库：
-
-```bash
-export DEEPSEEK_API_KEY=your-api-key
-export ASHARE_DAILY_BRIEF_MODEL=deepseek-v4-flash
-```
-
-可选配置：
-
-```bash
-export ASHARE_DAILY_BRIEF_TIME=08:20,18:20
-export ASHARE_DAILY_BRIEF_SCHEDULER=1
-export ASHARE_DAILY_BRIEF_SOURCE_TIMEOUT=12
-```
-
-如果没有配置 LLM 密钥，系统仍会保存资讯条目并生成降级摘要。
+资讯简报页只展示 DuckDB 里已有的本地记录，不会在 GET、服务启动、后台定时器或手动接口中创建新简报。`POST /api/daily-brief/regenerate` 已禁用；需要补充简报时，应通过离线迁移或明确的本地入库流程写入 DuckDB。
 
 ## 本地启动
 
@@ -183,9 +164,6 @@ Wants=network-online.target
 [Service]
 WorkingDirectory=/opt/ashare-signal
 Environment="ASHARE_DB_PATH=/opt/ashare-signal/data/ashare_signal.duckdb"
-Environment="DEEPSEEK_API_KEY=replace-with-your-key"
-Environment="ASHARE_DAILY_BRIEF_MODEL=deepseek-v4-flash"
-Environment="ASHARE_DAILY_BRIEF_TIME=08:20,18:20"
 Environment="ASHARE_TUSHARE_TOKEN=replace-with-your-token"
 Environment="ASHARE_TUSHARE_HTTP_URL=http://101.35.233.113:8020/"
 Environment="ASHARE_TUSHARE_REALTIME=1"

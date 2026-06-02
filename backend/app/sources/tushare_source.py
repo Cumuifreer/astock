@@ -166,6 +166,7 @@ def _normalize_tushare_amount(value: Any, amount_unit: str) -> Optional[float]:
 class TushareEnrichmentSource:
     name = "Tushare Pro"
 
+    STOCK_BASIC_FIELDS = "ts_code,name,exchange,list_date,list_status"
     HISTORY_DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
     HISTORY_DAILY_BASIC_FIELDS = "ts_code,trade_date,turnover_rate"
     ADJ_FACTOR_FIELDS = "ts_code,trade_date,adj_factor"
@@ -229,6 +230,32 @@ class TushareEnrichmentSource:
         if self._pro is None:
             self._ts_module, self._pro = create_tushare_pro(self._token, self._http_url)
         return self._ts_module, self._pro
+
+    def fetch_stock_basics(self, include_bj: bool = False, exclude_star: bool = False) -> pd.DataFrame:
+        frame = self._call_api("stock_basic", exchange="", list_status="L", fields=self.STOCK_BASIC_FIELDS)
+        rows: List[Dict[str, Any]] = []
+        for item in _records(frame):
+            code = normalize_a_share_code(
+                first_present(item, ["ts_code", "TS_CODE", "code", "CODE"]),
+                include_bj=include_bj,
+                exclude_star=exclude_star,
+            )
+            if not code:
+                continue
+            name = first_present(item, ["name", "NAME"]) or code
+            rows.append(
+                {
+                    "code": code,
+                    "name": name,
+                    "exchange": code.split(".")[-1],
+                    "list_date": _normalize_trade_date(first_present(item, ["list_date", "LIST_DATE"])),
+                    "source": "Tushare stock_basic",
+                    "is_st": "ST" in str(name).upper(),
+                    "suspended": False,
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+        return _clean_frame(rows, required=["code"])
 
     def fetch_history_bars(self, start_date: Any, end_date: Any, codes: Optional[List[str]] = None) -> pd.DataFrame:
         start = _date_from_arg(start_date)

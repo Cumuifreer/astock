@@ -764,6 +764,113 @@ def test_sync_today_route_maps_to_daily_light(tmp_path, monkeypatch):
     assert calls == [{"mode": "daily_light"}]
 
 
+def test_bootstrap_and_daily_brief_gets_do_not_enqueue_brief_tasks(tmp_path, monkeypatch):
+    routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
+
+    class FakeUpdateService:
+        def ensure_daily_brief(self):
+            raise AssertionError("GET endpoints must not enqueue daily brief tasks")
+
+        def start_daily_brief(self, *_args, **_kwargs):
+            raise AssertionError("manual daily brief generation is disabled")
+
+    class FakeDataService:
+        def source_diagnostics(self):
+            return {}
+
+        def overview(self):
+            return {}
+
+        def capabilities(self):
+            return []
+
+        def latest_task(self, kind):
+            return None
+
+        def latest_analysis_run(self):
+            return None
+
+        def latest_backtest_run(self):
+            return None
+
+        def latest_daily_brief(self):
+            return None
+
+        def runtime_health(self, **_kwargs):
+            return {}
+
+        def candidates(self, limit=50, run_id=None):
+            return {"rows": []}
+
+        def backtest_result(self, limit=200, run_id=None):
+            return {"rows": []}
+
+    class FakeIntradayService:
+        def latest(self, limit=200):
+            return {"rows": []}
+
+    class FakeStrategyService:
+        def list_presets(self):
+            return []
+
+        def default_config(self):
+            return {}
+
+    class FakeWatchlistService:
+        def result(self):
+            return {"items": []}
+
+    monkeypatch.setattr(routes, "update_service", FakeUpdateService())
+    monkeypatch.setattr(routes, "data_service", FakeDataService())
+    monkeypatch.setattr(routes, "intraday_service", FakeIntradayService())
+    monkeypatch.setattr(routes, "strategy_service", FakeStrategyService())
+    monkeypatch.setattr(routes, "watchlist_service", FakeWatchlistService())
+    client = TestClient(routes.router)
+
+    bootstrap_response = client.get("/api/bootstrap")
+    brief_response = client.get("/api/daily-brief")
+
+    assert bootstrap_response.status_code == 200
+    assert brief_response.status_code == 200
+    assert brief_response.json() == {"brief": None, "task": None}
+
+    regenerate_response = client.post("/api/daily-brief/regenerate", json={})
+    assert regenerate_response.status_code == 410
+
+
+def test_app_startup_does_not_enqueue_daily_brief(monkeypatch):
+    from types import SimpleNamespace
+    from backend.app import main as main_module
+
+    class FakeUpdateService:
+        def ensure_daily_brief(self):
+            raise AssertionError("startup must not enqueue daily brief tasks")
+
+    class FakeScheduler:
+        def __init__(self, name):
+            self.name = name
+            self.started = False
+
+        def start(self):
+            if self.name == "brief":
+                raise AssertionError("startup must not start daily brief scheduler")
+            self.started = True
+            return None
+
+    monkeypatch.setattr(main_module, "update_service", FakeUpdateService())
+    intraday_scheduler = FakeScheduler("intraday")
+    monkeypatch.setattr(main_module, "intraday_scheduler", intraday_scheduler)
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        SimpleNamespace(intraday_scheduler_enabled=True, daily_brief_scheduler_enabled=True),
+    )
+
+    main_module.start_schedulers()
+    assert intraday_scheduler.started is True
+    assert not hasattr(main_module, "daily_brief_scheduler")
+
+
 def test_analyze_route_preserves_strategy_name(tmp_path, monkeypatch):
     routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
 
@@ -872,7 +979,7 @@ def test_legacy_candidate_ai_summary_post_is_gone(tmp_path, monkeypatch):
     assert response.status_code == 410
 
 
-def test_source_diagnostics_reports_tushare_configuration_and_fallbacks(tmp_path, monkeypatch):
+def test_source_diagnostics_reports_tushare_configuration_and_cached_status(tmp_path, monkeypatch):
     from backend.app import config as config_module
 
     db = Database(tmp_path / "ashare_test.duckdb")
@@ -911,7 +1018,7 @@ def test_source_diagnostics_reports_tushare_configuration_and_fallbacks(tmp_path
                 "amount": 1,
                 "turnover_rate": None,
                 "float_market_value": None,
-                "source": "AkShare 新浪",
+                "source": "Tushare 实时日线",
                 "updated_at": now,
             }
         ],
@@ -939,7 +1046,12 @@ def test_source_diagnostics_reports_tushare_configuration_and_fallbacks(tmp_path
     assert result["tushare_token_configured"] is True
     assert result["tushare_http_url_configured"] is True
     assert result["last_tushare_error"] == "Token 不对"
-    assert result["last_snapshot_source"] == "AkShare 新浪"
+    assert result["last_snapshot_source"] == "Tushare 实时日线"
+    assert result["snapshot_source"] == {
+        "expected_source": "Tushare 实时日线",
+        "actual_source": "本地缓存",
+        "status": "failed",
+    }
     assert result["realtime_status"] == "failed"
 
 

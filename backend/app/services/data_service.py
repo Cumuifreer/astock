@@ -54,6 +54,12 @@ LEFT JOIN (
 
 ACTIVE_STOCK_FILTER = "b.suspended IS DISTINCT FROM TRUE"
 INACTIVE_STOCK_FILTER = "b.suspended IS TRUE"
+FORBIDDEN_EXTERNAL_SOURCE_MARKERS = ("akshare", "baostock", "adata")
+
+
+def _is_forbidden_external_source(source: Any) -> bool:
+    text = str(source or "").lower()
+    return any(marker in text for marker in FORBIDDEN_EXTERNAL_SOURCE_MARKERS)
 
 
 def _is_blocked_brief_source(item: Dict[str, Any]) -> bool:
@@ -86,31 +92,31 @@ def _format_brief_published(value: Any) -> str:
 
 CAPABILITY_DEFINITIONS = {
     "历史 K 线": {
-        "fallback_sources": ["Tushare daily 前复权", "Baostock", "本地缓存"],
+        "fallback_sources": ["Tushare daily 前复权", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "当天行情快照": {
-        "fallback_sources": ["Tushare 实时日线", "AkShare 新浪", "AkShare 腾讯", "本地缓存"],
+        "fallback_sources": ["Tushare 实时日线", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "股票基础信息": {
-        "fallback_sources": ["Baostock", "AkShare 快照", "本地缓存"],
+        "fallback_sources": ["Tushare stock_basic", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "流通市值": {
-        "fallback_sources": ["Tushare daily_basic", "AkShare 新浪", "本地缓存"],
+        "fallback_sources": ["Tushare daily_basic", "Tushare 实时日线", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "换手率": {
-        "fallback_sources": ["Tushare daily_basic", "Baostock", "AkShare 新浪", "本地缓存"],
+        "fallback_sources": ["Tushare daily_basic", "Tushare daily 前复权", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
@@ -128,7 +134,7 @@ CAPABILITY_DEFINITIONS = {
         "coverage_kind": "stock",
     },
     "ST / 停牌状态": {
-        "fallback_sources": ["股票基础信息", "Tushare 日线缺行", "Baostock", "本地缓存"],
+        "fallback_sources": ["Tushare stock_basic", "Tushare 日线缺行", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
@@ -154,25 +160,25 @@ CAPABILITY_DEFINITIONS = {
     "资金流向": {
         "fallback_sources": ["Tushare moneyflow"],
         "can_backfill": True,
-        "participates_in_analysis": False,
+        "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "涨跌停": {
         "fallback_sources": ["Tushare limit_list_d"],
         "can_backfill": True,
-        "participates_in_analysis": False,
+        "participates_in_analysis": True,
         "coverage_kind": "event",
     },
     "筹码分布": {
         "fallback_sources": ["Tushare cyq_perf", "Tushare cyq_chips"],
         "can_backfill": True,
-        "participates_in_analysis": False,
+        "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "概念/行业成分": {
         "fallback_sources": ["Tushare ths_member"],
         "can_backfill": True,
-        "participates_in_analysis": False,
+        "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "板块热力": {
@@ -184,7 +190,7 @@ CAPABILITY_DEFINITIONS = {
     "龙虎榜/游资": {
         "fallback_sources": ["Tushare top_list", "Tushare top_inst", "Tushare hm_detail"],
         "can_backfill": True,
-        "participates_in_analysis": False,
+        "participates_in_analysis": True,
         "coverage_kind": "event",
     },
 }
@@ -245,6 +251,15 @@ def _diagnostic_status(
     if fallback_source and expected_source not in str(fallback_source):
         return "fallback"
     return "unknown"
+
+
+def _source_contract(expected_source: str, actual_source: Optional[str], status: str) -> Dict[str, Any]:
+    resolved_actual = "本地缓存" if status == "failed" and actual_source else actual_source
+    return {
+        "expected_source": expected_source,
+        "actual_source": resolved_actual or "本地缓存",
+        "status": status,
+    }
 
 
 def _aggregate_diagnostic_status(rows: List[Dict[str, Any]]) -> str:
@@ -497,6 +512,8 @@ class DataService:
         )
         latest_by_source_cap: Dict[str, Dict[str, Any]] = {}
         for row in status_rows:
+            if _is_forbidden_external_source(row.get("source")):
+                continue
             key = f"{row.get('source')}::{row.get('capability')}"
             if key not in latest_by_source_cap:
                 decoded = dict(row)
@@ -529,6 +546,10 @@ class DataService:
             LIMIT 1
             """
         )
+        if _is_forbidden_external_source(snapshot_source):
+            snapshot_source = None
+        if _is_forbidden_external_source(history_source):
+            history_source = None
 
         def status_for(source: str, capability: str) -> Dict[str, Any]:
             return latest_by_source_cap.get(f"{source}::{capability}", {})
@@ -541,6 +562,9 @@ class DataService:
             if row.get("capability") in {"每日指标", "技术因子", "资金流向", "涨跌停", "筹码分布", "概念/行业成分", "龙虎榜/游资", "板块热力"}
         ]
 
+        realtime_status_value = _diagnostic_status(realtime_status, fallback_source=snapshot_source, expected_source="Tushare 实时日线")
+        history_status_value = _diagnostic_status(history_status, fallback_source=history_source, expected_source="Tushare daily 前复权")
+
         return {
             "tushare_token_configured": bool(settings.tushare_token),
             "tushare_realtime_enabled": bool(settings.tushare_realtime_enabled),
@@ -551,8 +575,10 @@ class DataService:
             "last_tushare_error": (tushare_failures[0].get("failure_reason") if tushare_failures else None),
             "last_snapshot_source": snapshot_source,
             "last_history_source": history_source,
-            "realtime_status": _diagnostic_status(realtime_status, fallback_source=snapshot_source, expected_source="Tushare 实时日线"),
-            "history_status": _diagnostic_status(history_status, fallback_source=history_source, expected_source="Tushare daily 前复权"),
+            "snapshot_source": _source_contract("Tushare 实时日线", snapshot_source, realtime_status_value),
+            "history_source": _source_contract("Tushare daily 前复权", history_source, history_status_value),
+            "realtime_status": realtime_status_value,
+            "history_status": history_status_value,
             "enrichment_status": _aggregate_diagnostic_status(enrichment_statuses),
             "rows": list(latest_by_source_cap.values()),
         }
@@ -1314,13 +1340,17 @@ class DataService:
             )
         status_failures = self.db.query(
             """
-            SELECT capability, failure_reason, COALESCE(last_failure, last_checked) AS failure_at
+            SELECT source, capability, failure_reason, COALESCE(last_failure, last_checked) AS failure_at
             FROM source_status
             WHERE failure_reason IS NOT NULL
             QUALIFY ROW_NUMBER() OVER (PARTITION BY capability ORDER BY last_checked DESC) = 1
             """
         )
-        failure_by_cap = {row["capability"]: row for row in status_failures}
+        failure_by_cap = {
+            row["capability"]: row
+            for row in status_failures
+            if not _is_forbidden_external_source(row.get("source"))
+        }
 
         def latest_code_count(table: str, latest: Any) -> int:
             if not latest:
@@ -1480,6 +1510,8 @@ class DataService:
         success_candidates_by_cap: Dict[str, List[Dict[str, Any]]] = {}
         latest_success_by_cap: Dict[str, datetime] = {}
         for row in source_rows:
+            if _is_forbidden_external_source(row.get("source")):
+                continue
             capability = row["capability"]
             success_at = _coerce_datetime(row.get("success_at"))
             latest_success = latest_success_by_cap.get(capability)

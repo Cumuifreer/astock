@@ -832,11 +832,6 @@ def test_intraday_snapshot_prefers_tushare_realtime(tmp_path, monkeypatch):
             source_probe_ttl_minutes=60,
         ),
     )
-    monkeypatch.setattr(
-        "backend.app.services.update_service.AkShareSource.fetch_sina_snapshot",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("AkShare should not be called")),
-    )
-
     frame = service._fetch_intraday_snapshot_frame(include_bj=False, exclude_star=False, warnings=[])
 
     assert frame.iloc[0]["source"] == "Tushare 实时日线"
@@ -880,11 +875,6 @@ def test_daily_update_snapshot_prefers_tushare_realtime(tmp_path, monkeypatch):
             source_probe_ttl_minutes=60,
         ),
     )
-    monkeypatch.setattr(
-        "backend.app.services.update_service.AkShareSource.fetch_sina_snapshot",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("AkShare should not be called")),
-    )
-
     count = service._update_snapshots(force=True, include_bj=False, exclude_star=False, warnings=[])
     row = db.query("SELECT * FROM daily_snapshots WHERE code = '000001.SZ'")[0]
 

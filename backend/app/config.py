@@ -41,8 +41,6 @@ class Settings:
     update_limit: int = int(os.getenv("ASHARE_UPDATE_LIMIT", "0"))
     include_bj: bool = os.getenv("ASHARE_INCLUDE_BJ", "0") == "1"
     exclude_star_board: bool = os.getenv("ASHARE_EXCLUDE_STAR_BOARD", "0") == "1"
-    baostock_min_delay: float = float(os.getenv("ASHARE_BAOSTOCK_MIN_DELAY", "0.12"))
-    baostock_max_delay: float = float(os.getenv("ASHARE_BAOSTOCK_MAX_DELAY", "0.45"))
     public_source_min_delay: float = float(os.getenv("ASHARE_PUBLIC_SOURCE_MIN_DELAY", "0.8"))
     public_source_max_delay: float = float(os.getenv("ASHARE_PUBLIC_SOURCE_MAX_DELAY", "2.2"))
     intraday_scheduler_enabled: bool = os.getenv("ASHARE_INTRADAY_SCHEDULER", "1") == "1"
@@ -56,7 +54,7 @@ class Settings:
     tushare_enrichment_loop_delay: float = float(os.getenv("ASHARE_TUSHARE_ENRICHMENT_LOOP_DELAY", "0.13"))
     tushare_history_enabled: bool = os.getenv("ASHARE_TUSHARE_HISTORY", "1") == "1"
     tushare_history_timeout_seconds: int = int(os.getenv("ASHARE_TUSHARE_HISTORY_TIMEOUT", "900"))
-    daily_brief_scheduler_enabled: bool = os.getenv("ASHARE_DAILY_BRIEF_SCHEDULER", "1") == "1"
+    daily_brief_scheduler_enabled: bool = os.getenv("ASHARE_DAILY_BRIEF_SCHEDULER", "0") == "1"
     daily_brief_scheduler_poll_seconds: int = int(os.getenv("ASHARE_DAILY_BRIEF_POLL_SECONDS", "60"))
     daily_brief_schedule_time: str = os.getenv("ASHARE_DAILY_BRIEF_TIME", "08:20")
     daily_brief_source_timeout_seconds: int = int(os.getenv("ASHARE_DAILY_BRIEF_SOURCE_TIMEOUT", "12"))

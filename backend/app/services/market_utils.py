@@ -93,11 +93,6 @@ def normalize_a_share_code(
     return f"{code}.{inferred}"
 
 
-def to_baostock_code(code: str) -> str:
-    symbol, exchange = code.split(".")
-    return f"{exchange.lower()}.{symbol}"
-
-
 def to_plain_code(code: str) -> str:
     return code.split(".")[0]
 
