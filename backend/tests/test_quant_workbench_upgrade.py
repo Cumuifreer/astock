@@ -105,6 +105,65 @@ def test_schema_adds_quant_workbench_tables(tmp_path):
     }.issubset(tables)
 
 
+def test_schema_backfills_legacy_task_runs_without_duplicate_ids(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    with db.connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE task_runs (
+                id TEXT,
+                kind TEXT,
+                status TEXT,
+                stage TEXT,
+                source TEXT,
+                current_stock TEXT,
+                total INTEGER,
+                processed INTEGER,
+                success INTEGER,
+                failed INTEGER,
+                skipped INTEGER,
+                warning TEXT,
+                summary_json TEXT,
+                payload_json TEXT,
+                payload_hash TEXT,
+                queue_order BIGINT,
+                cancel_requested BOOLEAN DEFAULT FALSE,
+                started_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                finished_at TIMESTAMP,
+                error_message TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO task_runs
+            (id, kind, status, stage, payload_json, payload_hash, updated_at)
+            VALUES
+            ('update-d3bab07da453', 'update', 'failed', '旧任务', '{"mode":"daily"}', NULL, '2026-06-01T09:00:00'),
+            ('update-d3bab07da453', 'update', 'running', '新任务', '{"mode":"daily"}', '', '2026-06-01T10:00:00'),
+            ('analyze-legacy', 'analyze', 'queued', '等待分析', '{"strategy":"x","run_id":"one"}', NULL, '2026-06-01T11:00:00')
+            """
+        )
+
+    migrate(db)
+
+    rows = db.query("SELECT id, stage, payload_hash FROM task_runs ORDER BY id")
+    assert [row["id"] for row in rows] == ["analyze-legacy", "update-d3bab07da453"]
+    assert {row["id"]: row["stage"] for row in rows}["update-d3bab07da453"] == "新任务"
+    assert all(row["payload_hash"] for row in rows)
+    pk_rows = db.query("PRAGMA table_info('task_runs')")
+    assert any(row["name"] == "id" and row["pk"] for row in pk_rows)
+    with pytest.raises(Exception):
+        db.execute(
+            """
+            INSERT INTO task_runs (id, kind, status, payload_hash)
+            VALUES ('update-d3bab07da453', 'update', 'queued', 'duplicate')
+            """,
+            write=True,
+        )
+
+
 def test_market_overview_uses_environment_and_sector_heatmap(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

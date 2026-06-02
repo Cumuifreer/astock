@@ -18,6 +18,56 @@ from backend.app.services.strategy_service import (
 
 SCHEMA_VERSION = 15
 
+TASK_RUN_COLUMNS = [
+    "id",
+    "kind",
+    "status",
+    "stage",
+    "source",
+    "current_stock",
+    "total",
+    "processed",
+    "success",
+    "failed",
+    "skipped",
+    "warning",
+    "summary_json",
+    "payload_json",
+    "payload_hash",
+    "queue_order",
+    "cancel_requested",
+    "started_at",
+    "updated_at",
+    "finished_at",
+    "error_message",
+]
+
+TASK_RUN_CREATE_SQL = """
+CREATE TABLE task_runs (
+    id TEXT PRIMARY KEY,
+    kind TEXT,
+    status TEXT,
+    stage TEXT,
+    source TEXT,
+    current_stock TEXT,
+    total INTEGER,
+    processed INTEGER,
+    success INTEGER,
+    failed INTEGER,
+    skipped INTEGER,
+    warning TEXT,
+    summary_json TEXT,
+    payload_json TEXT,
+    payload_hash TEXT,
+    queue_order BIGINT,
+    cancel_requested BOOLEAN DEFAULT FALSE,
+    started_at TIMESTAMP,
+    updated_at TIMESTAMP,
+    finished_at TIMESTAMP,
+    error_message TEXT
+)
+"""
+
 
 MIGRATIONS = [
     """
@@ -405,6 +455,9 @@ MIGRATIONS = [
     """,
     """
     ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS queue_order BIGINT
+    """,
+    """
+    ALTER TABLE task_runs ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN DEFAULT FALSE
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_task_runs_active_payload
@@ -879,25 +932,79 @@ def migrate(db: Database) -> None:
 
 
 def backfill_task_payload_hashes(db: Database) -> None:
-    rows = db.query(
-        """
-        SELECT id, payload_json
-        FROM task_runs
-        WHERE payload_hash IS NULL OR payload_hash = ''
-        """
-    )
+    rows = db.query("SELECT * FROM task_runs")
+    has_primary_key = _task_runs_has_primary_key(db)
+    deduped: dict[str, dict] = {}
+    saw_duplicate = False
+    needs_hash_backfill = False
     for row in rows:
+        row_id = str(row.get("id") or "").strip()
+        if not row_id:
+            continue
+        clean = {column: row.get(column) for column in TASK_RUN_COLUMNS}
+        clean["id"] = row_id
+        if clean.get("cancel_requested") is None:
+            clean["cancel_requested"] = False
         payload = {}
-        if row.get("payload_json"):
+        if clean.get("payload_json"):
             try:
-                payload = json.loads(row["payload_json"] or "{}")
+                payload = json.loads(clean["payload_json"] or "{}")
             except Exception:
                 payload = {}
-        db.execute(
-            "UPDATE task_runs SET payload_hash = ? WHERE id = ?",
-            [_task_payload_hash(payload), row["id"]],
-            write=True,
-        )
+        if not clean.get("payload_hash"):
+            clean["payload_hash"] = _task_payload_hash(payload)
+            needs_hash_backfill = True
+        if row_id in deduped:
+            saw_duplicate = True
+        if row_id not in deduped or _task_run_sort_key(clean) >= _task_run_sort_key(deduped[row_id]):
+            deduped[row_id] = clean
+    if saw_duplicate or needs_hash_backfill or not has_primary_key:
+        _rebuild_task_runs(db, list(deduped.values()))
+
+
+def _task_runs_has_primary_key(db: Database) -> bool:
+    rows = db.query("PRAGMA table_info('task_runs')")
+    return any(row.get("name") == "id" and bool(row.get("pk")) for row in rows)
+
+
+def _task_run_sort_key(row: dict) -> tuple:
+    status_rank = {
+        "running": 5,
+        "queued": 4,
+        "completed_full": 3,
+        "completed_partial": 3,
+        "failed": 2,
+        "cancelled": 1,
+    }
+    return (
+        str(row.get("updated_at") or ""),
+        str(row.get("finished_at") or ""),
+        str(row.get("started_at") or ""),
+        status_rank.get(str(row.get("status") or ""), 0),
+    )
+
+
+def _rebuild_task_runs(db: Database, rows: list[dict]) -> None:
+    columns_sql = ", ".join(TASK_RUN_COLUMNS)
+    placeholders = ", ".join(["?"] * len(TASK_RUN_COLUMNS))
+    insert_sql = f"INSERT INTO task_runs ({columns_sql}) VALUES ({placeholders})"
+    with db.connect() as conn:
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            conn.execute("DROP TABLE task_runs")
+            conn.execute(TASK_RUN_CREATE_SQL)
+            for row in rows:
+                conn.execute(insert_sql, [row.get(column) for column in TASK_RUN_COLUMNS])
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_task_runs_active_payload
+                ON task_runs(kind, status, payload_hash)
+                """
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
 
 
 def _task_payload_hash(payload: dict) -> str:
