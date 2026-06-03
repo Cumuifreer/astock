@@ -242,7 +242,6 @@ def save_intraday_strategy_tracking_config(payload: Dict[str, Any]) -> Dict[str,
     preset_id = str(payload.get("strategy_preset_id") or payload.get("preset_id") or "").strip()
     try:
         config = intraday_service.set_strategy_tracking_config(preset_id, strategy_service)
-        intraday_service.run_strategy_tracking(strategy_service)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {

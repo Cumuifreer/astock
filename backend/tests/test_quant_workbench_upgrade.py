@@ -1048,7 +1048,7 @@ def test_candidate_ai_summary_routes_split_read_and_task_start(tmp_path, monkeyp
     }
 
 
-def test_intraday_strategy_tracking_routes_read_update_and_recompute(tmp_path, monkeypatch):
+def test_intraday_strategy_tracking_routes_update_config_without_recomputing(tmp_path, monkeypatch):
     routes = _import_routes_with_temp_db(tmp_path, monkeypatch)
     calls = []
 
@@ -1084,7 +1084,7 @@ def test_intraday_strategy_tracking_routes_read_update_and_recompute(tmp_path, m
     assert read.status_code == 200
     assert read.json()["strategy"]["id"] == "custom-1"
     assert updated.status_code == 200
-    assert calls == [("set", "custom-1"), ("run", "latest")]
+    assert calls == [("set", "custom-1")]
     assert updated.json()["strategy_tracking"]["summary"]["candidate_count"] == 1
 
 

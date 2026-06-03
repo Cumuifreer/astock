@@ -96,7 +96,6 @@ export function IntradayPage() {
               content: (
                 <StrategyTrackingPanel
                   data={trackingData}
-                  isPending={saveTrackingMutation.isPending}
                   onOpenTimeline={setTimelineTarget}
                   onSelectStrategy={(strategyPresetId) => saveTrackingMutation.mutate(strategyPresetId)}
                   selectedStrategyId={selectedStrategyId}
@@ -184,14 +183,12 @@ function StrategyTrackingPanel({
   data,
   strategies,
   selectedStrategyId,
-  isPending,
   onSelectStrategy,
   onOpenTimeline,
 }: {
   data: IntradayStrategyTracking;
   strategies: StrategyPreset[];
   selectedStrategyId: string;
-  isPending: boolean;
   onSelectStrategy: (strategyPresetId: string) => void;
   onOpenTimeline: (row: IntradayCandidate) => void;
 }) {
@@ -213,7 +210,7 @@ function StrategyTrackingPanel({
       <div className="strategy-tracking-toolbar">
         <div className="strategy-tracking-select">
           <span>跟踪策略</span>
-          <CustomSelect disabled={isPending || !options.length} label="跟踪策略" onChange={onSelectStrategy} options={options} placeholder="选择跟踪策略" value={selectedStrategyId} />
+          <CustomSelect disabled={!options.length} label="跟踪策略" onChange={onSelectStrategy} options={options} placeholder="选择跟踪策略" value={selectedStrategyId} />
         </div>
         <div className="rule-chip-grid">
           <Badge tone={data.config?.persisted ? 'good' : 'info'}>{data.config?.persisted ? '已固定' : '当前策略'}</Badge>
