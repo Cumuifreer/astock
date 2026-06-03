@@ -11,7 +11,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -21,6 +21,12 @@ from backend.app.db import Database
 from backend.app.services.data_service import DataService
 from backend.app.services.daily_brief_service import DailyBriefService
 from backend.app.services.intraday_service import IntradayRadarService
+from backend.app.services.intraday_schedule import (
+    DEFAULT_INTRADAY_SLOTS,
+    LIGHT_INTRADAY_SLOTS,
+    format_intraday_schedule,
+    parse_intraday_schedule,
+)
 from backend.app.services.market_utils import safe_float
 from backend.app.services.sector_filters import concept_theme_filter_sql
 from backend.app.services.strategy_service import normalize_strategy_config
@@ -187,7 +193,7 @@ DEFAULT_DATA_DAG: List[Dict[str, Any]] = [
     },
 ]
 DAG_PROGRESS_TERMINAL_STATUSES = {"completed", "skipped", "partial", "failed"}
-HEAVY_TASK_KINDS = {"update", "analyze", "backtest"}
+HEAVY_TASK_KINDS = {"update", "analyze", "backtest", "intraday_strategy_tracking"}
 HISTORY_BACKFILL_CAPABILITIES = {
     "历史 K 线",
     "RPS",
@@ -740,6 +746,34 @@ class UpdateService:
     def _intraday_strategy_tracking_auto_enabled(self) -> bool:
         return bool(getattr(settings, "intraday_strategy_tracking_auto_enabled", False))
 
+    def intraday_enabled_boards(self) -> Dict[str, bool]:
+        boards = self.intraday_service.get_config().get("enabled_boards") or {}
+        return {
+            "anomaly": bool(boards.get("anomaly")),
+            "pullback": bool(boards.get("pullback")),
+            "risk": bool(boards.get("risk")),
+        }
+
+    def intraday_boards_enabled(self) -> bool:
+        return any(self.intraday_enabled_boards().values())
+
+    def intraday_scheduler_mode(self) -> str:
+        return "radar" if self.intraday_boards_enabled() else "light_refresh"
+
+    def intraday_schedule_slots(
+        self,
+        radar_slots: Optional[Sequence[Tuple[int, int]]] = None,
+    ) -> Tuple[Tuple[int, int], ...]:
+        if self.intraday_boards_enabled():
+            return tuple(radar_slots or parse_intraday_schedule(settings.intraday_schedule) or DEFAULT_INTRADAY_SLOTS)
+        return tuple(LIGHT_INTRADAY_SLOTS)
+
+    def intraday_schedule_text(
+        self,
+        radar_slots: Optional[Sequence[Tuple[int, int]]] = None,
+    ) -> str:
+        return ",".join(format_intraday_schedule(self.intraday_schedule_slots(radar_slots)))
+
     def _release_task_memory(self) -> None:
         gc.collect()
         if os.name != "posix":
@@ -989,6 +1023,9 @@ class UpdateService:
         return None
 
     def start_intraday_sample(self, options: Optional[Dict[str, Any]] = None) -> str:
+        payload = dict(options or {})
+        mode = str(payload.get("mode") or self.intraday_scheduler_mode())
+        payload["mode"] = mode
         existing = self.db.scalar(
             """
             SELECT id
@@ -1005,10 +1042,10 @@ class UpdateService:
         self._enqueue_task(
             task_id,
             kind="intraday",
-            stage="准备盘中采样",
+            stage="准备盘中轻量刷新" if mode == "light_refresh" else "准备盘中采样",
             source="Tushare 实时日线",
-            summary={},
-            payload=options or {},
+            summary={"mode": mode},
+            payload=payload,
         )
         return task_id
 
@@ -1030,19 +1067,49 @@ class UpdateService:
         if existing:
             return None
         schedule_key = slot.strftime("%Y-%m-%d %H:%M")
+        mode = self.intraday_scheduler_mode()
         self._enqueue_task(
             task_id,
             kind="intraday",
-            stage="准备盘中采样",
+            stage="准备盘中轻量刷新" if mode == "light_refresh" else "准备盘中采样",
             source="Tushare 实时日线",
-            summary={"schedule_key": schedule_key, "scheduled": True},
+            summary={"schedule_key": schedule_key, "scheduled": True, "mode": mode},
             payload={
                 "sample_at": slot.isoformat(timespec="seconds"),
                 "schedule_key": schedule_key,
                 "scheduled": True,
+                "mode": mode,
             },
         )
         return task_id
+
+    def start_intraday_strategy_tracking(self, options: Optional[Dict[str, Any]] = None) -> str:
+        payload = dict(options or {})
+        sample_at = _parse_sample_at(payload.get("sample_at")) or datetime.now(CHINA_TZ).replace(tzinfo=None)
+        payload["sample_at"] = sample_at.isoformat(timespec="seconds")
+        with self._queue_lock:
+            existing = self.db.scalar(
+                """
+                SELECT id
+                FROM task_runs
+                WHERE kind = 'intraday_strategy_tracking'
+                  AND status IN ('queued', 'running')
+                ORDER BY started_at
+                LIMIT 1
+                """
+            )
+            if existing:
+                return str(existing)
+            task_id = f"intraday-strategy-{uuid.uuid4().hex[:12]}"
+            self._enqueue_task(
+                task_id,
+                kind="intraday_strategy_tracking",
+                stage="准备策略追踪",
+                source="Tushare 实时日线 + 本地策略",
+                summary={"sample_at": payload["sample_at"]},
+                payload=payload,
+            )
+            return task_id
 
     def ensure_daily_brief(self) -> Optional[str]:
         return None
@@ -1229,6 +1296,9 @@ class UpdateService:
             return
         if kind == "intraday":
             self._run_intraday_sample(task_id, payload)
+            return
+        if kind == "intraday_strategy_tracking":
+            self._run_intraday_strategy_tracking(task_id, payload)
             return
         if kind == "backtest":
             if self.backtest_runner is None:
@@ -3300,6 +3370,8 @@ class UpdateService:
         force = bool(options.get("force"))
         sample_at = _parse_sample_at(options.get("sample_at")) or datetime.now(CHINA_TZ).replace(tzinfo=None)
         trade_date = sample_at.date()
+        mode = str(options.get("mode") or self.intraday_scheduler_mode())
+        radar_enabled = mode == "radar" and self.intraday_boards_enabled()
         warnings: List[str] = []
         try:
             self._patch_task(
@@ -3325,40 +3397,34 @@ class UpdateService:
             sector_heat_count = self._update_realtime_concept_heat(trade_date)
             self._patch_task(
                 task_id,
-                stage="生成盘中雷达",
+                stage="生成盘中雷达" if radar_enabled else "刷新盘中概览",
                 source="本地仓库",
                 total=3,
                 processed=1,
                 success=1 if snapshot_count else 0,
             )
-            candidate_count = self.intraday_service.run_radar(sample_at=sample_at)
+            candidate_count = 0
+            strict_count = 0
+            score_count = 0
+            if radar_enabled:
+                candidate_count = self.intraday_service.run_radar(sample_at=sample_at)
+                radar_result = self.intraday_service.latest(limit=1)
+                strict_count = radar_result.get("summary", {}).get("strict_count", candidate_count)
+                score_count = radar_result.get("summary", {}).get("score_count", 0)
             strategy_tracking_count = 0
-            strategy_tracking_skipped_reason = None
-            if self.strategy_service is not None:
-                if not self._intraday_strategy_tracking_auto_enabled():
-                    strategy_tracking_skipped_reason = "auto_disabled"
-                elif low_memory := self._low_memory_message("本轮策略跟踪"):
-                    strategy_tracking_skipped_reason = "low_memory"
-                    warnings.append(low_memory)
-                else:
-                    try:
-                        strategy_tracking_count = self.intraday_service.run_strategy_tracking(
-                            self.strategy_service,
-                            sample_at=sample_at,
-                        )
-                    except Exception as exc:
-                        warnings.append(f"策略跟踪失败：{exc}")
-            radar_result = self.intraday_service.latest(limit=1)
+            strategy_tracking_skipped_reason = "manual_only"
             self._patch_task(
                 task_id,
                 status="completed_full" if not warnings else "completed_partial",
-                stage="盘中雷达完成",
+                stage="盘中雷达完成" if radar_enabled else "盘中轻量刷新完成",
                 source="本地仓库",
                 total=3,
                 processed=3,
                 success=1,
                 warning=warnings[-1] if warnings else None,
                 summary={
+                    "mode": "radar" if radar_enabled else "light_refresh",
+                    "enabled_boards": self.intraday_enabled_boards(),
                     "snapshot_count": snapshot_count,
                     "daily_snapshot_count": daily_snapshot_count,
                     "market_environment_count": market_environment_count,
@@ -3366,8 +3432,8 @@ class UpdateService:
                     "candidate_count": candidate_count,
                     "strategy_tracking_count": strategy_tracking_count,
                     "strategy_tracking_skipped_reason": strategy_tracking_skipped_reason,
-                    "strict_count": radar_result.get("summary", {}).get("strict_count", candidate_count),
-                    "score_count": radar_result.get("summary", {}).get("score_count", 0),
+                    "strict_count": strict_count,
+                    "score_count": score_count,
                     "sample_at": sample_at.isoformat(timespec="seconds"),
                     "warnings": warnings,
                 },
@@ -3378,6 +3444,80 @@ class UpdateService:
                 task_id,
                 status="failed",
                 stage="盘中雷达失败",
+                failed=1,
+                error_message=str(exc),
+                warning=str(exc),
+                finished_at=datetime.utcnow(),
+            )
+
+    def _run_intraday_strategy_tracking(self, task_id: str, options: Dict[str, Any]) -> None:
+        if self.strategy_service is None:
+            raise RuntimeError("策略服务尚未就绪。")
+        include_bj = bool(options.get("include_bj", settings.include_bj))
+        exclude_star = bool(options.get("exclude_star_board", settings.exclude_star_board))
+        force = bool(options.get("force"))
+        sample_at = _parse_sample_at(options.get("sample_at")) or datetime.now(CHINA_TZ).replace(tzinfo=None)
+        trade_date = sample_at.date()
+        warnings: List[str] = []
+        try:
+            self._patch_task(
+                task_id,
+                stage="拉取策略追踪快照",
+                source="Tushare 实时日线",
+                total=3,
+                processed=0,
+                success=0,
+                failed=0,
+                skipped=0,
+            )
+            frame = self._fetch_intraday_snapshot_frame(include_bj, exclude_star, warnings)
+            if not force:
+                _validate_intraday_frame_date(frame, trade_date)
+            snapshot_count = self.intraday_service.record_snapshots(
+                frame,
+                sample_at=sample_at,
+                trade_date=trade_date,
+            )
+            daily_snapshot_count = self._upsert_realtime_daily_snapshots(frame, trade_date)
+            market_environment_count = self._update_realtime_market_environment(trade_date)
+            sector_heat_count = self._update_realtime_concept_heat(trade_date)
+            self._patch_task(
+                task_id,
+                stage="运行策略追踪",
+                source="本地策略",
+                total=3,
+                processed=2,
+                success=1 if snapshot_count else 0,
+            )
+            strategy_tracking_count = self.intraday_service.run_strategy_tracking(
+                self.strategy_service,
+                sample_at=sample_at,
+            )
+            self._patch_task(
+                task_id,
+                status="completed_full" if not warnings else "completed_partial",
+                stage="策略追踪完成",
+                source="本地策略",
+                total=3,
+                processed=3,
+                success=1,
+                warning=warnings[-1] if warnings else None,
+                summary={
+                    "snapshot_count": snapshot_count,
+                    "daily_snapshot_count": daily_snapshot_count,
+                    "market_environment_count": market_environment_count,
+                    "sector_heat_count": sector_heat_count,
+                    "strategy_tracking_count": strategy_tracking_count,
+                    "sample_at": sample_at.isoformat(timespec="seconds"),
+                    "warnings": warnings,
+                },
+                finished_at=datetime.utcnow(),
+            )
+        except Exception as exc:
+            self._patch_task(
+                task_id,
+                status="failed",
+                stage="策略追踪失败",
                 failed=1,
                 error_message=str(exc),
                 warning=str(exc),

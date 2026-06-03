@@ -591,6 +591,8 @@ class DataService:
         poll_seconds: int = 30,
         catchup_minutes: int = 8,
         schedule: str = "",
+        scheduler_mode: str = "radar",
+        enabled_boards: Optional[Dict[str, bool]] = None,
     ) -> Dict[str, Any]:
         current = now or datetime.now(CHINA_TZ)
         current = current.astimezone(CHINA_TZ) if current.tzinfo else current.replace(tzinfo=CHINA_TZ)
@@ -664,6 +666,8 @@ class DataService:
             },
             "scheduler": {
                 "enabled": scheduler_enabled,
+                "mode": scheduler_mode,
+                "enabled_boards": enabled_boards or {},
                 "timezone": "Asia/Shanghai",
                 "now": current.replace(tzinfo=None),
                 "is_weekend": current.weekday() >= 5,

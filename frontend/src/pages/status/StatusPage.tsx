@@ -207,6 +207,12 @@ function Metric({ label, value, tone = 'neutral' }: { label: string; value: stri
 
 type SchedulerHealth = {
   enabled?: boolean;
+  mode?: string | null;
+  enabled_boards?: {
+    anomaly?: boolean;
+    pullback?: boolean;
+    risk?: boolean;
+  } | null;
   next_slot?: { time?: string | null; sample_at?: string | null } | null;
   remaining_count?: number;
   latest_slot?: { sample_at?: string | null; status?: string | null } | null;
@@ -219,10 +225,14 @@ function ScheduleStatusStrip({ scheduler }: { scheduler?: SchedulerHealth }) {
   const remaining = scheduler?.remaining_count ?? 0;
   const latestRawStatus = scheduler?.latest_slot?.status;
   const latestStatus = latestRawStatus ? taskStatusLabel(latestRawStatus) : latest ? '已记录' : '暂无';
+  const modeLabel = scheduler?.mode === 'radar' ? '高频雷达' : '轻量刷新';
+  const enabledBoardCount = Object.values(scheduler?.enabled_boards || {}).filter(Boolean).length;
   return (
     <article className="schedule-status-strip">
       <strong>定时计划</strong>
       <span>盘中采样：{enabled ? '已开启' : '未开启'}</span>
+      <span>模式：{enabled ? modeLabel : '-'}</span>
+      <span>榜单：{enabled ? `${enabledBoardCount} 个开启` : '-'}</span>
       <span>下一次：{enabled ? next || '待定' : '未开启'}</span>
       <span>今日剩余：{enabled ? `${remaining} 次` : '-'}</span>
       <span>最近一次：{latest ? `${formatChinaDateTime(latest)} · ${latestStatus}` : '暂无'}</span>
@@ -242,6 +252,7 @@ function systemLabel(task?: TaskRun | null) {
   if (task.kind === 'update') return task.status === 'queued' ? '等待同步' : '正在同步';
   if (task.kind === 'analyze') return task.status === 'queued' ? '等待分析' : '正在分析';
   if (task.kind === 'backtest') return task.status === 'queued' ? '等待回测' : '正在回测';
+  if (task.kind === 'intraday_strategy_tracking') return task.status === 'queued' ? '等待追踪' : '正在追踪';
   if (String(task.kind) === 'candidate_ai_summary') return task.status === 'queued' ? '等待解释' : '正在解释';
   return task.status === 'queued' ? '等待任务' : '正在运行';
 }
@@ -255,6 +266,7 @@ function kindLabel(kind?: string | null) {
   if (kind === 'analyze') return '运行策略';
   if (kind === 'backtest') return '回测';
   if (kind === 'intraday') return '盘中采样';
+  if (kind === 'intraday_strategy_tracking') return '策略追踪';
   if (kind === 'brief') return '市场简报';
   if (kind === 'candidate_ai_summary') return '候选解释';
   return kind || '任务';

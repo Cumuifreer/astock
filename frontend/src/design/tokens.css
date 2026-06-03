@@ -726,6 +726,32 @@ button {
   gap: var(--space-3);
 }
 
+.intraday-control-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.intraday-board-switches {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.intraday-board-switches > span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .strategy-tracking-select {
   display: grid;
   min-width: min(360px, 100%);

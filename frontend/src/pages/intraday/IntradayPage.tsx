@@ -1,11 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
+import { Play } from 'lucide-react';
 import {
   getIntradayBoards,
   getIntradayStrategyTracking,
   getIntradayTimeline,
+  runIntradayStrategyTracking,
+  saveIntradayConfig,
   saveIntradayStrategyTrackingConfig,
+  type IntradayBoardKey,
   type IntradayCandidate,
   type IntradayStrategyTracking,
   type IntradayStrategyTrackingRow,
@@ -18,6 +22,7 @@ import { Drawer } from '../../design/Drawer';
 import { EmptyState } from '../../design/EmptyState';
 import { LoadingState } from '../../design/LoadingState';
 import { Select as CustomSelect } from '../../design/Select';
+import { Switch } from '../../design/Switch';
 import { Tabs } from '../../design/Tabs';
 import { useToast } from '../../design/Toast';
 import { useBootstrap } from '../../hooks/useBootstrap';
@@ -26,6 +31,12 @@ import { formatChinaDateTime } from '../../utils/date';
 import { formatMoney, formatPercent, formatRatio, toNumber } from '../../utils/format';
 import { IntradayBoard } from './IntradayBoard';
 import { IntradayTimeline } from './IntradayTimeline';
+
+const boardSwitches: Array<{ key: IntradayBoardKey; label: string; title: string }> = [
+  { key: 'anomaly', label: '异动', title: '异动榜' },
+  { key: 'pullback', label: '低吸', title: '低吸榜' },
+  { key: 'risk', label: '风险', title: '风险榜' },
+];
 
 export function IntradayPage() {
   const [timelineTarget, setTimelineTarget] = useState<IntradayCandidate | null>(null);
@@ -56,15 +67,43 @@ export function IntradayPage() {
     },
     onError: (error) => showToast(error instanceof Error ? error.message : '策略跟踪切换失败', 'danger'),
   });
+  const saveConfigMutation = useMutation({
+    mutationFn: (enabledBoards: Record<IntradayBoardKey, boolean>) => saveIntradayConfig({ enabled_boards: enabledBoards }),
+    onSuccess: (result) => {
+      queryClient.setQueryData(queryKeys.intraday.boards(), (current: unknown) => ({
+        ...((current || {}) as Record<string, unknown>),
+        config: result.config,
+        enabled_boards: result.config.enabled_boards,
+      }));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.intraday.boards() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.runtimeHealth() });
+      showToast('盘中榜单已更新', 'success');
+    },
+    onError: (error) => showToast(error instanceof Error ? error.message : '盘中榜单更新失败', 'danger'),
+  });
+  const runTrackingMutation = useMutation({
+    mutationFn: () => runIntradayStrategyTracking(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.intraday.strategyTracking() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.active() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.runtimeHealth() });
+      showToast('策略追踪已排队', 'success');
+    },
+    onError: (error) => showToast(error instanceof Error ? error.message : '策略追踪启动失败', 'danger'),
+  });
 
   if (boards.isLoading || tracking.isLoading) return <LoadingState label="读取盘中雷达" />;
   const data = boards.data || {};
   const trackingData = tracking.data || {};
   const strategies = bootstrap.data?.strategies || [];
   const selectedStrategyId = trackingData.config?.strategy_preset_id || trackingData.strategy?.id || '';
+  const enabledBoards = normalizeEnabledBoards(data.enabled_boards || data.config?.enabled_boards);
   const allRows = [...(data.anomaly || []), ...(data.pullback || []), ...(data.risk || [])];
   const hideSampleMetrics = (data.sample_count || 0) <= 1;
   const hideThemeMetrics = !data.theme_pulse?.length && allRows.every((row) => row.theme_sync_score == null && row.metrics?.theme_sync_score == null);
+  const handleBoardToggle = (key: IntradayBoardKey, checked: boolean) => {
+    saveConfigMutation.mutate({ ...enabledBoards, [key]: checked });
+  };
 
   return (
     <div className="page-grid">
@@ -78,6 +117,23 @@ export function IntradayPage() {
             <Badge tone="info">{formatChinaDateTime(data.sample_at)}</Badge>
             <Badge>{data.sample_count || 0} 次采样</Badge>
           </div>
+        </div>
+        <div className="intraday-control-row">
+          <div className="intraday-board-switches" aria-label="盘中榜单开关">
+            <span>盘中榜单</span>
+            {boardSwitches.map((item) => (
+              <Switch
+                checked={enabledBoards[item.key]}
+                disabled={saveConfigMutation.isPending}
+                key={item.key}
+                label={item.label}
+                onCheckedChange={(checked) => handleBoardToggle(item.key, checked)}
+              />
+            ))}
+          </div>
+          <Badge tone={Object.values(enabledBoards).some(Boolean) ? 'info' : 'neutral'}>
+            {Object.values(enabledBoards).some(Boolean) ? '高频雷达' : '轻量刷新'}
+          </Badge>
         </div>
         <div className="list-stack" style={{ marginBottom: 16 }}>
           {hideSampleMetrics ? (
@@ -96,7 +152,9 @@ export function IntradayPage() {
               content: (
                 <StrategyTrackingPanel
                   data={trackingData}
+                  isRunPending={runTrackingMutation.isPending}
                   onOpenTimeline={setTimelineTarget}
+                  onRun={() => runTrackingMutation.mutate()}
                   onSelectStrategy={(strategyPresetId) => saveTrackingMutation.mutate(strategyPresetId)}
                   selectedStrategyId={selectedStrategyId}
                   strategies={strategies}
@@ -111,6 +169,8 @@ export function IntradayPage() {
                   hideSampleMetrics={hideSampleMetrics}
                   hideThemeMetrics={hideThemeMetrics}
                   hint="异动榜：成交额明显放大，涨幅排名靠前，且未明显冲高回落。"
+                  enabled={enabledBoards.anomaly}
+                  title="异动榜"
                   onOpenTimeline={setTimelineTarget}
                   rows={data.anomaly || []}
                   tone="info"
@@ -125,6 +185,8 @@ export function IntradayPage() {
                   hideSampleMetrics={hideSampleMetrics}
                   hideThemeMetrics={hideThemeMetrics}
                   hint="低吸榜：趋势仍在，日内回落到可观察区间，涨幅不过热。"
+                  enabled={enabledBoards.pullback}
+                  title="低吸榜"
                   onOpenTimeline={setTimelineTarget}
                   rows={data.pullback || []}
                   tone="good"
@@ -139,6 +201,8 @@ export function IntradayPage() {
                   hideSampleMetrics={hideSampleMetrics}
                   hideThemeMetrics={hideThemeMetrics}
                   hint="风险榜：冲高回落、放量滞涨、涨幅过热或风险标签增加。"
+                  enabled={enabledBoards.risk}
+                  title="风险榜"
                   onOpenTimeline={setTimelineTarget}
                   rows={data.risk || []}
                   tone="risk"
@@ -157,16 +221,20 @@ export function IntradayPage() {
 }
 
 function BoardWithHint({
+  enabled,
   hint,
   rows,
   tone,
+  title,
   hideSampleMetrics,
   hideThemeMetrics,
   onOpenTimeline,
 }: {
+  enabled: boolean;
   hint: string;
   rows: Parameters<typeof IntradayBoard>[0]['rows'];
   tone: 'info' | 'good' | 'risk';
+  title: string;
   hideSampleMetrics: boolean;
   hideThemeMetrics: boolean;
   onOpenTimeline: (row: IntradayCandidate) => void;
@@ -174,21 +242,29 @@ function BoardWithHint({
   return (
     <div className="list-stack">
       <p className="card-copy">{hint}</p>
-      <IntradayBoard hideSampleMetrics={hideSampleMetrics} hideThemeMetrics={hideThemeMetrics} onOpenTimeline={onOpenTimeline} rows={rows} tone={tone} />
+      {enabled ? (
+        <IntradayBoard hideSampleMetrics={hideSampleMetrics} hideThemeMetrics={hideThemeMetrics} onOpenTimeline={onOpenTimeline} rows={rows} tone={tone} />
+      ) : (
+        <EmptyState title={`${title}未开启`} description="开启后会在下一次盘中刷新时更新。" />
+      )}
     </div>
   );
 }
 
 function StrategyTrackingPanel({
   data,
+  isRunPending,
   strategies,
   selectedStrategyId,
+  onRun,
   onSelectStrategy,
   onOpenTimeline,
 }: {
   data: IntradayStrategyTracking;
+  isRunPending: boolean;
   strategies: StrategyPreset[];
   selectedStrategyId: string;
+  onRun: () => void;
   onSelectStrategy: (strategyPresetId: string) => void;
   onOpenTimeline: (row: IntradayCandidate) => void;
 }) {
@@ -212,6 +288,9 @@ function StrategyTrackingPanel({
           <span>跟踪策略</span>
           <CustomSelect disabled={!options.length} label="跟踪策略" onChange={onSelectStrategy} options={options} placeholder="选择跟踪策略" value={selectedStrategyId} />
         </div>
+        <Button disabled={!selectedStrategyId || isRunPending} icon={<Play size={16} />} onClick={onRun} variant="primary">
+          运行策略追踪
+        </Button>
         <div className="rule-chip-grid">
           <Badge tone={data.config?.persisted ? 'good' : 'info'}>{data.config?.persisted ? '已固定' : '当前策略'}</Badge>
           <Badge tone="info">{data.strategy?.name || '未选择策略'}</Badge>
@@ -320,6 +399,14 @@ function amountDeltaFallback(status?: string | null) {
 
 function amountRatioFallback(status?: string | null) {
   return status === 'missing_history_amount' ? '缺历史均量' : '暂无数据';
+}
+
+function normalizeEnabledBoards(value?: Partial<Record<IntradayBoardKey, boolean>> | null): Record<IntradayBoardKey, boolean> {
+  return {
+    anomaly: Boolean(value?.anomaly),
+    pullback: Boolean(value?.pullback),
+    risk: Boolean(value?.risk),
+  };
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

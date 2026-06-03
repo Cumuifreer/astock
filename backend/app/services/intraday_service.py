@@ -15,9 +15,12 @@ from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
 RADAR_MODE_STRICT = "strict"
 RADAR_MODE_SCORE = "score"
 RADAR_MODES = (RADAR_MODE_STRICT, RADAR_MODE_SCORE)
+INTRADAY_BOARD_KEYS = ("anomaly", "pullback", "risk")
+DEFAULT_INTRADAY_ENABLED_BOARDS = {key: False for key in INTRADAY_BOARD_KEYS}
 
 DEFAULT_INTRADAY_RADAR_CONFIG: Dict[str, Any] = {
     "enabled": True,
+    "enabled_boards": dict(DEFAULT_INTRADAY_ENABLED_BOARDS),
     "platform_lookback_days": 20,
     "platform_max_range": 0.12,
     "near_upper_distance": 0.03,
@@ -417,11 +420,34 @@ class IntradayRadarService:
         }
 
     def boards(self, sample_at: Optional[datetime | str] = None, limit: int = 80) -> Dict[str, Any]:
+        config = self.get_config()
+        enabled_boards = dict(config.get("enabled_boards") or DEFAULT_INTRADAY_ENABLED_BOARDS)
         target_sample = _sample_value(sample_at) or self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots")
         if not target_sample:
-            return {"sample_at": None, "sample_count": 0, "anomaly": [], "pullback": [], "risk": [], "theme_pulse": []}
+            return {
+                "config": config,
+                "enabled_boards": enabled_boards,
+                "sample_at": None,
+                "sample_count": 0,
+                "anomaly": [],
+                "pullback": [],
+                "risk": [],
+                "theme_pulse": [],
+            }
         target_sample_time = _sample_value(target_sample)
         target_sample_text = _sample_text(target_sample_time)
+        sample_count = self._sample_count(target_sample)
+        if not any(enabled_boards.values()):
+            return {
+                "config": config,
+                "enabled_boards": enabled_boards,
+                "sample_at": target_sample,
+                "sample_count": sample_count,
+                "anomaly": [],
+                "pullback": [],
+                "risk": [],
+                "theme_pulse": self._theme_pulse(),
+            }
         snapshots = self.db.query(
             """
             SELECT s.*, b.is_st, b.suspended
@@ -435,7 +461,16 @@ class IntradayRadarService:
             [target_sample_text],
         )
         if not snapshots:
-            return {"sample_at": target_sample, "sample_count": 0, "anomaly": [], "pullback": [], "risk": [], "theme_pulse": self._theme_pulse()}
+            return {
+                "config": config,
+                "enabled_boards": enabled_boards,
+                "sample_at": target_sample,
+                "sample_count": 0,
+                "anomaly": [],
+                "pullback": [],
+                "risk": [],
+                "theme_pulse": self._theme_pulse(),
+            }
         trade_date = _date_value(snapshots[0].get("trade_date")) or target_sample_time.date()
         codes = [row["code"] for row in snapshots]
         previous = self._previous_snapshots(codes, target_sample_time, trade_date)
@@ -511,11 +546,13 @@ class IntradayRadarService:
             for index, item in enumerate(rows[:limit], start=1):
                 item["rank"] = index
         return {
+            "config": config,
+            "enabled_boards": enabled_boards,
             "sample_at": target_sample,
-            "sample_count": self._sample_count(target_sample),
-            "anomaly": anomaly[:limit],
-            "pullback": pullback[:limit],
-            "risk": risk[:limit],
+            "sample_count": sample_count,
+            "anomaly": anomaly[:limit] if enabled_boards.get("anomaly") else [],
+            "pullback": pullback[:limit] if enabled_boards.get("pullback") else [],
+            "risk": risk[:limit] if enabled_boards.get("risk") else [],
             "theme_pulse": self._theme_pulse(),
         }
 
@@ -1055,6 +1092,12 @@ class IntradayRadarService:
 def normalize_intraday_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     merged = {**DEFAULT_INTRADAY_RADAR_CONFIG, **(config or {})}
     merged["enabled"] = bool(merged.get("enabled", True))
+    raw_enabled_boards = merged.get("enabled_boards")
+    raw_enabled_boards = raw_enabled_boards if isinstance(raw_enabled_boards, dict) else {}
+    merged["enabled_boards"] = {
+        key: bool(raw_enabled_boards.get(key, DEFAULT_INTRADAY_ENABLED_BOARDS[key]))
+        for key in INTRADAY_BOARD_KEYS
+    }
     merged["platform_lookback_days"] = max(10, min(80, int(merged.get("platform_lookback_days") or 20)))
     merged["first_breakout_lookback_days"] = max(0, min(20, int(merged.get("first_breakout_lookback_days") or 0)))
     merged["near_upper_recent_days"] = max(0, min(20, int(merged.get("near_upper_recent_days") or 0)))

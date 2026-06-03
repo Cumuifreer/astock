@@ -1241,6 +1241,7 @@ def test_intraday_boards_split_anomaly_pullback_and_risk(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     service = IntradayRadarService(db)
+    service.save_config({"enabled_boards": {"anomaly": True, "pullback": True, "risk": True}})
     trade_date = date(2026, 5, 22)
     db.upsert(
         "stock_basic",

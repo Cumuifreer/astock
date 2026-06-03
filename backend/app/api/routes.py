@@ -36,6 +36,32 @@ update_service.recover_interrupted_tasks()
 update_service.kick_queue()
 
 
+def _runtime_health_payload() -> Dict[str, Any]:
+    schedule_text = (
+        update_service.intraday_schedule_text()
+        if hasattr(update_service, "intraday_schedule_text")
+        else settings.intraday_schedule
+    )
+    scheduler_mode = (
+        update_service.intraday_scheduler_mode()
+        if hasattr(update_service, "intraday_scheduler_mode")
+        else "radar"
+    )
+    enabled_boards = (
+        update_service.intraday_enabled_boards()
+        if hasattr(update_service, "intraday_enabled_boards")
+        else {}
+    )
+    return data_service.runtime_health(
+        scheduler_enabled=settings.intraday_scheduler_enabled,
+        poll_seconds=settings.intraday_scheduler_poll_seconds,
+        catchup_minutes=settings.intraday_scheduler_catchup_minutes,
+        schedule=schedule_text,
+        scheduler_mode=scheduler_mode,
+        enabled_boards=enabled_boards,
+    )
+
+
 @router.get("/health")
 def health() -> Dict[str, Any]:
     return {
@@ -66,12 +92,7 @@ def bootstrap() -> Dict[str, Any]:
         "candidates": data_service.candidates(limit=50),
         "backtest": data_service.backtest_result(limit=200),
         "watchlist": watchlist_service.result(),
-        "runtime_health": data_service.runtime_health(
-            scheduler_enabled=settings.intraday_scheduler_enabled,
-            poll_seconds=settings.intraday_scheduler_poll_seconds,
-            catchup_minutes=settings.intraday_scheduler_catchup_minutes,
-            schedule=settings.intraday_schedule,
-        ),
+        "runtime_health": _runtime_health_payload(),
     }
 
 
@@ -250,6 +271,12 @@ def save_intraday_strategy_tracking_config(payload: Dict[str, Any]) -> Dict[str,
     }
 
 
+@router.post("/intraday/strategy-tracking/run")
+def run_intraday_strategy_tracking(payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    task_id = update_service.start_intraday_strategy_tracking(payload or {})
+    return {"task_id": task_id, "status": "queued"}
+
+
 @router.get("/intraday/timeline/{code}")
 def intraday_timeline(
     code: str,
@@ -261,12 +288,7 @@ def intraday_timeline(
 
 @router.get("/runtime/health")
 def runtime_health() -> Dict[str, Any]:
-    return data_service.runtime_health(
-        scheduler_enabled=settings.intraday_scheduler_enabled,
-        poll_seconds=settings.intraday_scheduler_poll_seconds,
-        catchup_minutes=settings.intraday_scheduler_catchup_minutes,
-        schedule=settings.intraday_schedule,
-    )
+    return _runtime_health_payload()
 
 
 @router.get("/daily-brief")
@@ -325,7 +347,11 @@ def intraday_config() -> Dict[str, Any]:
 
 @router.put("/intraday/config")
 def save_intraday_config(payload: Dict[str, Any]) -> Dict[str, Any]:
-    return {"config": intraday_service.save_config(payload.get("config") or payload)}
+    config = intraday_service.save_config(payload.get("config") or payload)
+    return {
+        "config": config,
+        "runtime_health": _runtime_health_payload(),
+    }
 
 
 @router.post("/tasks/analyze")

@@ -33,7 +33,16 @@ export type ThemePulse = {
   net_amount?: number | null;
 };
 
+export type IntradayBoardKey = 'anomaly' | 'pullback' | 'risk';
+
+export type IntradayBoardConfig = {
+  enabled?: boolean;
+  enabled_boards?: Record<IntradayBoardKey, boolean>;
+};
+
 export type IntradayBoards = {
+  config?: IntradayBoardConfig;
+  enabled_boards?: Record<IntradayBoardKey, boolean>;
   sample_at?: string | null;
   sample_count?: number;
   anomaly?: IntradayCandidate[];
@@ -101,4 +110,12 @@ export function getIntradayStrategyTracking(): Promise<IntradayStrategyTracking>
 
 export function saveIntradayStrategyTrackingConfig(strategyPresetId: string): Promise<{ config: IntradayStrategyTracking['config']; strategy_tracking: IntradayStrategyTracking }> {
   return put<{ config: IntradayStrategyTracking['config']; strategy_tracking: IntradayStrategyTracking }>('/api/intraday/strategy-tracking/config', { strategy_preset_id: strategyPresetId });
+}
+
+export function runIntradayStrategyTracking(payload: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  return post('/api/intraday/strategy-tracking/run', payload);
+}
+
+export function saveIntradayConfig(config: IntradayBoardConfig): Promise<{ config: IntradayBoardConfig; runtime_health?: Record<string, unknown> }> {
+  return put<{ config: IntradayBoardConfig; runtime_health?: Record<string, unknown> }>('/api/intraday/config', { config });
 }

@@ -35,6 +35,17 @@ DEFAULT_INTRADAY_SLOTS: Tuple[IntradaySlot, ...] = (
 DEFAULT_INTRADAY_SCHEDULE_TEXT = ",".join(
     f"{hour:02d}:{minute:02d}" for hour, minute in DEFAULT_INTRADAY_SLOTS
 )
+LIGHT_INTRADAY_SLOTS: Tuple[IntradaySlot, ...] = (
+    (9, 35),
+    (10, 35),
+    (11, 25),
+    (13, 30),
+    (14, 30),
+    (14, 55),
+)
+LIGHT_INTRADAY_SCHEDULE_TEXT = ",".join(
+    f"{hour:02d}:{minute:02d}" for hour, minute in LIGHT_INTRADAY_SLOTS
+)
 
 
 def parse_intraday_schedule(raw: str | None) -> List[IntradaySlot]:

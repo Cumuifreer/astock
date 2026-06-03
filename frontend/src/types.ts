@@ -2,7 +2,7 @@ export type TaskStatus = 'queued' | 'running' | 'completed_full' | 'completed_pa
 
 export interface TaskRun {
   id: string;
-  kind: 'update' | 'analyze' | 'backtest' | 'intraday' | 'brief' | 'candidate_ai_summary';
+  kind: 'update' | 'analyze' | 'backtest' | 'intraday' | 'intraday_strategy_tracking' | 'brief' | 'candidate_ai_summary';
   status: TaskStatus;
   stage: string | null;
   source: string | null;
@@ -747,6 +747,12 @@ export interface RuntimeHealth {
   };
   scheduler: {
     enabled: boolean;
+    mode?: string;
+    enabled_boards?: {
+      anomaly?: boolean;
+      pullback?: boolean;
+      risk?: boolean;
+    };
     timezone: string;
     now: string;
     is_weekend: boolean;

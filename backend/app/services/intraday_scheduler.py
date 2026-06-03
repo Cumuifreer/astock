@@ -40,7 +40,8 @@ class IntradayScheduler:
             self._thread.join(timeout=2)
 
     def tick(self, now: Optional[datetime] = None) -> Optional[str]:
-        slot = self._due_slot(now or datetime.now(CHINA_TZ))
+        slots = self.update_service.intraday_schedule_slots(self.slots)
+        slot = self._due_slot(now or datetime.now(CHINA_TZ), slots)
         if slot is None:
             return None
         return self.update_service.start_scheduled_intraday_sample(slot)
@@ -53,13 +54,13 @@ class IntradayScheduler:
                 logging.exception("盘中雷达自动采样检查失败")
             self._stop.wait(self.poll_seconds)
 
-    def _due_slot(self, now: datetime) -> Optional[datetime]:
+    def _due_slot(self, now: datetime, slots: Sequence[Tuple[int, int]]) -> Optional[datetime]:
         current = now.astimezone(CHINA_TZ) if now.tzinfo else now.replace(tzinfo=CHINA_TZ)
         if current.weekday() >= 5:
             return None
         window = timedelta(minutes=self.catchup_minutes)
         due_slot = None
-        for hour, minute in self.slots:
+        for hour, minute in slots:
             slot = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
             if slot <= current < slot + window:
                 due_slot = slot

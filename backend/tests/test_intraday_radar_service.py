@@ -198,7 +198,28 @@ def test_intraday_get_config_returns_default_without_persisting(tmp_path):
     config = service.get_config()
 
     assert config["enabled"] is True
+    assert config["enabled_boards"] == {"anomaly": False, "pullback": False, "risk": False}
     assert db.scalar("SELECT COUNT(*) FROM intraday_radar_config") == 0
+
+
+def test_intraday_config_normalizes_board_switches(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = IntradayRadarService(db)
+
+    config = service.save_config(
+        {
+            "enabled_boards": {
+                "anomaly": True,
+                "pullback": False,
+                "risk": True,
+                "unknown": True,
+            }
+        }
+    )
+
+    assert config["enabled_boards"] == {"anomaly": True, "pullback": False, "risk": True}
+    assert service.get_config()["enabled_boards"] == config["enabled_boards"]
 
 
 def test_intraday_record_snapshots_filters_untrusted_rows_before_insert(tmp_path):
@@ -351,6 +372,7 @@ def test_intraday_radar_uses_previous_snapshot_deltas(tmp_path):
     db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
 
     service = IntradayRadarService(db)
+    service.save_config({"enabled_boards": {"anomaly": True}})
     first = datetime(2026, 5, 21, 9, 35)
     second = first + timedelta(minutes=25)
     common = {
@@ -428,6 +450,7 @@ def test_intraday_boards_flatten_metrics_and_compute_theme_sync(tmp_path):
     )
 
     service = IntradayRadarService(db)
+    service.save_config({"enabled_boards": {"anomaly": True}})
     first = datetime(2026, 5, 21, 9, 35)
     second = datetime(2026, 5, 21, 10, 0)
     base_snapshot = {
@@ -887,6 +910,55 @@ def test_intraday_strategy_tracking_keeps_deleted_selection_unavailable(tmp_path
     assert latest["rows"] == []
 
 
+def test_intraday_task_light_refresh_skips_board_radar_when_boards_are_disabled(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    radar_calls = []
+
+    class ImmediateExecutor:
+        def submit(self, fn, *args):
+            fn(*args)
+
+    monkeypatch.setattr(service, "executor", ImmediateExecutor())
+    monkeypatch.setattr(
+        service.intraday_service,
+        "run_radar",
+        lambda sample_at=None, config=None: radar_calls.append(sample_at) or 1,
+    )
+    monkeypatch.setattr(
+        service,
+        "_fetch_intraday_snapshot_frame",
+        lambda include_bj, exclude_star, warnings: pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "平安银行",
+                    "latest_price": 10.55,
+                    "pct_chg": 4.2,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "Tushare 实时日线",
+                    "freshness": "realtime",
+                }
+            ]
+        ),
+    )
+
+    task_id = service.start_intraday_sample({"sample_at": "2026-05-21T10:00:00", "mode": "light_refresh"})
+    task = db.query("SELECT status, stage, summary_json FROM task_runs WHERE id = ?", [task_id])[0]
+    summary = json.loads(task["summary_json"])
+
+    assert radar_calls == []
+    assert task["status"] == "completed_full"
+    assert task["stage"] == "盘中轻量刷新完成"
+    assert summary["mode"] == "light_refresh"
+    assert summary["candidate_count"] == 0
+    assert summary["snapshot_count"] == 1
+
+
 def test_intraday_task_records_snapshot_and_runs_radar(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
@@ -894,6 +966,7 @@ def test_intraday_task_records_snapshot_and_runs_radar(tmp_path, monkeypatch):
     db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
     IntradayRadarService(db).save_config(
         {
+            "enabled_boards": {"anomaly": True},
             "min_amount": 0,
             "platform_bull_amount_advantage": 0,
             "candidate_limit": 10,
@@ -937,12 +1010,14 @@ def test_intraday_task_records_snapshot_and_runs_radar(tmp_path, monkeypatch):
     assert radar["rows"][0]["status"] == "刚突破"
 
 
-def test_intraday_task_runs_strategy_tracking_after_snapshot(tmp_path, monkeypatch):
+def test_intraday_task_does_not_run_strategy_tracking_even_when_legacy_auto_flag_is_set(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
     db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
-    IntradayRadarService(db).save_config({"min_amount": 0, "platform_bull_amount_advantage": 0, "candidate_limit": 10})
+    IntradayRadarService(db).save_config(
+        {"enabled_boards": {"anomaly": True}, "min_amount": 0, "platform_bull_amount_advantage": 0, "candidate_limit": 10}
+    )
     strategy_service = StrategyService(db)
     preset = strategy_service.save_preset(
         "盘中跟踪策略",
@@ -958,7 +1033,13 @@ def test_intraday_task_runs_strategy_tracking_after_snapshot(tmp_path, monkeypat
             fn(*args)
 
     monkeypatch.setattr(service, "executor", ImmediateExecutor())
+    strategy_tracking_calls = []
     monkeypatch.setattr(service, "_intraday_strategy_tracking_auto_enabled", lambda: True, raising=False)
+    monkeypatch.setattr(
+        service.intraday_service,
+        "run_strategy_tracking",
+        lambda strategy_service, sample_at=None: strategy_tracking_calls.append(sample_at) or 1,
+    )
     monkeypatch.setattr(
         service,
         "_fetch_intraday_snapshot_frame",
@@ -982,11 +1063,68 @@ def test_intraday_task_runs_strategy_tracking_after_snapshot(tmp_path, monkeypat
 
     task_id = service.start_intraday_sample({"sample_at": "2026-05-21T10:00:00"})
     task = db.query("SELECT summary_json FROM task_runs WHERE id = ?", [task_id])[0]
-    tracking = IntradayRadarService(db).strategy_tracking_latest(strategy_service)
+    summary = json.loads(task["summary_json"])
 
-    assert json.loads(task["summary_json"])["strategy_tracking_count"] == 1
-    assert tracking["strategy"]["id"] == preset["id"]
-    assert tracking["rows"][0]["code"] == "000001.SZ"
+    assert strategy_tracking_calls == []
+    assert summary["strategy_tracking_count"] == 0
+    assert summary["strategy_tracking_skipped_reason"] == "manual_only"
+
+
+def test_manual_intraday_strategy_tracking_task_fetches_snapshot_and_runs_selected_strategy(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    strategy_service = StrategyService(db)
+    preset = strategy_service.save_preset(
+        "盘中跟踪策略",
+        {"min_amount": 20_000_000, "min_price": 4.0, "candidate_limit": 10},
+    )
+    IntradayRadarService(db).set_strategy_tracking_config(preset["id"], strategy_service)
+    service = UpdateService(db)
+    service.configure_runners(strategy_service=strategy_service)
+    tracking_calls = []
+
+    class ImmediateExecutor:
+        def submit(self, fn, *args):
+            fn(*args)
+
+    monkeypatch.setattr(service, "executor", ImmediateExecutor())
+    monkeypatch.setattr(
+        service,
+        "_fetch_intraday_snapshot_frame",
+        lambda include_bj, exclude_star, warnings: pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "平安银行",
+                    "latest_price": 10.55,
+                    "pct_chg": 4.2,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "Tushare 实时日线",
+                    "freshness": "realtime",
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        service.intraday_service,
+        "run_strategy_tracking",
+        lambda strategy_service, sample_at=None: tracking_calls.append(sample_at) or 1,
+    )
+
+    task_id = service.start_intraday_strategy_tracking({"sample_at": "2026-05-21T10:00:00"})
+    task = db.query("SELECT kind, status, stage, summary_json FROM task_runs WHERE id = ?", [task_id])[0]
+    summary = json.loads(task["summary_json"])
+
+    assert task["kind"] == "intraday_strategy_tracking"
+    assert task["status"] == "completed_full"
+    assert task["stage"] == "策略追踪完成"
+    assert len(tracking_calls) == 1
+    assert tracking_calls[0] == datetime(2026, 5, 21, 10, 0)
+    assert summary["snapshot_count"] == 1
+    assert summary["strategy_tracking_count"] == 1
 
 
 def test_intraday_task_does_not_run_strategy_tracking_automatically_by_default(tmp_path, monkeypatch):
@@ -994,7 +1132,9 @@ def test_intraday_task_does_not_run_strategy_tracking_automatically_by_default(t
     migrate(db)
     db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
     db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
-    IntradayRadarService(db).save_config({"min_amount": 0, "platform_bull_amount_advantage": 0, "candidate_limit": 10})
+    IntradayRadarService(db).save_config(
+        {"enabled_boards": {"anomaly": True}, "min_amount": 0, "platform_bull_amount_advantage": 0, "candidate_limit": 10}
+    )
     strategy_service = StrategyService(db)
 
     service = UpdateService(db)
@@ -1040,17 +1180,16 @@ def test_intraday_task_does_not_run_strategy_tracking_automatically_by_default(t
     assert task["status"] == "completed_full"
     assert task["warning"] is None
     assert summary["strategy_tracking_count"] == 0
-    assert summary["strategy_tracking_skipped_reason"] == "auto_disabled"
+    assert summary["strategy_tracking_skipped_reason"] == "manual_only"
     assert summary["candidate_count"] == 1
 
 
-def test_intraday_task_skips_strategy_tracking_when_memory_is_low(tmp_path, monkeypatch):
+def test_manual_intraday_strategy_tracking_fails_fast_when_memory_is_low(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
-    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
-    db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
-    IntradayRadarService(db).save_config({"min_amount": 0, "platform_bull_amount_advantage": 0, "candidate_limit": 10})
     strategy_service = StrategyService(db)
+    preset = strategy_service.save_preset("盘中跟踪策略", {"min_amount": 20_000_000, "candidate_limit": 10})
+    IntradayRadarService(db).set_strategy_tracking_config(preset["id"], strategy_service)
 
     service = UpdateService(db)
     service.configure_runners(strategy_service=strategy_service)
@@ -1061,7 +1200,6 @@ def test_intraday_task_skips_strategy_tracking_when_memory_is_low(tmp_path, monk
             fn(*args)
 
     monkeypatch.setattr(service, "executor", ImmediateExecutor())
-    monkeypatch.setattr(service, "_intraday_strategy_tracking_auto_enabled", lambda: True, raising=False)
     monkeypatch.setattr(service, "_available_memory_mb", lambda: 128, raising=False)
     monkeypatch.setattr(service, "_min_available_memory_mb", lambda: 700, raising=False)
     monkeypatch.setattr(
@@ -1069,36 +1207,14 @@ def test_intraday_task_skips_strategy_tracking_when_memory_is_low(tmp_path, monk
         "run_strategy_tracking",
         lambda strategy_service, sample_at=None: strategy_tracking_calls.append(sample_at) or 1,
     )
-    monkeypatch.setattr(
-        service,
-        "_fetch_intraday_snapshot_frame",
-        lambda include_bj, exclude_star, warnings: pd.DataFrame(
-            [
-                {
-                    "code": "000001.SZ",
-                    "name": "平安银行",
-                    "latest_price": 10.55,
-                    "pct_chg": 4.2,
-                    "high": 10.6,
-                    "low": 9.9,
-                    "volume": 3_100_000.0,
-                    "amount": 62_000_000.0,
-                    "source": "Tushare 实时日线",
-                    "freshness": "realtime",
-                }
-            ]
-        ),
-    )
 
-    task_id = service.start_intraday_sample({"sample_at": "2026-05-21T10:00:00"})
-    task = db.query("SELECT status, warning, summary_json FROM task_runs WHERE id = ?", [task_id])[0]
-    summary = json.loads(task["summary_json"])
+    task_id = service.start_intraday_strategy_tracking({"sample_at": "2026-05-21T10:00:00"})
+    task = db.query("SELECT status, warning, error_message FROM task_runs WHERE id = ?", [task_id])[0]
 
     assert strategy_tracking_calls == []
-    assert task["status"] == "completed_partial"
+    assert task["status"] == "failed"
     assert "可用内存不足" in task["warning"]
-    assert summary["strategy_tracking_count"] == 0
-    assert summary["candidate_count"] == 1
+    assert "可用内存不足" in task["error_message"]
 
 
 def test_intraday_task_rejects_frame_date_mismatch_unless_forced(tmp_path, monkeypatch):

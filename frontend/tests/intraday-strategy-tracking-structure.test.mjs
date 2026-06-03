@@ -20,11 +20,16 @@ test('intraday page renders strategy tracking before the three market boards', (
   assert.ok(anomalyIndex > trackingIndex);
   assert.match(page, /StrategyTrackingPanel/);
   assert.match(page, /getIntradayStrategyTracking/);
+  assert.match(page, /runIntradayStrategyTracking/);
   assert.match(page, /saveIntradayStrategyTrackingConfig/);
+  assert.match(page, /saveIntradayConfig/);
+  assert.match(page, /Switch/);
+  assert.match(page, /boardSwitches/);
   assert.match(page, /label:\s*preset\.name/);
   assert.doesNotMatch(page, /strategyOptionLabel|未发布/);
   assert.doesNotMatch(page, /disabled=\{isPending/);
   assert.doesNotMatch(page, /<select\b/i);
+  assert.doesNotMatch(page, /<input[^>]+type=["']checkbox["']/i);
 });
 
 test('intraday API exposes read and update endpoints for strategy tracking', () => {
@@ -32,6 +37,10 @@ test('intraday API exposes read and update endpoints for strategy tracking', () 
 
   assert.match(api, /getIntradayStrategyTracking/);
   assert.match(api, /saveIntradayStrategyTrackingConfig/);
+  assert.match(api, /runIntradayStrategyTracking/);
+  assert.match(api, /saveIntradayConfig/);
   assert.match(api, /\/api\/intraday\/strategy-tracking/);
   assert.match(api, /\/api\/intraday\/strategy-tracking\/config/);
+  assert.match(api, /\/api\/intraday\/strategy-tracking\/run/);
+  assert.match(api, /\/api\/intraday\/config/);
 });
