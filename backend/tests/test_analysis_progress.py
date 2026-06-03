@@ -605,6 +605,37 @@ def test_heavy_queue_task_fails_before_runner_when_memory_is_low(tmp_path, monke
     assert "可用内存不足" in row["error_message"]
 
 
+def test_heavy_queue_task_uses_conservative_default_memory_floor(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    calls = []
+
+    class Runner:
+        def run(self, *args, **kwargs):
+            calls.append("started")
+            return "analysis-low-memory"
+
+    service.configure_runners(analysis_runner=Runner())
+    monkeypatch.setattr(service, "_available_memory_mb", lambda: 1000, raising=False)
+    service._write_task(
+        "analyze-default-floor",
+        kind="analyze",
+        status="queued",
+        stage="准备分析",
+        source="本地仓库",
+        summary={},
+        payload={"config": {"candidate_limit": 5}, "run_id": "analysis-default-floor"},
+    )
+
+    service._drain_queue()
+
+    row = db.query("SELECT status, warning FROM task_runs WHERE id = 'analyze-default-floor'")[0]
+    assert calls == []
+    assert row["status"] == "failed"
+    assert "低于 1200MB" in row["warning"]
+
+
 def test_next_queued_task_claims_task_once_across_service_instances(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

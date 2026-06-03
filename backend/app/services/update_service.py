@@ -737,6 +737,9 @@ class UpdateService:
         if message:
             raise RuntimeError(message)
 
+    def _intraday_strategy_tracking_auto_enabled(self) -> bool:
+        return bool(getattr(settings, "intraday_strategy_tracking_auto_enabled", False))
+
     def _release_task_memory(self) -> None:
         gc.collect()
         if os.name != "posix":
@@ -3330,9 +3333,12 @@ class UpdateService:
             )
             candidate_count = self.intraday_service.run_radar(sample_at=sample_at)
             strategy_tracking_count = 0
+            strategy_tracking_skipped_reason = None
             if self.strategy_service is not None:
-                low_memory = self._low_memory_message("本轮策略跟踪")
-                if low_memory:
+                if not self._intraday_strategy_tracking_auto_enabled():
+                    strategy_tracking_skipped_reason = "auto_disabled"
+                elif low_memory := self._low_memory_message("本轮策略跟踪"):
+                    strategy_tracking_skipped_reason = "low_memory"
                     warnings.append(low_memory)
                 else:
                     try:
@@ -3359,6 +3365,7 @@ class UpdateService:
                     "sector_heat_count": sector_heat_count,
                     "candidate_count": candidate_count,
                     "strategy_tracking_count": strategy_tracking_count,
+                    "strategy_tracking_skipped_reason": strategy_tracking_skipped_reason,
                     "strict_count": radar_result.get("summary", {}).get("strict_count", candidate_count),
                     "score_count": radar_result.get("summary", {}).get("score_count", 0),
                     "sample_at": sample_at.isoformat(timespec="seconds"),
