@@ -574,6 +574,37 @@ def test_core_task_starters_store_canonical_payload_hashes(tmp_path, monkeypatch
     assert service.start_backtest({"config": {"candidate_limit": 3}}, object()) == (backtest_id, backtest_run)
 
 
+def test_heavy_queue_task_fails_before_runner_when_memory_is_low(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+
+    class Runner:
+        def run(self, *args, **kwargs):
+            raise AssertionError("analysis runner should not start under low memory")
+
+    service.configure_runners(analysis_runner=Runner())
+    monkeypatch.setattr(service, "_available_memory_mb", lambda: 128, raising=False)
+    monkeypatch.setattr(service, "_min_available_memory_mb", lambda: 700, raising=False)
+    service._write_task(
+        "analyze-low-memory",
+        kind="analyze",
+        status="queued",
+        stage="准备分析",
+        source="本地仓库",
+        summary={},
+        payload={"config": {"candidate_limit": 5}, "run_id": "analysis-low-memory"},
+    )
+
+    service._drain_queue()
+
+    row = db.query("SELECT status, stage, warning, error_message FROM task_runs WHERE id = 'analyze-low-memory'")[0]
+    assert row["status"] == "failed"
+    assert row["stage"] == "任务失败"
+    assert "可用内存不足" in row["warning"]
+    assert "可用内存不足" in row["error_message"]
+
+
 def test_next_queued_task_claims_task_once_across_service_instances(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

@@ -294,7 +294,8 @@ class DailyBriefService:
             try:
                 return self._call_llm(articles), True, None
             except Exception as exc:
-                return self._fallback_report(articles), False, f"LLM 简报降级：{exc}"
+                reason = "llm_parse_error" if isinstance(exc, json.JSONDecodeError) else "llm_error"
+                return self._fallback_report(articles, reason=reason), False, f"LLM 简报降级：{exc}"
         if articles:
             return self._fallback_report(articles), False, "未配置 LLM API，已展示中文降级摘要。"
         return self._fallback_report([]), False, "资讯源暂时没有返回可用内容。"
@@ -320,19 +321,55 @@ class DailyBriefService:
         }
         data: Dict[str, Any]
         with httpx.Client(timeout=120) as client:
+            data = self._post_llm_with_json_fallback(client, payload)
+            content = data["choices"][0]["message"]["content"]
             try:
-                data = self._post_llm(client, payload)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code != 400:
-                    raise RuntimeError(_http_error_message(exc)) from exc
-                relaxed_payload = dict(payload)
-                relaxed_payload.pop("response_format", None)
-                try:
-                    data = self._post_llm(client, relaxed_payload)
-                except httpx.HTTPStatusError as retry_exc:
-                    raise RuntimeError(_http_error_message(retry_exc)) from retry_exc
-        content = data["choices"][0]["message"]["content"]
+                return self._parse_llm_report(content)
+            except json.JSONDecodeError as exc:
+                return self._repair_llm_json(client, content, exc)
+
+    def _post_llm_with_json_fallback(self, client: httpx.Client, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            return self._post_llm(client, payload)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 400:
+                raise RuntimeError(_http_error_message(exc)) from exc
+            relaxed_payload = dict(payload)
+            relaxed_payload.pop("response_format", None)
+            try:
+                return self._post_llm(client, relaxed_payload)
+            except httpx.HTTPStatusError as retry_exc:
+                raise RuntimeError(_http_error_message(retry_exc)) from retry_exc
+
+    def _parse_llm_report(self, content: str) -> Dict[str, Any]:
         return self._normalize_report(json.loads(_extract_json(content)))
+
+    def _repair_llm_json(
+        self,
+        client: httpx.Client,
+        content: str,
+        error: json.JSONDecodeError,
+    ) -> Dict[str, Any]:
+        repair_prompt = "\n".join(
+            [
+                "上一条响应不是合法 JSON。只返回合法 JSON 对象，不要 markdown，不要解释。",
+                f"解析错误：{error}",
+                "原始响应：",
+                content[:60000],
+            ]
+        )
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": "你是 JSON 修复器，只输出符合原字段结构的合法 JSON 对象。"},
+                {"role": "user", "content": repair_prompt},
+            ],
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+        }
+        data = self._post_llm_with_json_fallback(client, payload)
+        repaired = data["choices"][0]["message"]["content"]
+        return self._parse_llm_report(repaired)
 
     def _post_llm(self, client: httpx.Client, payload: Dict[str, Any]) -> Dict[str, Any]:
         response = client.post(
@@ -346,7 +383,7 @@ class DailyBriefService:
         response.raise_for_status()
         return response.json()
 
-    def _fallback_report(self, articles: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _fallback_report(self, articles: List[Dict[str, Any]], reason: Optional[str] = None) -> Dict[str, Any]:
         grouped = self._selected_by_category(articles)
         count = len(articles)
         if not count:
@@ -359,9 +396,15 @@ class DailyBriefService:
                 "editor_note": "当前为降级简报，等待下一轮自动更新。",
                 "keywords": ["资讯源", "自动简报", "降级"],
             }
+        if reason == "llm_parse_error":
+            daily_overview = f"本次自动抓取 {count} 条国际资讯，覆盖科技、财经与时政来源。模型精编返回格式异常，已临时按来源新鲜度和类别均衡展示标题流，下一轮自动任务会继续尝试生成精编摘要。"
+        elif reason == "llm_error":
+            daily_overview = f"本次自动抓取 {count} 条国际资讯，覆盖科技、财经与时政来源。模型精编暂时不可用，已临时按来源新鲜度和类别均衡展示标题流，下一轮自动任务会继续尝试。"
+        else:
+            daily_overview = f"本次自动抓取 {count} 条国际资讯，覆盖科技、财经与时政来源。当前未使用 LLM 精编，先按来源新鲜度和类别均衡展示标题流，后续配置模型后会自动生成更凝练的编辑摘要。"
         return {
             "hero_headline": "国际资讯简报已更新",
-            "daily_overview": f"本次自动抓取 {count} 条国际资讯，覆盖科技、财经与时政来源。当前未使用 LLM 精编，先按来源新鲜度和类别均衡展示标题流，后续配置模型后会自动生成更凝练的编辑摘要。",
+            "daily_overview": daily_overview,
             "tech_briefs": [_brief_from_article(item) for item in grouped["tech"][:5]],
             "finance_briefs": [_brief_from_article(item) for item in grouped["finance"][:5]],
             "politics_briefs": [_brief_from_article(item) for item in grouped["politics"][:3]],

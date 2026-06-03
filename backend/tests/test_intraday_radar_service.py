@@ -988,6 +988,62 @@ def test_intraday_task_runs_strategy_tracking_after_snapshot(tmp_path, monkeypat
     assert tracking["rows"][0]["code"] == "000001.SZ"
 
 
+def test_intraday_task_skips_strategy_tracking_when_memory_is_low(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert("stock_basic", [_stock("000001.SZ", "平安银行")], ["code"])
+    db.upsert("historical_bars", [_bar("000001.SZ", day) for day in range(1, 22)], ["code", "date"])
+    IntradayRadarService(db).save_config({"min_amount": 0, "platform_bull_amount_advantage": 0, "candidate_limit": 10})
+    strategy_service = StrategyService(db)
+
+    service = UpdateService(db)
+    service.configure_runners(strategy_service=strategy_service)
+    strategy_tracking_calls = []
+
+    class ImmediateExecutor:
+        def submit(self, fn, *args):
+            fn(*args)
+
+    monkeypatch.setattr(service, "executor", ImmediateExecutor())
+    monkeypatch.setattr(service, "_available_memory_mb", lambda: 128, raising=False)
+    monkeypatch.setattr(service, "_min_available_memory_mb", lambda: 700, raising=False)
+    monkeypatch.setattr(
+        service.intraday_service,
+        "run_strategy_tracking",
+        lambda strategy_service, sample_at=None: strategy_tracking_calls.append(sample_at) or 1,
+    )
+    monkeypatch.setattr(
+        service,
+        "_fetch_intraday_snapshot_frame",
+        lambda include_bj, exclude_star, warnings: pd.DataFrame(
+            [
+                {
+                    "code": "000001.SZ",
+                    "name": "平安银行",
+                    "latest_price": 10.55,
+                    "pct_chg": 4.2,
+                    "high": 10.6,
+                    "low": 9.9,
+                    "volume": 3_100_000.0,
+                    "amount": 62_000_000.0,
+                    "source": "Tushare 实时日线",
+                    "freshness": "realtime",
+                }
+            ]
+        ),
+    )
+
+    task_id = service.start_intraday_sample({"sample_at": "2026-05-21T10:00:00"})
+    task = db.query("SELECT status, warning, summary_json FROM task_runs WHERE id = ?", [task_id])[0]
+    summary = json.loads(task["summary_json"])
+
+    assert strategy_tracking_calls == []
+    assert task["status"] == "completed_partial"
+    assert "可用内存不足" in task["warning"]
+    assert summary["strategy_tracking_count"] == 0
+    assert summary["candidate_count"] == 1
+
+
 def test_intraday_task_rejects_frame_date_mismatch_unless_forced(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

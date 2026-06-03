@@ -91,6 +91,95 @@ def test_daily_brief_sources_are_news_feeds_not_stock_data_sources(tmp_path):
     assert "AData" not in source_names
 
 
+def test_daily_brief_repairs_malformed_llm_json_once(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = DailyBriefService(db, api_key="test-key")
+    article = {
+        "source_id": "mock",
+        "source": "Mock Feed",
+        "category": "tech",
+        "title": "AI infrastructure funding expands",
+        "url": "https://example.com/ai-funding",
+        "excerpt": "New funding for AI infrastructure.",
+        "published_at": datetime(2026, 5, 23, 8, 0),
+    }
+    repaired = {
+        "hero_headline": "AI 基础设施融资升温",
+        "daily_overview": "今日科技资讯聚焦 AI 基础设施，资金继续流向算力、模型服务和企业应用，市场关注投入节奏与商业化兑现。",
+        "tech_briefs": [
+            {
+                "title": "AI 基础设施融资升温",
+                "url": "https://example.com/ai-funding",
+                "source": "Mock Feed",
+                "summary": "资金继续流向 AI 基础设施。",
+                "importance": 8,
+            }
+        ],
+        "finance_briefs": [],
+        "politics_briefs": [],
+        "article_flow": {
+            "tech": [
+                {
+                    "title": "AI 基础设施融资升温",
+                    "url": "https://example.com/ai-funding",
+                    "source": "Mock Feed",
+                    "summary": "资金继续流向 AI 基础设施。",
+                    "published_at": "2026-05-23T08:00:00",
+                    "importance": 8,
+                }
+            ],
+            "finance": [],
+            "politics": [],
+        },
+        "editor_note": "关注算力投资持续性。",
+        "keywords": ["AI", "基础设施"],
+    }
+    calls = []
+
+    def fake_post_llm(client, payload):
+        calls.append(payload)
+        if len(calls) == 1:
+            return {"choices": [{"message": {"content": '{"hero_headline":"AI 简报","tech_briefs": ['}}]}
+        return {"choices": [{"message": {"content": json.dumps(repaired, ensure_ascii=False)}}]}
+
+    monkeypatch.setattr(service, "_post_llm", fake_post_llm)
+
+    report = service._call_llm([article])
+
+    assert report["hero_headline"] == "AI 基础设施融资升温"
+    assert report["article_flow"]["tech"][0]["summary"] == "资金继续流向 AI 基础设施。"
+    assert len(calls) == 2
+    assert "只返回合法 JSON" in calls[1]["messages"][-1]["content"]
+
+
+def test_daily_brief_fallback_text_distinguishes_llm_parse_failure(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = DailyBriefService(db, api_key="test-key")
+    article = {
+        "source_id": "mock",
+        "source": "Mock Feed",
+        "category": "tech",
+        "title": "AI infrastructure funding expands",
+        "url": "https://example.com/ai-funding",
+        "excerpt": "New funding for AI infrastructure.",
+        "published_at": datetime(2026, 5, 23, 8, 0),
+    }
+
+    def fail_call(articles):
+        raise json.JSONDecodeError("Expecting ',' delimiter", '{"bad":', 7)
+
+    monkeypatch.setattr(service, "_call_llm", fail_call)
+
+    report, llm_used, error_message = service._build_report([article])
+
+    assert llm_used is False
+    assert "LLM 简报降级" in error_message
+    assert "模型精编返回格式异常" in report["daily_overview"]
+    assert "后续配置模型" not in report["daily_overview"]
+
+
 def test_daily_brief_api_backfills_article_flow_for_legacy_briefs(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
