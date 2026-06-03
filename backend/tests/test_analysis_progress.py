@@ -462,6 +462,42 @@ def test_task_runs_lists_full_active_queue_in_order(tmp_path):
     assert "queue_order" not in rows[0]
 
 
+def test_task_runs_lists_terminal_tasks_by_latest_time_not_queue_order(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    old_time = datetime(2026, 5, 22, 7, 27, 54)
+    new_time = datetime(2026, 6, 3, 13, 10, 0)
+    service._write_task(
+        "update-old",
+        kind="update",
+        status="completed_full",
+        stage="轻量日更完成",
+        source="Tushare",
+        summary={},
+        payload={"mode": "daily_light"},
+        queue_order=1,
+        started_at=old_time,
+        finished_at=old_time,
+    )
+    service._write_task(
+        "update-new",
+        kind="update",
+        status="completed_full",
+        stage="轻量日更完成",
+        source="Tushare",
+        summary={},
+        payload={"mode": "daily_light"},
+        queue_order=2,
+        started_at=new_time,
+        finished_at=new_time,
+    )
+
+    rows = DataService(db).task_runs(statuses=["completed_full", "completed_partial", "failed"], limit=2)
+
+    assert [row["id"] for row in rows] == ["update-new", "update-old"]
+
+
 def test_candidate_ai_summary_task_enqueues_and_marks_result_queued(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)

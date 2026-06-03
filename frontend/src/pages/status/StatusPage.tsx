@@ -104,6 +104,13 @@ export function StatusPage() {
             ))}
           </section>
         ) : null}
+        <section className="task-status-list">
+          <h3 className="subsection-title">最近任务</h3>
+          {recentRows.slice(0, 5).map((task) => (
+            <TaskStatusCard key={task.id} task={task} />
+          ))}
+          {!recentRows.length ? <p className="card-copy">暂无最近任务。</p> : null}
+        </section>
         <div className="button-row" style={{ marginTop: 16 }}>
           <Button onClick={() => setShowMaintenance((value) => !value)} variant="secondary">
             {showMaintenance ? '收起维护信息' : '查看维护信息'}
@@ -275,5 +282,9 @@ function kindLabel(kind?: string | null) {
 function taskStatusLabel(status?: string | null) {
   if (status === 'queued') return '已排队';
   if (status === 'running') return '运行中';
+  if (status === 'completed_full') return '已完成';
+  if (status === 'completed_partial') return '部分完成';
+  if (status === 'failed') return '失败';
+  if (status === 'skipped') return '已跳过';
   return status || '待更新';
 }

@@ -40,6 +40,16 @@ test('status and shell task polling keeps a standby recent-task heartbeat', () =
   assert.doesNotMatch(`${shell}\n${status}`, /queryKey: queryKeys\.tasks\.recent\(\)[\s\S]{0,220}refetchInterval:\s*false/);
 });
 
+test('status page shows recent terminal tasks in the default view', () => {
+  const status = read('pages/status/StatusPage.tsx');
+  const maintenanceStart = status.indexOf('{showMaintenance ?');
+  const recentStart = status.indexOf('最近任务');
+
+  assert.ok(recentStart > 0, 'StatusPage should render a visible recent task section');
+  assert.ok(maintenanceStart < 0 || recentStart < maintenanceStart, 'recent tasks should not be hidden behind maintenance mode');
+  assert.match(status, /recentRows\.slice\(0,\s*5\)\.map/);
+});
+
 test('data map only starts the query for the active tab', () => {
   const dataMap = read('pages/data-map/DataMapPage.tsx');
 

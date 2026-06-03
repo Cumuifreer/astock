@@ -893,18 +893,33 @@ class DataService:
 
     def task_runs(self, statuses: Optional[List[str]] = None, limit: int = 50) -> List[Dict[str, Any]]:
         clean_statuses = [str(status).strip() for status in statuses or [] if str(status).strip()]
+        terminal_statuses = {"completed_full", "completed_partial", "failed", "skipped"}
+        active_statuses = {"queued", "running"}
         params: List[Any] = []
         where = ""
         if clean_statuses:
             where = f"WHERE status IN ({', '.join(['?'] * len(clean_statuses))})"
             params.extend(clean_statuses)
+        if clean_statuses and set(clean_statuses).issubset(terminal_statuses):
+            order_by = "COALESCE(finished_at, updated_at, started_at) DESC, updated_at DESC, started_at DESC, id DESC"
+        elif clean_statuses and set(clean_statuses).issubset(active_statuses):
+            order_by = "(queue_order IS NULL), queue_order, started_at, id"
+        else:
+            order_by = """
+                CASE WHEN status IN ('queued', 'running') THEN 0 ELSE 1 END,
+                (queue_order IS NULL),
+                queue_order,
+                COALESCE(finished_at, updated_at, started_at) DESC,
+                started_at DESC,
+                id DESC
+            """
         params.append(max(1, min(int(limit or 50), 200)))
         rows = self.db.query(
             f"""
             SELECT *
             FROM task_runs
             {where}
-            ORDER BY queue_order NULLS LAST, started_at DESC, updated_at DESC, id
+            ORDER BY {order_by}
             LIMIT ?
             """,
             params,
