@@ -610,14 +610,16 @@ def test_core_task_starters_store_canonical_payload_hashes(tmp_path, monkeypatch
     assert service.start_backtest({"config": {"candidate_limit": 3}}, object()) == (backtest_id, backtest_run)
 
 
-def test_heavy_queue_task_fails_before_runner_when_memory_is_low(tmp_path, monkeypatch):
+def test_analysis_task_runs_without_memory_floor(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     service = UpdateService(db)
+    calls = []
 
     class Runner:
         def run(self, *args, **kwargs):
-            raise AssertionError("analysis runner should not start under low memory")
+            calls.append("started")
+            return "analysis-low-memory"
 
     service.configure_runners(analysis_runner=Runner())
     monkeypatch.setattr(service, "_available_memory_mb", lambda: 128, raising=False)
@@ -635,41 +637,41 @@ def test_heavy_queue_task_fails_before_runner_when_memory_is_low(tmp_path, monke
     service._drain_queue()
 
     row = db.query("SELECT status, stage, warning, error_message FROM task_runs WHERE id = 'analyze-low-memory'")[0]
-    assert row["status"] == "failed"
-    assert row["stage"] == "任务失败"
-    assert "可用内存不足" in row["warning"]
-    assert "可用内存不足" in row["error_message"]
+    assert calls == ["started"]
+    assert row["status"] == "completed_full"
+    assert row["stage"] == "分析完成"
+    assert row["warning"] is None
+    assert row["error_message"] is None
 
 
-def test_heavy_queue_task_uses_conservative_default_memory_floor(tmp_path, monkeypatch):
+def test_daily_light_update_runs_without_memory_floor(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     service = UpdateService(db)
     calls = []
-
-    class Runner:
-        def run(self, *args, **kwargs):
-            calls.append("started")
-            return "analysis-low-memory"
-
-    service.configure_runners(analysis_runner=Runner())
     monkeypatch.setattr(service, "_available_memory_mb", lambda: 1000, raising=False)
+    monkeypatch.setattr(service, "_min_available_memory_mb", lambda: 1200, raising=False)
+    monkeypatch.setattr(
+        service,
+        "_run_update",
+        lambda task_id, payload: calls.append((task_id, payload.get("mode"))) or service._patch_task(task_id, status="completed_full", stage="轻量日更完成"),
+    )
     service._write_task(
-        "analyze-default-floor",
-        kind="analyze",
+        "update-default-floor",
+        kind="update",
         status="queued",
-        stage="准备分析",
-        source="本地仓库",
+        stage="准备更新",
+        source="Tushare",
         summary={},
-        payload={"config": {"candidate_limit": 5}, "run_id": "analysis-default-floor"},
+        payload={"mode": "daily_light"},
     )
 
     service._drain_queue()
 
-    row = db.query("SELECT status, warning FROM task_runs WHERE id = 'analyze-default-floor'")[0]
-    assert calls == []
-    assert row["status"] == "failed"
-    assert "低于 1200MB" in row["warning"]
+    row = db.query("SELECT status, warning FROM task_runs WHERE id = 'update-default-floor'")[0]
+    assert calls == [("update-default-floor", "daily_light")]
+    assert row["status"] == "completed_full"
+    assert row["warning"] is None
 
 
 def test_next_queued_task_claims_task_once_across_service_instances(tmp_path):

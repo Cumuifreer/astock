@@ -1184,37 +1184,37 @@ def test_intraday_task_does_not_run_strategy_tracking_automatically_by_default(t
     assert summary["candidate_count"] == 1
 
 
-def test_manual_intraday_strategy_tracking_fails_fast_when_memory_is_low(tmp_path, monkeypatch):
+def test_manual_intraday_strategy_tracking_runs_without_memory_floor(tmp_path, monkeypatch):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
-    strategy_service = StrategyService(db)
-    preset = strategy_service.save_preset("盘中跟踪策略", {"min_amount": 20_000_000, "candidate_limit": 10})
-    IntradayRadarService(db).set_strategy_tracking_config(preset["id"], strategy_service)
-
     service = UpdateService(db)
-    service.configure_runners(strategy_service=strategy_service)
     strategy_tracking_calls = []
-
-    class ImmediateExecutor:
-        def submit(self, fn, *args):
-            fn(*args)
-
-    monkeypatch.setattr(service, "executor", ImmediateExecutor())
     monkeypatch.setattr(service, "_available_memory_mb", lambda: 128, raising=False)
     monkeypatch.setattr(service, "_min_available_memory_mb", lambda: 700, raising=False)
     monkeypatch.setattr(
-        service.intraday_service,
-        "run_strategy_tracking",
-        lambda strategy_service, sample_at=None: strategy_tracking_calls.append(sample_at) or 1,
+        service,
+        "_run_intraday_strategy_tracking",
+        lambda task_id, payload: strategy_tracking_calls.append((task_id, payload.get("sample_at"))) or service._patch_task(task_id, status="completed_full", stage="策略追踪完成"),
+    )
+    service._write_task(
+        "strategy-tracking-low-memory",
+        kind="intraday_strategy_tracking",
+        status="queued",
+        stage="准备策略追踪",
+        source="本地策略",
+        summary={},
+        payload={"sample_at": "2026-05-21T10:00:00"},
     )
 
-    task_id = service.start_intraday_strategy_tracking({"sample_at": "2026-05-21T10:00:00"})
+    service._drain_queue()
+
+    task_id = "strategy-tracking-low-memory"
     task = db.query("SELECT status, warning, error_message FROM task_runs WHERE id = ?", [task_id])[0]
 
-    assert strategy_tracking_calls == []
-    assert task["status"] == "failed"
-    assert "可用内存不足" in task["warning"]
-    assert "可用内存不足" in task["error_message"]
+    assert strategy_tracking_calls == [(task_id, "2026-05-21T10:00:00")]
+    assert task["status"] == "completed_full"
+    assert task["warning"] is None
+    assert task["error_message"] is None
 
 
 def test_intraday_task_rejects_frame_date_mismatch_unless_forced(tmp_path, monkeypatch):

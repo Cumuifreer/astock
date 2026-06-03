@@ -50,6 +50,14 @@ test('status page shows recent terminal tasks in the default view', () => {
   assert.match(status, /recentRows\.slice\(0,\s*5\)\.map/);
 });
 
+test('status page task cards expose failure reasons', () => {
+  const status = read('pages/status/StatusPage.tsx');
+
+  assert.match(status, /taskFailureMessage/);
+  assert.match(status, /task\.error_message\s*\|\|\s*task\.warning/);
+  assert.match(status, /失败原因/);
+});
+
 test('data map only starts the query for the active tab', () => {
   const dataMap = read('pages/data-map/DataMapPage.tsx');
 

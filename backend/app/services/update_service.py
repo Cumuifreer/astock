@@ -193,7 +193,6 @@ DEFAULT_DATA_DAG: List[Dict[str, Any]] = [
     },
 ]
 DAG_PROGRESS_TERMINAL_STATUSES = {"completed", "skipped", "partial", "failed"}
-HEAVY_TASK_KINDS = {"update", "analyze", "backtest", "intraday_strategy_tracking"}
 HISTORY_BACKFILL_CAPABILITIES = {
     "历史 K 线",
     "RPS",
@@ -709,39 +708,6 @@ class UpdateService:
 
     def kick_queue(self) -> None:
         self._ensure_queue_worker()
-
-    def _min_available_memory_mb(self) -> int:
-        return max(0, int(getattr(settings, "min_available_memory_mb", 0) or 0))
-
-    def _available_memory_mb(self) -> Optional[int]:
-        if os.name != "posix":
-            return None
-        try:
-            with open("/proc/meminfo", "r", encoding="utf-8") as handle:
-                for line in handle:
-                    if line.startswith("MemAvailable:"):
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            return int(int(parts[1]) / 1024)
-        except OSError:
-            return None
-        return None
-
-    def _low_memory_message(self, action: str) -> Optional[str]:
-        required = self._min_available_memory_mb()
-        if required <= 0:
-            return None
-        available = self._available_memory_mb()
-        if available is None or available >= required:
-            return None
-        return f"可用内存不足（约 {available}MB，低于 {required}MB），为避免服务器 OOM 已跳过{action}。请稍后重试。"
-
-    def _ensure_memory_for_task(self, kind: str) -> None:
-        if kind not in HEAVY_TASK_KINDS:
-            return
-        message = self._low_memory_message("本次重任务")
-        if message:
-            raise RuntimeError(message)
 
     def _intraday_strategy_tracking_auto_enabled(self) -> bool:
         return bool(getattr(settings, "intraday_strategy_tracking_auto_enabled", False))
@@ -1280,7 +1246,6 @@ class UpdateService:
     def _dispatch_queued_task(self, task: Dict[str, Any], payload: Dict[str, Any]) -> None:
         kind = task.get("kind")
         task_id = task["id"]
-        self._ensure_memory_for_task(str(kind or ""))
         if kind == "update":
             self._run_update(task_id, payload)
             return

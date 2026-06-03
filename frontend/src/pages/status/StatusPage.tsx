@@ -162,6 +162,7 @@ export function StatusPage() {
 }
 
 function TaskStatusCard({ task, progressValue }: { task: TaskRun; progressValue?: number | null }) {
+  const failureMessage = taskFailureMessage(task);
   return (
     <article className="task-progress-card">
       <div className="rule-card-header">
@@ -175,6 +176,7 @@ function TaskStatusCard({ task, progressValue }: { task: TaskRun; progressValue?
       <p className="card-copy">
         开始于 {formatDateTime(task.started_at)} · {heartbeatLabel(task)}
       </p>
+      {failureMessage ? <p className="card-copy text-risk">失败原因：{failureMessage}</p> : null}
     </article>
   );
 }
@@ -191,6 +193,11 @@ function heartbeatLabel(task: TaskRun) {
   const stale = Number.isFinite(updated) && task.status === 'running' && Date.now() - updated > staleHeartbeatMs;
   if (stale) return `可能仍在运行，最近更新于 ${formatDateTime(task.updated_at)}`;
   return `最近更新 ${formatDateTime(task.updated_at)}`;
+}
+
+function taskFailureMessage(task: TaskRun) {
+  if (task.status !== 'failed') return '';
+  return task.error_message || task.warning || '失败原因待记录';
 }
 
 function progressStatusLabel(status?: string | null) {
