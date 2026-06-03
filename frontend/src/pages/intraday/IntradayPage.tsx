@@ -144,6 +144,11 @@ export function IntradayPage() {
           {hideThemeMetrics ? <p className="card-copy">题材联动数据未同步，本次榜单暂不显示题材同步。</p> : null}
         </div>
         <Tabs
+          actions={
+            <Button disabled={!selectedStrategyId || runTrackingMutation.isPending} icon={<Play size={16} />} onClick={() => runTrackingMutation.mutate()} variant="primary">
+              运行策略追踪
+            </Button>
+          }
           defaultValue="strategy-tracking"
           items={[
             {
@@ -152,9 +157,7 @@ export function IntradayPage() {
               content: (
                 <StrategyTrackingPanel
                   data={trackingData}
-                  isRunPending={runTrackingMutation.isPending}
                   onOpenTimeline={setTimelineTarget}
-                  onRun={() => runTrackingMutation.mutate()}
                   onSelectStrategy={(strategyPresetId) => saveTrackingMutation.mutate(strategyPresetId)}
                   selectedStrategyId={selectedStrategyId}
                   strategies={strategies}
@@ -253,18 +256,14 @@ function BoardWithHint({
 
 function StrategyTrackingPanel({
   data,
-  isRunPending,
   strategies,
   selectedStrategyId,
-  onRun,
   onSelectStrategy,
   onOpenTimeline,
 }: {
   data: IntradayStrategyTracking;
-  isRunPending: boolean;
   strategies: StrategyPreset[];
   selectedStrategyId: string;
-  onRun: () => void;
   onSelectStrategy: (strategyPresetId: string) => void;
   onOpenTimeline: (row: IntradayCandidate) => void;
 }) {
@@ -288,9 +287,6 @@ function StrategyTrackingPanel({
           <span>跟踪策略</span>
           <CustomSelect disabled={!options.length} label="跟踪策略" onChange={onSelectStrategy} options={options} placeholder="选择跟踪策略" value={selectedStrategyId} />
         </div>
-        <Button disabled={!selectedStrategyId || isRunPending} icon={<Play size={16} />} onClick={onRun} variant="primary">
-          运行策略追踪
-        </Button>
         <div className="rule-chip-grid">
           <Badge tone={data.config?.persisted ? 'good' : 'info'}>{data.config?.persisted ? '已固定' : '当前策略'}</Badge>
           <Badge tone="info">{data.strategy?.name || '未选择策略'}</Badge>

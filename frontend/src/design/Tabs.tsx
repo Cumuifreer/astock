@@ -11,20 +11,24 @@ type TabsProps = {
   value?: string;
   defaultValue?: string;
   items: TabItem[];
+  actions?: ReactNode;
   onValueChange?: (value: string) => void;
 };
 
-export function Tabs({ value, defaultValue, items, onValueChange }: TabsProps) {
+export function Tabs({ value, defaultValue, items, actions, onValueChange }: TabsProps) {
   const resolvedDefault = defaultValue || items[0]?.value;
   return (
     <RadixTabs.Root className="tabs-root" value={value} defaultValue={resolvedDefault} onValueChange={onValueChange}>
-      <RadixTabs.List className="tabs-list">
-        {items.map((item) => (
-          <RadixTabs.Trigger className="tabs-trigger" key={item.value} value={item.value}>
-            {item.label}
-          </RadixTabs.Trigger>
-        ))}
-      </RadixTabs.List>
+      <div className="tabs-bar">
+        <RadixTabs.List className="tabs-list">
+          {items.map((item) => (
+            <RadixTabs.Trigger className="tabs-trigger" key={item.value} value={item.value}>
+              {item.label}
+            </RadixTabs.Trigger>
+          ))}
+        </RadixTabs.List>
+        {actions ? <div className="tabs-actions">{actions}</div> : null}
+      </div>
       {items.map((item) => (
         <RadixTabs.Content key={item.value} value={item.value}>
           {item.content}

@@ -25,11 +25,23 @@ test('intraday page renders strategy tracking before the three market boards', (
   assert.match(page, /saveIntradayConfig/);
   assert.match(page, /Switch/);
   assert.match(page, /boardSwitches/);
+  assert.match(page, /actions=\{/);
+  assert.match(page, /<Button[\s\S]*运行策略追踪[\s\S]*<\/Button>/);
   assert.match(page, /label:\s*preset\.name/);
+  const panelBlock = page.slice(page.indexOf('function StrategyTrackingPanel'), page.indexOf('function StrategyTrackingCard'));
+  assert.doesNotMatch(panelBlock, /运行策略追踪/);
+  assert.doesNotMatch(panelBlock, /onRun/);
   assert.doesNotMatch(page, /strategyOptionLabel|未发布/);
   assert.doesNotMatch(page, /disabled=\{isPending/);
   assert.doesNotMatch(page, /<select\b/i);
   assert.doesNotMatch(page, /<input[^>]+type=["']checkbox["']/i);
+});
+
+test('tabs component supports a right aligned action slot', () => {
+  const tabs = read('design/Tabs.tsx');
+
+  assert.match(tabs, /actions\?: ReactNode/);
+  assert.match(tabs, /tabs-actions/);
 });
 
 test('intraday API exposes read and update endpoints for strategy tracking', () => {
