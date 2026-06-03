@@ -18,7 +18,7 @@ from backend.app.db import Database
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 MAX_AGE_DAYS = 14
-PROMPT_CATEGORY_LIMIT = {"tech": 80, "finance": 80, "politics": 80}
+PROMPT_CATEGORY_LIMIT = {"tech": 25, "finance": 20, "politics": 15}
 ARTICLE_FLOW_CATEGORY_LIMIT = 80
 CATEGORY_NAMES = {"tech": "科技", "finance": "财经", "politics": "时政"}
 ENTERTAINMENT_KEYWORDS = (
@@ -62,10 +62,9 @@ daily_overview: 150-220 字总览，覆盖科技、财经、时政；
 tech_briefs: 3-5 条；
 finance_briefs: 3-5 条；
 politics_briefs: 2-3 条；
-article_flow: 对象，包含 tech、finance、politics 三个数组。每个数组尽量覆盖输入候选中该类别所有有价值条目，不要只挑少数精编；每条包含 title、url、source、summary、published_at、importance；
 editor_note: 30-60 字中性短评；
 keywords: 5-8 个关键词。
-每条 brief 与 article_flow 条目都包含 title、url、source、summary、published_at、importance。url 必须从输入原样复制，published_at 必须从候选条目的 published 原样复制，不能编造。相同主题合并，英文内容必须翻译成中文，中文内容也要整理成克制清楚的中文标题和摘要，摘要只写事实，不要 markdown，不要代码围栏。
+每条 brief 包含 title、url、source、summary、importance。url 必须从输入原样复制，不能编造。相同主题合并，英文内容必须翻译成中文，标题克制、摘要只写事实，不要 markdown，不要代码围栏。
 严禁选择娱乐、影视、体育、明星、票房、社会猎奇新闻，除非它与上市公司、重大资本市场事件或政策事件直接相关。"""
 
 
@@ -110,7 +109,7 @@ class DailyBriefService:
             return False
         payload = _brief_payload(brief)
         if brief.get("llm_model") != "fallback":
-            return payload.get("article_flow_source") != "llm"
+            return not bool(payload.get("llm_used", True))
         error_message = str(brief.get("error_message") or "")
         return "未配置 LLM API" in error_message or "Client error '400 Bad Request'" in error_message
 
