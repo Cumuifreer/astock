@@ -8,6 +8,7 @@ import { Button } from '../../design/Button';
 import { Badge } from '../../design/Badge';
 import { CheckTile } from '../../design/CheckTile';
 import { useToast } from '../../design/Toast';
+import { useHeavyTaskLock } from '../../hooks/useHeavyTaskLock';
 import { useTaskResultQuery } from '../../hooks/useTaskResultQuery';
 import { strategySummary } from '../../utils/strategy';
 import { formatRatio, formatRatioPercent, toNumber } from '../../utils/format';
@@ -25,6 +26,7 @@ export function SignalEvaluation({
   onRunStarted: (runId: string) => void;
 }) {
   const { showToast } = useToast();
+  const taskLock = useHeavyTaskLock();
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState(todayISO());
   const [step, setStep] = useState('5');
@@ -66,7 +68,7 @@ export function SignalEvaluation({
           <h2>信号评估</h2>
           <p>{strategyName} · {strategySummary(config)}</p>
         </div>
-        <Button disabled={mutation.isPending || !config} icon={<Play size={16} />} onClick={() => mutation.mutate()} variant="primary">
+        <Button disabled={taskLock.locked || mutation.isPending || !config} icon={<Play size={16} />} onClick={() => mutation.mutate()} variant="primary">
           运行评估
         </Button>
       </div>

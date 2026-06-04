@@ -66,6 +66,7 @@ class Settings:
     tushare_token: str = os.getenv("ASHARE_TUSHARE_TOKEN") or os.getenv("TUSHARE_TOKEN", "")
     tushare_http_url: str = os.getenv("ASHARE_TUSHARE_HTTP_URL", "http://101.35.233.113:8020/")
     tushare_timeout_seconds: int = int(os.getenv("ASHARE_TUSHARE_TIMEOUT_SECONDS", "60"))
+    analysis_batch_size: int = int(os.getenv("ASHARE_ANALYSIS_BATCH_SIZE", "300"))
 
 
 settings = Settings()

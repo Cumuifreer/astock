@@ -11,6 +11,7 @@ import { Select } from '../../design/Select';
 import { Segmented } from '../../design/Segmented';
 import { useToast } from '../../design/Toast';
 import { useBootstrap } from '../../hooks/useBootstrap';
+import { useHeavyTaskLock } from '../../hooks/useHeavyTaskLock';
 import { useStrategyDraft } from '../../hooks/useStrategyDraft';
 import { composeStrategyConfig, defaultStrategyRule } from '../../utils/strategy';
 import { IndicatorMatrix } from './IndicatorMatrix';
@@ -21,6 +22,7 @@ const defaultStrategyKey = ['default', 'strategy'].join('_');
 export function StrategyPage() {
   const bootstrap = useBootstrap();
   const queryClient = useQueryClient();
+  const taskLock = useHeavyTaskLock();
   const presetId = useStrategyDraft((state) => state.presetId);
   const draftName = useStrategyDraft((state) => state.name);
   const draftConfig = useStrategyDraft((state) => state.config);
@@ -222,7 +224,7 @@ export function StrategyPage() {
               <Button disabled={deleteMutation.isPending} icon={<Trash2 size={16} />} onClick={handleDelete} variant="danger">
                 删除
               </Button>
-              <Button disabled={runMutation.isPending} icon={<Play size={16} />} onClick={() => runMutation.mutate()} variant="primary">
+              <Button disabled={taskLock.locked || runMutation.isPending} icon={<Play size={16} />} onClick={() => runMutation.mutate()} variant="primary">
                 运行当前策略
               </Button>
             </div>

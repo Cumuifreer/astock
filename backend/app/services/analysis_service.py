@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import ctypes
+import gc
 import json
 import math
+import os
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
+from backend.app.config import settings
 from backend.app.db import Database
 from backend.app.services.indicator_registry import INDICATOR_BY_ID
 from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
@@ -2075,8 +2079,10 @@ def _emit_analysis_progress(progress: Optional[AnalysisProgress], stage: str, pr
 
 
 class AnalysisService:
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, batch_size: Optional[int] = None):
         self.db = db
+        configured_size = batch_size if batch_size is not None else settings.analysis_batch_size
+        self.batch_size = max(1, int(configured_size or 300))
 
     def run(
         self,
@@ -2157,32 +2163,11 @@ class AnalysisService:
     ) -> pd.DataFrame:
         target_date = _date_value(as_of_date) if as_of_date else None
         _emit_analysis_progress(progress, "读取本地行情", 1)
-        if target_date:
-            bars = pd.DataFrame(
-                self.db.query(
-                    """
-                    SELECT h.*, b.name, b.is_st AS basic_is_st, b.suspended
-                    FROM historical_bars h
-                    LEFT JOIN stock_basic b USING (code)
-                    WHERE h.date >= ? AND h.date <= ?
-                    ORDER BY h.code, h.date
-                    """,
-                    [target_date - timedelta(days=380), target_date],
-                )
-            )
-        else:
-            bars = pd.DataFrame(
-                self.db.query(
-                    """
-                    SELECT h.*, b.name, b.is_st AS basic_is_st, b.suspended
-                    FROM historical_bars h
-                    LEFT JOIN stock_basic b USING (code)
-                    WHERE h.date >= current_date - INTERVAL 260 DAY
-                    ORDER BY h.code, h.date
-                    """
-                )
-            )
-        if bars.empty:
+        analysis_date = target_date or self._latest_history_date()
+        if analysis_date is None:
+            return pd.DataFrame()
+        codes = self._history_codes(target_date)
+        if not codes:
             return pd.DataFrame()
         _emit_analysis_progress(progress, "合并快照与市值", 2)
         if target_date:
@@ -2243,89 +2228,212 @@ class AnalysisService:
                 )
             )
         _emit_analysis_progress(progress, "计算相对强弱", 3)
-        rps_scores = compute_rps_scores(bars[["code", "date", "close"]], windows=(20, 60, 120))
+        rps_scores = self._compute_rps_scores_from_db(target_date, windows=(20, 60, 120))
         _emit_analysis_progress(progress, "计算技术形态", 4)
         output = []
         analysis_engines = set(strategy.get("analysis_engines") or [])
-        analysis_date = target_date or _date_value(bars["date"].max())
-        stock_count = int(bars["code"].nunique()) if "code" in bars else 0
-        for index, (code, group) in enumerate(bars.groupby("code"), start=1):
-            if progress and (index == 1 or index % 250 == 0 or index == stock_count):
-                _emit_analysis_progress(progress, f"计算技术形态 {index}/{stock_count}", 4)
-            group = group.sort_values("date")
-            latest_bar = group.iloc[-1].to_dict()
-            latest_bar_date = _date_value(latest_bar.get("date"))
-            if target_date and latest_bar_date != target_date:
+        stock_count = len(codes)
+        processed = 0
+        for batch_codes in _chunks(codes, self.batch_size):
+            bars = self._history_bars_frame(batch_codes, target_date)
+            if bars.empty:
+                processed += len(batch_codes)
                 continue
-            if not target_date and analysis_date and latest_bar_date != analysis_date:
-                continue
-            snapshot = _first_record(snapshots, code)
-            float_record = _first_record(float_values, code)
-            latest_price = _first_number((snapshot or {}).get("latest_price"), latest_bar.get("close"))
-            ma_short_window = int(strategy.get("ma_short_window") or 20)
-            ma_long_window = int(strategy.get("ma_long_window") or 60)
-            closes = pd.to_numeric(group["close"], errors="coerce").dropna()
-            volumes = pd.to_numeric(group["volume"], errors="coerce").dropna()
-            ma_short = float(closes.tail(ma_short_window).mean()) if len(closes) >= ma_short_window else None
-            ma_long = float(closes.tail(ma_long_window).mean()) if len(closes) >= ma_long_window else None
-            prev_volume_mean = float(volumes.iloc[:-1].tail(20).mean()) if len(volumes) > 1 else None
-            latest_volume = _first_number((snapshot or {}).get("volume"), latest_bar.get("volume"))
-            volume_ratio = (
-                latest_volume / prev_volume_mean
-                if latest_volume is not None and prev_volume_mean is not None and prev_volume_mean > 0
-                else None
-            )
-            ma_distance = (
-                abs(latest_price - ma_short) / ma_short
-                if latest_price is not None and ma_short is not None and ma_short > 0
-                else None
-            )
-            float_mv = (
-                _first_number(
-                    (float_record or {}).get("float_market_value"),
-                    (snapshot or {}).get("float_market_value"),
+            for code, group in bars.groupby("code"):
+                processed += 1
+                if progress and (processed == 1 or processed % 250 == 0 or processed == stock_count):
+                    _emit_analysis_progress(progress, f"计算技术形态 {processed}/{stock_count}", 4)
+                group = group.sort_values("date")
+                latest_bar = group.iloc[-1].to_dict()
+                latest_bar_date = _date_value(latest_bar.get("date"))
+                if target_date and latest_bar_date != target_date:
+                    continue
+                if not target_date and analysis_date and latest_bar_date != analysis_date:
+                    continue
+                snapshot = _first_record(snapshots, code)
+                float_record = _first_record(float_values, code)
+                latest_price = _first_number((snapshot or {}).get("latest_price"), latest_bar.get("close"))
+                ma_short_window = int(strategy.get("ma_short_window") or 20)
+                ma_long_window = int(strategy.get("ma_long_window") or 60)
+                closes = pd.to_numeric(group["close"], errors="coerce").dropna()
+                volumes = pd.to_numeric(group["volume"], errors="coerce").dropna()
+                ma_short = float(closes.tail(ma_short_window).mean()) if len(closes) >= ma_short_window else None
+                ma_long = float(closes.tail(ma_long_window).mean()) if len(closes) >= ma_long_window else None
+                prev_volume_mean = float(volumes.iloc[:-1].tail(20).mean()) if len(volumes) > 1 else None
+                latest_volume = _first_number((snapshot or {}).get("volume"), latest_bar.get("volume"))
+                volume_ratio = (
+                    latest_volume / prev_volume_mean
+                    if latest_volume is not None and prev_volume_mean is not None and prev_volume_mean > 0
+                    else None
                 )
-            )
-            platform_metrics = compute_platform_breakout_metrics(group, strategy)
-            if "platform_setup" in analysis_engines:
-                platform_metrics.update(compute_platform_setup_metrics(group, strategy))
-            if "trend_resonance" in analysis_engines:
-                platform_metrics.update(compute_trend_resonance_metrics(group, strategy))
-            output.append(
-                {
-                    "code": code,
-                    "name": (snapshot or {}).get("name") or latest_bar.get("name") or code,
-                    "bar_date": _date_text(latest_bar_date),
-                    "latest_price": latest_price,
-                    "pct_chg": _first_number((snapshot or {}).get("pct_chg"), latest_bar.get("pct_chg")),
-                    "amount": _first_number((snapshot or {}).get("amount"), latest_bar.get("amount")),
-                    "volume": latest_volume,
-                    "turnover_rate": _first_number((snapshot or {}).get("turnover_rate"), latest_bar.get("turn")),
-                    "amplitude": compute_amplitude(
-                        safe_float(latest_bar.get("high")),
-                        safe_float(latest_bar.get("low")),
-                        safe_float(latest_bar.get("prev_close")),
-                    ),
-                    "rps20": rps_scores.get(code, {}).get("rps20"),
-                    "rps60": rps_scores.get(code, {}).get("rps60"),
-                    "rps120": rps_scores.get(code, {}).get("rps120"),
-                    "ma_short": ma_short,
-                    "ma_long": ma_long,
-                    "float_market_value": float_mv,
-                    "volume_ratio": volume_ratio,
-                    "ma_distance": ma_distance,
-                    "is_st": _truthy_flag(latest_bar.get("is_st")) or _truthy_flag(latest_bar.get("basic_is_st")),
-                    "suspended": str(latest_bar.get("tradestatus")) == "0" or _truthy_flag(latest_bar.get("suspended")),
-                    "data_sources": {
-                        "history": latest_bar.get("source"),
-                        "snapshot": (snapshot or {}).get("source"),
-                        "float_market_value": (float_record or {}).get("source"),
+                ma_distance = (
+                    abs(latest_price - ma_short) / ma_short
+                    if latest_price is not None and ma_short is not None and ma_short > 0
+                    else None
+                )
+                float_mv = (
+                    _first_number(
+                        (float_record or {}).get("float_market_value"),
+                        (snapshot or {}).get("float_market_value"),
+                    )
+                )
+                platform_metrics = compute_platform_breakout_metrics(group, strategy)
+                if "platform_setup" in analysis_engines:
+                    platform_metrics.update(compute_platform_setup_metrics(group, strategy))
+                if "trend_resonance" in analysis_engines:
+                    platform_metrics.update(compute_trend_resonance_metrics(group, strategy))
+                output.append(
+                    {
+                        "code": code,
+                        "name": (snapshot or {}).get("name") or latest_bar.get("name") or code,
+                        "bar_date": _date_text(latest_bar_date),
+                        "latest_price": latest_price,
+                        "pct_chg": _first_number((snapshot or {}).get("pct_chg"), latest_bar.get("pct_chg")),
+                        "amount": _first_number((snapshot or {}).get("amount"), latest_bar.get("amount")),
+                        "volume": latest_volume,
+                        "turnover_rate": _first_number((snapshot or {}).get("turnover_rate"), latest_bar.get("turn")),
+                        "amplitude": compute_amplitude(
+                            safe_float(latest_bar.get("high")),
+                            safe_float(latest_bar.get("low")),
+                            safe_float(latest_bar.get("prev_close")),
+                        ),
+                        "rps20": rps_scores.get(code, {}).get("rps20"),
+                        "rps60": rps_scores.get(code, {}).get("rps60"),
+                        "rps120": rps_scores.get(code, {}).get("rps120"),
+                        "ma_short": ma_short,
+                        "ma_long": ma_long,
+                        "float_market_value": float_mv,
+                        "volume_ratio": volume_ratio,
+                        "ma_distance": ma_distance,
+                        "is_st": _truthy_flag(latest_bar.get("is_st")) or _truthy_flag(latest_bar.get("basic_is_st")),
+                        "suspended": str(latest_bar.get("tradestatus")) == "0" or _truthy_flag(latest_bar.get("suspended")),
+                        "data_sources": {
+                            "history": latest_bar.get("source"),
+                            "snapshot": (snapshot or {}).get("source"),
+                            "float_market_value": (float_record or {}).get("source"),
+                        },
+                        **platform_metrics,
                     },
-                    **platform_metrics,
-                }
-            )
+                )
+            del bars
+            _release_analysis_memory()
         frame = self._enrich_tushare_features(pd.DataFrame(output), target_date)
         return self._enrich_theme_metrics(frame, target_date)
+
+    def _latest_history_date(self) -> Optional[date]:
+        value = self.db.scalar(
+            """
+            SELECT MAX(date)
+            FROM historical_bars
+            WHERE date >= current_date - INTERVAL 260 DAY
+            """
+        )
+        return _date_value(value)
+
+    def _history_codes(self, target_date: Optional[date]) -> List[str]:
+        if target_date:
+            rows = self.db.query(
+                """
+                SELECT DISTINCT h.code
+                FROM historical_bars h
+                WHERE h.date >= ? AND h.date <= ?
+                ORDER BY h.code
+                """,
+                [target_date - timedelta(days=380), target_date],
+            )
+        else:
+            rows = self.db.query(
+                """
+                SELECT DISTINCT h.code
+                FROM historical_bars h
+                WHERE h.date >= current_date - INTERVAL 260 DAY
+                ORDER BY h.code
+                """
+            )
+        return [str(row["code"]) for row in rows if row.get("code")]
+
+    def _history_bars_frame(self, codes: Sequence[str], target_date: Optional[date]) -> pd.DataFrame:
+        if not codes:
+            return pd.DataFrame()
+        placeholders = ", ".join(["?"] * len(codes))
+        if target_date:
+            return pd.DataFrame(
+                self.db.query(
+                    f"""
+                    SELECT h.*, b.name, b.is_st AS basic_is_st, b.suspended
+                    FROM historical_bars h
+                    LEFT JOIN stock_basic b USING (code)
+                    WHERE h.date >= ? AND h.date <= ?
+                      AND h.code IN ({placeholders})
+                    ORDER BY h.code, h.date
+                    """,
+                    [target_date - timedelta(days=380), target_date, *codes],
+                )
+            )
+        return pd.DataFrame(
+            self.db.query(
+                f"""
+                SELECT h.*, b.name, b.is_st AS basic_is_st, b.suspended
+                FROM historical_bars h
+                LEFT JOIN stock_basic b USING (code)
+                WHERE h.date >= current_date - INTERVAL 260 DAY
+                  AND h.code IN ({placeholders})
+                ORDER BY h.code, h.date
+                """,
+                list(codes),
+            )
+        )
+
+    def _compute_rps_scores_from_db(
+        self,
+        target_date: Optional[date],
+        windows: Sequence[int] = (20, 60, 120),
+    ) -> Dict[str, Dict[str, Optional[float]]]:
+        scores: Dict[str, Dict[str, Optional[float]]] = {}
+        for window in windows:
+            rows = self._rps_return_rows(target_date, int(window))
+            if not rows:
+                continue
+            returns = {
+                str(row["code"]): (float(row["end_close"]) - float(row["start_close"])) / float(row["start_close"])
+                for row in rows
+                if row.get("code") and safe_float(row.get("start_close")) and float(row["start_close"]) > 0
+            }
+            if not returns:
+                continue
+            ranked = pd.Series(returns).rank(pct=True) * 100
+            for code, value in ranked.items():
+                scores.setdefault(str(code), {})[f"rps{window}"] = round(float(value), 2)
+        return scores
+
+    def _rps_return_rows(self, target_date: Optional[date], window: int) -> List[Dict[str, Any]]:
+        if target_date:
+            params: Sequence[Any] = [target_date - timedelta(days=380), target_date, window + 1]
+            date_filter = "date >= ? AND date <= ?"
+        else:
+            params = [window + 1]
+            date_filter = "date >= current_date - INTERVAL 260 DAY"
+        return self.db.query(
+            f"""
+            WITH numbered AS (
+                SELECT h.code,
+                       h.date,
+                       h.close,
+                       ROW_NUMBER() OVER (PARTITION BY h.code ORDER BY h.date DESC) AS row_num
+                FROM historical_bars h
+                WHERE {date_filter}
+                  AND h.close IS NOT NULL
+            )
+            SELECT latest.code, latest.close AS end_close, start.close AS start_close
+            FROM numbered latest
+            JOIN numbered start ON latest.code = start.code
+            WHERE latest.row_num = 1
+              AND start.row_num = ?
+              AND start.close > 0
+            ORDER BY latest.code
+            """,
+            params,
+        )
 
     def _enrich_tushare_features(self, frame: pd.DataFrame, as_of_date: Optional[date] = None) -> pd.DataFrame:
         if frame.empty or "code" not in frame:
@@ -2734,6 +2842,22 @@ def _first_record(frame: pd.DataFrame, code: str) -> Optional[Dict[str, Any]]:
     if found.empty:
         return None
     return found.iloc[0].to_dict()
+
+
+def _chunks(values: Sequence[str], size: int) -> Iterable[Sequence[str]]:
+    step = max(1, int(size or 1))
+    for index in range(0, len(values), step):
+        yield values[index : index + step]
+
+
+def _release_analysis_memory() -> None:
+    gc.collect()
+    if os.name != "posix":
+        return
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        return
 
 
 def _analysis_frame_date(frame: pd.DataFrame, as_of_date: Optional[date] = None) -> Optional[date]:

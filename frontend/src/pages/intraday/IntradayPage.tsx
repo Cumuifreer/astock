@@ -26,6 +26,7 @@ import { Switch } from '../../design/Switch';
 import { Tabs } from '../../design/Tabs';
 import { useToast } from '../../design/Toast';
 import { useBootstrap } from '../../hooks/useBootstrap';
+import { useHeavyTaskLock } from '../../hooks/useHeavyTaskLock';
 import type { StrategyPreset } from '../../types';
 import { formatChinaDateTime } from '../../utils/date';
 import { formatMoney, formatPercent, formatRatio, toNumber } from '../../utils/format';
@@ -43,6 +44,7 @@ export function IntradayPage() {
   const bootstrap = useBootstrap();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const taskLock = useHeavyTaskLock();
   const boards = useQuery({
     queryKey: queryKeys.intraday.boards(),
     queryFn: getIntradayBoards,
@@ -145,7 +147,7 @@ export function IntradayPage() {
         </div>
         <Tabs
           actions={
-            <Button disabled={!selectedStrategyId || runTrackingMutation.isPending} icon={<Play size={16} />} onClick={() => runTrackingMutation.mutate()} variant="primary">
+            <Button disabled={!selectedStrategyId || taskLock.locked || runTrackingMutation.isPending} icon={<Play size={16} />} onClick={() => runTrackingMutation.mutate()} variant="primary">
               运行策略追踪
             </Button>
           }

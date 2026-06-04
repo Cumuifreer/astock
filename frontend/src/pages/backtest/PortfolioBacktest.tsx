@@ -7,6 +7,7 @@ import type { StrategyConfig } from '../../types';
 import { Button } from '../../design/Button';
 import { Badge } from '../../design/Badge';
 import { useToast } from '../../design/Toast';
+import { useHeavyTaskLock } from '../../hooks/useHeavyTaskLock';
 import { useTaskResultQuery } from '../../hooks/useTaskResultQuery';
 import { strategySummary } from '../../utils/strategy';
 import { formatMoney, formatRatio, formatRatioPercent, toNumber } from '../../utils/format';
@@ -24,6 +25,7 @@ export function PortfolioBacktest({
   onRunStarted: (runId: string) => void;
 }) {
   const { showToast } = useToast();
+  const taskLock = useHeavyTaskLock();
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState(todayISO());
   const [initialEquity, setInitialEquity] = useState('1000000');
@@ -71,7 +73,7 @@ export function PortfolioBacktest({
           <h2>简化组合模拟</h2>
           <p>{strategyName} · {strategySummary(config)}</p>
         </div>
-        <Button disabled={mutation.isPending || !config} icon={<Play size={16} />} onClick={() => mutation.mutate()} variant="primary">
+        <Button disabled={taskLock.locked || mutation.isPending || !config} icon={<Play size={16} />} onClick={() => mutation.mutate()} variant="primary">
           运行组合回测
         </Button>
       </div>

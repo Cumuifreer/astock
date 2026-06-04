@@ -10,6 +10,7 @@ import { syncToday, startUpdate, getTasks } from '../api/data';
 import { queryKeys } from '../api/queryKeys';
 import { startIntradaySnapshot } from '../api/intraday';
 import { useActiveTaskPolling } from '../hooks/useActiveTaskPolling';
+import { useHeavyTaskLock } from '../hooks/useHeavyTaskLock';
 import { useTaskTerminalInvalidation } from '../hooks/useTaskTerminalInvalidation';
 import type { TaskRun } from '../types';
 import { normalizeRows } from '../utils/metrics';
@@ -31,6 +32,7 @@ export function AppShell() {
       hasActiveRows(normalizeRows<TaskRun>(query.state.data as { rows?: TaskRun[] } | TaskRun[] | undefined)) ? activeRefreshInterval : standbyRefreshInterval,
   });
   const activeRows = normalizeRows<TaskRun>(activeTasks.data);
+  const taskLock = useHeavyTaskLock(activeRows);
   const taskActive = useActiveTaskPolling(null, activeRows, activeRefreshInterval);
   const recentTasks = useQuery({
     queryKey: queryKeys.tasks.recent(),
@@ -124,7 +126,7 @@ export function AppShell() {
             <p>{selectedRoute.description}</p>
           </div>
           <div className="topbar-actions">
-            <Button disabled={busy} icon={<RefreshCw size={16} />} onClick={() => syncTodayMutation.mutate()} variant="primary">
+            <Button disabled={taskLock.locked || busy} icon={<RefreshCw size={16} />} onClick={() => syncTodayMutation.mutate()} variant="primary">
               同步今日数据
             </Button>
             <Popover.Root>
@@ -139,13 +141,13 @@ export function AppShell() {
                     <Button disabled={busy} onClick={openDataHealth} variant="ghost">
                       打开数据中心
                     </Button>
-                    <Button disabled={busy} onClick={() => marketEnvMutation.mutate()} variant="ghost">
+                    <Button disabled={taskLock.locked || busy} onClick={() => marketEnvMutation.mutate()} variant="ghost">
                       重算市场环境
                     </Button>
-                    <Button disabled={busy} onClick={() => sampleMutation.mutate()} variant="ghost">
+                    <Button disabled={taskLock.locked || busy} onClick={() => sampleMutation.mutate()} variant="ghost">
                       盘中采样一次
                     </Button>
-                    <Button disabled={busy} onClick={() => forceUpdateMutation.mutate()} variant="ghost">
+                    <Button disabled={taskLock.locked || busy} onClick={() => forceUpdateMutation.mutate()} variant="ghost">
                       强制全量更新
                     </Button>
                   </div>
