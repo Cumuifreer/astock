@@ -11,16 +11,25 @@ function read(path) {
   return readFileSync(resolve(root, path), 'utf8');
 }
 
-test('candidate result actions sit above the AI evidence grid', () => {
+test('candidate result actions sit in the results toolbar before the candidate table', () => {
+  const results = read('pages/results/ResultsPage.tsx');
+  const toolbarIndex = results.indexOf('aria-label="候选操作"');
+  const tableIndex = results.indexOf('<CandidateTable');
+
+  assert.ok(toolbarIndex > 0, 'candidate actions should live in the results action row');
+  assert.ok(tableIndex > 0, 'candidate table should still render');
+  assert.ok(toolbarIndex < tableIndex, 'candidate actions should appear before the candidate table');
+  assert.match(results, /打开K线[\s\S]*加入观察池/);
+  assert.doesNotMatch(results, /重新运行|导出|rerunMutation|exportCandidates|runStrategy/);
+});
+
+test('candidate evidence panel stays focused on explanation content', () => {
   const panel = read('pages/results/CandidateEvidencePanel.tsx');
   const candidateRender = panel.slice(panel.indexOf('const watchPlan'), panel.indexOf('function normalizeAiSummary'));
-  const actionIndex = candidateRender.indexOf('aria-label="候选操作"');
   const gridIndex = candidateRender.indexOf('className="grid-2 evidence-grid"');
 
-  assert.ok(actionIndex > 0, 'candidate action row should be part of the header area');
   assert.ok(gridIndex > 0, 'evidence grid should still render');
-  assert.ok(actionIndex < gridIndex, 'K-line and watchlist actions should appear before evidence blocks');
-  assert.match(candidateRender, /打开K线[\s\S]*加入观察池/);
+  assert.doesNotMatch(candidateRender, /aria-label="候选操作"|打开K线|加入观察池|addWatchlistItems/);
   assert.doesNotMatch(candidateRender, /aria-label="可操作动作"/);
 });
 

@@ -139,7 +139,8 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.doesNotMatch(read('pages/results/CandidateEvidencePanel.tsx'), /未配置模型，以下先按规则证据生成解释。/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /入选理由/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /风险提示/);
-  assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /候选操作/);
+  assert.match(read('pages/results/ResultsPage.tsx'), /候选操作/);
+  assert.doesNotMatch(read('pages/results/CandidateEvidencePanel.tsx'), /候选操作/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /异动榜/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /低吸榜/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /风险榜/);

@@ -1,23 +1,17 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import type { Candidate } from '../../types';
 import { Badge } from '../../design/Badge';
-import { Button } from '../../design/Button';
 import { getCandidateAiSummary } from '../../api/strategy';
 import { queryKeys } from '../../api/queryKeys';
 import type { CandidateAiSummary, CandidateAiSummaryContent, CandidateAiSummaryStatus } from '../../api/strategy';
-import { addWatchlistItems } from '../../api/watchlist';
-import { useToast } from '../../design/Toast';
 import { formatMoney, formatPercent, formatRatio, formatRatioPercent } from '../../utils/format';
 
 type CandidateEvidencePanelProps = {
   candidate: Candidate | null;
   runId?: string | null;
-  strategyName?: string;
-  analysisDate?: string | null;
 };
 
-export function CandidateEvidencePanel({ candidate, runId, strategyName, analysisDate }: CandidateEvidencePanelProps) {
-  const { showToast } = useToast();
+export function CandidateEvidencePanel({ candidate, runId }: CandidateEvidencePanelProps) {
   const ruleResults = candidate ? extractRuleResults(candidate) : [];
   const matchedRules = ruleResults
     .filter((item) => item.matched)
@@ -40,33 +34,6 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName, analysi
     refetchInterval: (query) => (isAiSummaryActive(query.state.data as CandidateAiSummary | undefined) ? 2600 : false),
     staleTime: 30 * 1000,
   });
-  const addMutation = useMutation({
-    mutationFn: () =>
-      candidate
-        ? addWatchlistItems({
-            source_type: 'strategy',
-            source_label: strategyName || '未命名策略',
-            source_ref: runId || null,
-            batch_date: analysisDate || undefined,
-            items: [
-              {
-                code: candidate.code,
-                name: candidate.name,
-                entry_date: analysisDate || undefined,
-                entry_price: candidate.latest_price,
-                signal_score: candidate.signal_score,
-                signal_type: candidate.signal_type,
-                reasons: candidate.reasons || [],
-                metrics: candidate.metrics || {},
-                hypothesis: (candidate.reasons || []).slice(0, 2).join('；'),
-                invalidation_rule: '跌破最近平台或策略风险项重新命中',
-              },
-            ],
-          })
-        : Promise.resolve({}),
-    onSuccess: () => showToast('已加入观察池', 'success'),
-  });
-
   if (!candidate) {
     return (
       <section className="surface pad">
@@ -109,19 +76,7 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName, analysi
             {candidate.code} · 总分 {formatRatio(candidate.signal_score)}
           </p>
         </div>
-        <div className="candidate-action-strip">
-          <Badge tone={aiReady ? 'info' : 'watch'}>{aiReady ? '自然语言解释' : '规则解释'}</Badge>
-          <div className="button-row" aria-label="候选操作">
-            {candidate.chart_url ? (
-              <Button onClick={() => window.open(candidate.chart_url, '_blank', 'noopener,noreferrer')} variant="secondary">
-                打开K线
-              </Button>
-            ) : null}
-            <Button disabled={addMutation.isPending} onClick={() => addMutation.mutate()} variant="primary">
-              加入观察池
-            </Button>
-          </div>
-        </div>
+        <Badge tone={aiReady ? 'info' : 'watch'}>{aiReady ? '自然语言解释' : '规则解释'}</Badge>
       </div>
       <div className="grid-2 evidence-grid">
         <EvidenceBlock title="AI 解读" items={primaryExplanation} />
