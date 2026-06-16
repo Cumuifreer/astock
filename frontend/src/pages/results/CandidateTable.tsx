@@ -8,20 +8,24 @@ import { formatMoney, formatPercent, formatRatio } from '../../utils/format';
 type CandidateTableProps = {
   candidates: Candidate[];
   observedCodes: Set<string>;
+  selectedCode?: string;
   onSelect: (candidate: Candidate) => void;
 };
 
-export function CandidateTable({ candidates, observedCodes, onSelect }: CandidateTableProps) {
+export function CandidateTable({ candidates, observedCodes, selectedCode, onSelect }: CandidateTableProps) {
   const columns = useMemo<Array<ColumnDef<Candidate, unknown>>>(
     () => [
       { header: '排名', accessorKey: 'rank', cell: ({ row }) => <strong>{row.original.rank}</strong> },
       {
         header: '代码 / 名称',
-        cell: ({ row }) => (
-          <button className="chip-button" type="button" onClick={() => onSelect(row.original)}>
-            {row.original.code} · {row.original.name}
-          </button>
-        ),
+        cell: ({ row }) => {
+          const isSelected = row.original.code === selectedCode;
+          return (
+            <button className={`chip-button ${isSelected ? 'active' : ''}`.trim()} type="button" aria-pressed={isSelected} onClick={() => onSelect(row.original)}>
+              {row.original.code} · {row.original.name}
+            </button>
+          );
+        },
       },
       { header: '总分', accessorKey: 'signal_score', cell: ({ row }) => <Badge tone="info">{formatRatio(row.original.signal_score)}</Badge> },
       { header: '涨跌幅', accessorKey: 'pct_chg', cell: ({ row }) => formatPercent(row.original.pct_chg) },
@@ -40,10 +44,15 @@ export function CandidateTable({ candidates, observedCodes, onSelect }: Candidat
         ),
       },
     ],
-    [observedCodes, onSelect],
+    [observedCodes, onSelect, selectedCode],
   );
   return (
-    <DataTable data={candidates} columns={columns} />
+    <DataTable
+      data={candidates}
+      columns={columns}
+      getRowClassName={(candidate) => candidate.code === selectedCode ? 'selected-row' : undefined}
+      onRowClick={onSelect}
+    />
   );
 }
 

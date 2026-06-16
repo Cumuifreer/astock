@@ -156,6 +156,11 @@ export function ResultsPage() {
           <Metric label="策略" value={activeStrategyName} />
         </div>
         <div className="button-row" aria-label="候选操作" style={{ margin: '14px 0' }}>
+          {selectedCandidate ? (
+            <span className="selected-candidate-pill" aria-live="polite">
+              当前：{selectedCandidate.code} · {selectedCandidate.name}
+            </span>
+          ) : null}
           <Button
             disabled={!selectedCandidate?.chart_url}
             onClick={() => selectedCandidate?.chart_url && window.open(selectedCandidate.chart_url, '_blank', 'noopener,noreferrer')}
@@ -170,7 +175,7 @@ export function ResultsPage() {
         {reportDetail.isLoading ? (
           <LoadingState label="读取历史报告" />
         ) : filteredCandidates.length ? (
-          <CandidateTable candidates={filteredCandidates} observedCodes={observedCodes} onSelect={setSelected} />
+          <CandidateTable candidates={filteredCandidates} observedCodes={observedCodes} selectedCode={selectedCandidate?.code} onSelect={setSelected} />
         ) : (
           <EmptyState title="暂无候选" description="运行策略后，这里会展示候选表和结构化证据。" />
         )}

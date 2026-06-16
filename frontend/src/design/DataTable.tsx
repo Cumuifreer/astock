@@ -10,10 +10,20 @@ type DataTableProps<TData extends object> = {
   columns: Array<ColumnDef<TData, unknown>>;
   empty?: ReactNode;
   estimateRowHeight?: number;
+  getRowClassName?: (row: TData) => string | undefined;
+  onRowClick?: (row: TData) => void;
   renderSubRow?: (row: TData) => ReactNode;
 };
 
-export function DataTable<TData extends object>({ data, columns, empty, estimateRowHeight = 48, renderSubRow }: DataTableProps<TData>) {
+export function DataTable<TData extends object>({
+  data,
+  columns,
+  empty,
+  estimateRowHeight = 48,
+  getRowClassName,
+  onRowClick,
+  renderSubRow,
+}: DataTableProps<TData>) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const table = useReactTable({
     data,
@@ -64,7 +74,7 @@ export function DataTable<TData extends object>({ data, columns, empty, estimate
             const subRow = renderSubRow?.(row.original);
             return (
               <Fragment key={row.id}>
-                <tr>
+                <tr className={getRowClassName?.(row.original)} onClick={() => onRowClick?.(row.original)}>
                   {row.getVisibleCells().map((cell) => (
                     <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
                   ))}

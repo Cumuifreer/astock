@@ -628,6 +628,18 @@ button {
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
 }
 
+.data-table tr.selected-row td {
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.1), rgba(239, 246, 255, 0.72));
+}
+
+.data-table tr.selected-row td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.data-table tr.selected-row .chip-button {
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.08);
+}
+
 .watchlist-note-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1865,6 +1877,19 @@ button {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.selected-candidate-pill {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 6px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .hero-panel {
