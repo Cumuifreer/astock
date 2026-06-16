@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, MoreHorizontal, RefreshCw } from 'lucide-react';
+import { ChevronDown, MoreHorizontal } from 'lucide-react';
 import { routes, type RouteId, findRoute } from './routes';
 import { Button } from '../design/Button';
 import { Badge } from '../design/Badge';
 import { useToast } from '../design/Toast';
-import { syncToday, startUpdate, getTasks } from '../api/data';
+import { startUpdate, getTasks } from '../api/data';
 import { queryKeys } from '../api/queryKeys';
 import { startIntradaySnapshot } from '../api/intraday';
 import { useActiveTaskPolling } from '../hooks/useActiveTaskPolling';
@@ -57,16 +57,6 @@ export function AppShell() {
     showToast(error instanceof Error ? error.message : '任务启动失败', 'danger');
   };
 
-  const syncTodayMutation = useMutation({
-    mutationFn: syncToday,
-    onSuccess: () => handleTaskStarted(),
-    onError: handleTaskError,
-  });
-  const forceUpdateMutation = useMutation({
-    mutationFn: () => startUpdate({ mode: 'full', force: true }),
-    onSuccess: () => handleTaskStarted('强制全量更新已开始，可在任务状态查看进度'),
-    onError: handleTaskError,
-  });
   const marketEnvMutation = useMutation({
     mutationFn: () => startUpdate({ mode: 'market_environment' }),
     onSuccess: () => handleTaskStarted('市场环境重算已开始，可在任务状态查看进度'),
@@ -78,7 +68,7 @@ export function AppShell() {
     onError: handleTaskError,
   });
 
-  const busy = syncTodayMutation.isPending || forceUpdateMutation.isPending || marketEnvMutation.isPending || sampleMutation.isPending;
+  const busy = marketEnvMutation.isPending || sampleMutation.isPending;
 
   useEffect(() => {
     const handleHashChange = () => setActiveRoute(parseRouteHash(window.location.hash));
@@ -126,9 +116,6 @@ export function AppShell() {
             <p>{selectedRoute.description}</p>
           </div>
           <div className="topbar-actions">
-            <Button disabled={taskLock.locked || busy} icon={<RefreshCw size={16} />} onClick={() => syncTodayMutation.mutate()} variant="primary">
-              同步今日数据
-            </Button>
             <Popover.Root>
               <Popover.Trigger asChild>
                 <Button aria-label="更多操作" icon={<MoreHorizontal size={16} />} variant="ghost">
@@ -146,9 +133,6 @@ export function AppShell() {
                     </Button>
                     <Button disabled={taskLock.locked || busy} onClick={() => sampleMutation.mutate()} variant="ghost">
                       盘中采样一次
-                    </Button>
-                    <Button disabled={taskLock.locked || busy} onClick={() => forceUpdateMutation.mutate()} variant="ghost">
-                      强制全量更新
                     </Button>
                   </div>
                 </Popover.Content>

@@ -106,7 +106,8 @@ test('light design tokens and product navigation are present', () => {
   for (const label of ['市场总览', '策略选股', '分析结果', '盘中雷达', '观察池', '回测', '数据中心', '任务状态']) {
     assert.match(shell, new RegExp(label));
   }
-  assert.match(shell, /syncToday/);
+  assert.doesNotMatch(shell, /syncToday/);
+  assert.doesNotMatch(shell, /同步今日数据|强制全量更新/);
   assert.doesNotMatch(shell, /runStrategy/);
   assert.doesNotMatch(shell, /运行策略/);
   assert.match(shell, /showToast/);
@@ -138,7 +139,7 @@ test('core pages cover the product-grade workbench requirements', () => {
   assert.doesNotMatch(read('pages/results/CandidateEvidencePanel.tsx'), /未配置模型，以下先按规则证据生成解释。/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /入选理由/);
   assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /风险提示/);
-  assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /可操作动作/);
+  assert.match(read('pages/results/CandidateEvidencePanel.tsx'), /候选操作/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /异动榜/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /低吸榜/);
   assert.match(read('pages/intraday/IntradayPage.tsx'), /风险榜/);

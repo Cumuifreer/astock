@@ -765,11 +765,35 @@ export interface RuntimeHealth {
     latest_slot: RuntimeSlot | null;
     slots: RuntimeSlot[];
   };
+  daily_update_scheduler?: {
+    enabled: boolean;
+    timezone: string;
+    now: string;
+    is_weekend: boolean;
+    poll_seconds: number;
+    next_slot: RuntimeDailyUpdateSlot | null;
+    slot_count: number;
+    completed_count: number;
+    remaining_count: number;
+    latest_slot: RuntimeDailyUpdateSlot | null;
+    slots: RuntimeDailyUpdateSlot[];
+  };
   llm?: {
     configured: boolean;
     model: string;
     url_host: string;
   };
+}
+
+export interface RuntimeDailyUpdateSlot {
+  time: string;
+  scheduled_at: string;
+  status: string;
+  task_id: string | null;
+  task_status: string | null;
+  stage: string | null;
+  error_message: string | null;
+  finished_at: string | null;
 }
 
 export interface Candidate {

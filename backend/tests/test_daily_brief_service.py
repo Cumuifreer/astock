@@ -25,7 +25,7 @@ def test_daily_brief_generation_fetches_news_and_uses_llm_when_configured(tmp_pa
         "title": "AI infrastructure funding expands",
         "url": "https://example.com/ai-funding",
         "excerpt": "New funding for AI infrastructure.",
-        "published_at": datetime(2026, 5, 23, 8, 0),
+        "published_at": datetime.utcnow(),
     }
 
     monkeypatch.setattr(service, "_fetch_source", lambda source: [article])
@@ -65,7 +65,7 @@ def test_daily_brief_generation_fetches_news_and_uses_llm_when_configured(tmp_pa
         },
     )
 
-    result = service.generate(report_date=date(2026, 5, 23))
+    result = service.generate(report_date=article["published_at"].date())
 
     assert result["status"] == "completed_full"
     assert result["llm_used"] is True
@@ -90,7 +90,7 @@ def test_daily_brief_llm_success_can_use_backend_article_flow(tmp_path, monkeypa
         "title": "AI infrastructure funding expands",
         "url": "https://example.com/ai-funding",
         "excerpt": "New funding for AI infrastructure.",
-        "published_at": datetime(2026, 5, 23, 8, 0),
+        "published_at": datetime.utcnow(),
     }
 
     monkeypatch.setattr(service, "_fetch_source", lambda source: [article])
@@ -116,9 +116,10 @@ def test_daily_brief_llm_success_can_use_backend_article_flow(tmp_path, monkeypa
         },
     )
 
-    result = service.generate(report_date=date(2026, 5, 23))
+    report_date = article["published_at"].date()
+    result = service.generate(report_date=report_date)
     latest = DataService(db).latest_daily_brief()
-    payload = json.loads(db.scalar("SELECT payload_json FROM daily_briefs WHERE id = ?", ["brief-20260523"]) or "{}")
+    payload = json.loads(db.scalar("SELECT payload_json FROM daily_briefs WHERE id = ?", [f"brief-{report_date:%Y%m%d}"]) or "{}")
 
     assert result["llm_used"] is True
     assert result["status"] == "completed_full"

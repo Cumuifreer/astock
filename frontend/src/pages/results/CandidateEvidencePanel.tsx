@@ -109,23 +109,25 @@ export function CandidateEvidencePanel({ candidate, runId, strategyName, analysi
             {candidate.code} · 总分 {formatRatio(candidate.signal_score)}
           </p>
         </div>
-        <Badge tone={aiReady ? 'info' : 'watch'}>{aiReady ? '自然语言解释' : '规则解释'}</Badge>
+        <div className="candidate-action-strip">
+          <Badge tone={aiReady ? 'info' : 'watch'}>{aiReady ? '自然语言解释' : '规则解释'}</Badge>
+          <div className="button-row" aria-label="候选操作">
+            {candidate.chart_url ? (
+              <Button onClick={() => window.open(candidate.chart_url, '_blank', 'noopener,noreferrer')} variant="secondary">
+                打开K线
+              </Button>
+            ) : null}
+            <Button disabled={addMutation.isPending} onClick={() => addMutation.mutate()} variant="primary">
+              加入观察池
+            </Button>
+          </div>
+        </div>
       </div>
       <div className="grid-2 evidence-grid">
         <EvidenceBlock title="AI 解读" items={primaryExplanation} />
         <EvidenceBlock title="入选理由" items={opportunityItems.length ? opportunityItems : matchedRules} />
         <EvidenceBlock title="风险提示" items={riskItems} />
         <EvidenceBlock title="后续观察" items={watchPlan} />
-      </div>
-      <div className="button-row" aria-label="可操作动作" style={{ marginTop: 16 }}>
-        <Button disabled={addMutation.isPending} onClick={() => addMutation.mutate()} variant="primary">
-          加入观察池
-        </Button>
-        {candidate.chart_url ? (
-          <Button onClick={() => window.open(candidate.chart_url, '_blank', 'noopener,noreferrer')} variant="secondary">
-            打开K线
-          </Button>
-        ) : null}
       </div>
     </section>
   );

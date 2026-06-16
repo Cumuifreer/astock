@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from backend.app.config import settings
 from backend.app.db import Database
+from backend.app.services.daily_update_schedule import parse_daily_update_schedule
 from backend.app.services.intraday_schedule import parse_intraday_schedule
 from backend.app.services.market_utils import safe_float
 from backend.app.services.sector_filters import concept_theme_filter_sql
@@ -593,6 +594,9 @@ class DataService:
         schedule: str = "",
         scheduler_mode: str = "radar",
         enabled_boards: Optional[Dict[str, bool]] = None,
+        daily_update_scheduler_enabled: bool = False,
+        daily_update_schedule_time: str = "17:10",
+        daily_update_poll_seconds: int = 60,
     ) -> Dict[str, Any]:
         current = now or datetime.now(CHINA_TZ)
         current = current.astimezone(CHINA_TZ) if current.tzinfo else current.replace(tzinfo=CHINA_TZ)
@@ -648,6 +652,12 @@ class DataService:
         latest_slot = completed_slots[-1] if completed_slots else None
         remaining_count = len([slot for slot in slots if slot["status"] in {"pending", "due"}])
         latest_sample = self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots")
+        daily_update_scheduler = self._daily_update_scheduler_health(
+            current=current,
+            enabled=daily_update_scheduler_enabled,
+            schedule_time=daily_update_schedule_time,
+            poll_seconds=daily_update_poll_seconds,
+        )
         return {
             "data": {
                 "latest_history_date": self.db.scalar("SELECT MAX(date) FROM historical_bars"),
@@ -680,11 +690,79 @@ class DataService:
                 "latest_slot": latest_slot,
                 "slots": slots,
             },
+            "daily_update_scheduler": daily_update_scheduler,
             "llm": {
                 "configured": bool(settings.daily_brief_api_key),
                 "model": settings.daily_brief_model,
                 "url_host": _url_host(settings.daily_brief_llm_url),
             },
+        }
+
+    def _daily_update_scheduler_health(
+        self,
+        current: datetime,
+        enabled: bool,
+        schedule_time: str,
+        poll_seconds: int,
+    ) -> Dict[str, Any]:
+        today = current.date()
+        task_rows = self.db.query(
+            """
+            SELECT id, status, stage, error_message, started_at, updated_at, finished_at, summary_json
+            FROM task_runs
+            WHERE kind = 'update'
+              AND id LIKE ?
+            ORDER BY started_at
+            """,
+            [f"update-auto-{today:%Y%m%d}-%"],
+        )
+        tasks_by_id = {row["id"]: row for row in task_rows}
+        slots = []
+        for item in parse_daily_update_schedule(schedule_time):
+            slot = current.replace(hour=item.hour, minute=item.minute, second=0, microsecond=0)
+            task_id = f"update-auto-{slot:%Y%m%d-%H%M}"
+            task = tasks_by_id.get(task_id)
+            if not enabled:
+                status = "disabled"
+            elif current.weekday() >= 5:
+                status = "weekend"
+            elif task:
+                status = str(task.get("status") or "queued")
+            elif current < slot:
+                status = "pending"
+            else:
+                status = "due"
+            scheduled_at = slot.replace(tzinfo=None)
+            slots.append(
+                {
+                    "time": f"{item.hour:02d}:{item.minute:02d}",
+                    "scheduled_at": scheduled_at,
+                    "status": status,
+                    "task_id": task_id if task else None,
+                    "task_status": task.get("status") if task else None,
+                    "stage": task.get("stage") if task else None,
+                    "error_message": task.get("error_message") if task else None,
+                    "finished_at": task.get("finished_at") if task else None,
+                }
+            )
+        next_slot = next((slot for slot in slots if slot["status"] in {"pending", "due"}), None)
+        completed_slots = [
+            slot
+            for slot in slots
+            if slot["status"] in {"completed_full", "completed_partial", "queued", "running"}
+        ]
+        return {
+            "enabled": enabled,
+            "timezone": "Asia/Shanghai",
+            "now": current.replace(tzinfo=None),
+            "is_weekend": current.weekday() >= 5,
+            "poll_seconds": poll_seconds,
+            "next_slot": next_slot,
+            "slot_count": len(slots),
+            "completed_count": len(completed_slots),
+            "remaining_count": len([slot for slot in slots if slot["status"] in {"pending", "due"}]),
+            "latest_slot": completed_slots[-1] if completed_slots else None,
+            "slots": slots,
         }
 
     def list_stocks(

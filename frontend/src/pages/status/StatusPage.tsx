@@ -45,6 +45,7 @@ export function StatusPage() {
   const failedTasks = recentRows.filter((task) => task.status === 'failed');
   const activeTask = runningTasks[0] || queuedTasks[0] || null;
   const scheduler = runtimeHealth.data?.scheduler;
+  const dailyUpdateScheduler = runtimeHealth.data?.daily_update_scheduler;
   const llm = runtimeHealth.data?.llm;
   const taskFlow = useQuery({
     queryKey: queryKeys.tasks.flow(activeTask?.id),
@@ -95,7 +96,7 @@ export function StatusPage() {
           <Metric label="任务队列" value={`运行 ${runningTasks.length} · 排队 ${queuedTasks.length}`} />
           <Metric label="AI 模型" value={llmLabel(llm)} tone={llm?.configured ? 'neutral' : 'risk'} />
         </div>
-        <ScheduleStatusStrip scheduler={scheduler} />
+        <ScheduleStatusStrip dailyUpdateScheduler={dailyUpdateScheduler} scheduler={scheduler} />
         {effectiveActiveRows.length ? (
           <section className="task-status-list">
             <h3 className="subsection-title">运行中任务</h3>
@@ -232,7 +233,14 @@ type SchedulerHealth = {
   latest_slot?: { sample_at?: string | null; status?: string | null } | null;
 } | null;
 
-function ScheduleStatusStrip({ scheduler }: { scheduler?: SchedulerHealth }) {
+type DailyUpdateSchedulerHealth = {
+  enabled?: boolean;
+  next_slot?: { time?: string | null; scheduled_at?: string | null } | null;
+  remaining_count?: number;
+  latest_slot?: { scheduled_at?: string | null; status?: string | null } | null;
+} | null;
+
+function ScheduleStatusStrip({ scheduler, dailyUpdateScheduler }: { scheduler?: SchedulerHealth; dailyUpdateScheduler?: DailyUpdateSchedulerHealth }) {
   const enabled = Boolean(scheduler?.enabled);
   const next = scheduler?.next_slot?.time || scheduler?.next_slot?.sample_at;
   const latest = scheduler?.latest_slot?.sample_at;
@@ -241,9 +249,17 @@ function ScheduleStatusStrip({ scheduler }: { scheduler?: SchedulerHealth }) {
   const latestStatus = latestRawStatus ? taskStatusLabel(latestRawStatus) : latest ? '已记录' : '暂无';
   const modeLabel = scheduler?.mode === 'radar' ? '高频雷达' : '轻量刷新';
   const enabledBoardCount = Object.values(scheduler?.enabled_boards || {}).filter(Boolean).length;
+  const dailyEnabled = Boolean(dailyUpdateScheduler?.enabled);
+  const dailyNext = dailyUpdateScheduler?.next_slot?.time || dailyUpdateScheduler?.next_slot?.scheduled_at;
+  const dailyLatest = dailyUpdateScheduler?.latest_slot?.scheduled_at;
+  const dailyLatestRawStatus = dailyUpdateScheduler?.latest_slot?.status;
+  const dailyLatestStatus = dailyLatestRawStatus ? taskStatusLabel(dailyLatestRawStatus) : dailyLatest ? '已记录' : '暂无';
   return (
     <article className="schedule-status-strip">
       <strong>定时计划</strong>
+      <span>数据日更：{dailyEnabled ? '已开启' : '未开启'}</span>
+      <span>日更下一次：{dailyEnabled ? dailyNext || '待定' : '未开启'}</span>
+      <span>日更最近：{dailyLatest ? `${formatChinaDateTime(dailyLatest)} · ${dailyLatestStatus}` : '暂无'}</span>
       <span>盘中采样：{enabled ? '已开启' : '未开启'}</span>
       <span>模式：{enabled ? modeLabel : '-'}</span>
       <span>榜单：{enabled ? `${enabledBoardCount} 个开启` : '-'}</span>

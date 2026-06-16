@@ -59,6 +59,9 @@ def _runtime_health_payload() -> Dict[str, Any]:
         schedule=schedule_text,
         scheduler_mode=scheduler_mode,
         enabled_boards=enabled_boards,
+        daily_update_scheduler_enabled=settings.daily_update_scheduler_enabled,
+        daily_update_schedule_time=settings.daily_update_schedule_time,
+        daily_update_poll_seconds=settings.daily_update_scheduler_poll_seconds,
     )
 
 

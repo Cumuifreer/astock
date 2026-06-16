@@ -766,6 +766,40 @@ class UpdateService:
             )
             return task_id
 
+    def start_scheduled_daily_update(self, scheduled_at: datetime, mode: str = "daily_light") -> Optional[str]:
+        slot = scheduled_at.replace(second=0, microsecond=0)
+        task_id = f"update-auto-{slot:%Y%m%d-%H%M}"
+        if self.db.scalar("SELECT id FROM task_runs WHERE id = ?", [task_id]):
+            return None
+        existing = self.db.scalar(
+            """
+            SELECT id
+            FROM task_runs
+            WHERE kind = 'update'
+              AND status IN ('queued', 'running')
+            ORDER BY started_at
+            LIMIT 1
+            """
+        )
+        if existing:
+            return None
+        schedule_key = slot.strftime("%Y-%m-%d %H:%M")
+        payload = {
+            "mode": mode or "daily_light",
+            "scheduled": True,
+            "schedule_key": schedule_key,
+            "update_date": slot.date().isoformat(),
+        }
+        self._enqueue_task(
+            task_id,
+            kind="update",
+            stage="准备轻量日更" if payload["mode"] == "daily_light" else "准备定时更新",
+            source="Tushare",
+            summary={"scheduled": True, "schedule_key": schedule_key, "mode": payload["mode"]},
+            payload=payload,
+        )
+        return task_id
+
     def start_analysis(self, config: Dict[str, Any], analysis_runner: Any) -> tuple[str, str]:
         self.analysis_runner = analysis_runner
         frozen_config = json.loads(json.dumps(config, ensure_ascii=False))

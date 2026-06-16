@@ -57,6 +57,10 @@ class Settings:
     daily_brief_scheduler_enabled: bool = os.getenv("ASHARE_DAILY_BRIEF_SCHEDULER", "1") == "1"
     daily_brief_scheduler_poll_seconds: int = int(os.getenv("ASHARE_DAILY_BRIEF_POLL_SECONDS", "60"))
     daily_brief_schedule_time: str = os.getenv("ASHARE_DAILY_BRIEF_TIME", "08:20")
+    daily_update_scheduler_enabled: bool = os.getenv("ASHARE_DAILY_UPDATE_SCHEDULER", "0") == "1"
+    daily_update_scheduler_poll_seconds: int = int(os.getenv("ASHARE_DAILY_UPDATE_POLL_SECONDS", "60"))
+    daily_update_schedule_time: str = os.getenv("ASHARE_DAILY_UPDATE_TIME", "17:10")
+    daily_update_mode: str = os.getenv("ASHARE_DAILY_UPDATE_MODE", "daily_light")
     daily_brief_source_timeout_seconds: int = int(os.getenv("ASHARE_DAILY_BRIEF_SOURCE_TIMEOUT", "12"))
     daily_brief_api_key: str = os.getenv("ASHARE_DAILY_BRIEF_API_KEY") or os.getenv("DEEPSEEK_API_KEY", "")
     daily_brief_model: str = os.getenv("ASHARE_DAILY_BRIEF_MODEL", "deepseek-chat")
