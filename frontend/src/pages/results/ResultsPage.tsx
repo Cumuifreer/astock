@@ -14,6 +14,7 @@ import { queryKeys } from '../../api/queryKeys';
 import { formatDateTime } from '../../utils/date';
 import { CandidateTable } from './CandidateTable';
 import { CandidateEvidencePanel } from './CandidateEvidencePanel';
+import { StrictFunnelPanel } from './StrictFunnelPanel';
 
 type SortKey = 'signal_score' | 'rps20' | 'amount' | 'pct_chg' | 'turnover_rate' | 'risk';
 const latestRunKey = ['run', 'id'].join('_');
@@ -43,6 +44,7 @@ export function ResultsPage() {
   const bootstrapLatestReport = bootstrap.data?.latest_analysis?.id === selectedRunId ? bootstrap.data.latest_analysis : null;
   const activeCandidates = reportDetail.data?.candidates?.rows || (selectedIsLatest ? bootstrapCandidateRows : []) || [];
   const activeReport = reportDetail.data?.analysis || (selectedIsLatest ? bootstrapLatestReport : null) || flattenedReports.find((report) => report.id === selectedRunId) || null;
+  const activeFunnel = reportDetail.data?.candidates?.funnel || activeReport?.funnel || (selectedIsLatest ? bootstrap.data?.candidates?.funnel : []) || [];
   const activeReportDate = reportDateValue(activeReport);
   const activeStrategyName = strategyLabel(activeReport?.summary, activeReport?.config);
   const observedCodes = useMemo(
@@ -174,10 +176,15 @@ export function ResultsPage() {
         </div>
         {reportDetail.isLoading ? (
           <LoadingState label="读取历史报告" />
-        ) : filteredCandidates.length ? (
-          <CandidateTable candidates={filteredCandidates} observedCodes={observedCodes} selectedCode={selectedCandidate?.code} onSelect={setSelected} />
         ) : (
-          <EmptyState title="暂无候选" description="运行策略后，这里会展示候选表和结构化证据。" />
+          <>
+            <StrictFunnelPanel funnel={activeFunnel} analysisMode={activeReport?.config?.analysis_mode} />
+            {filteredCandidates.length ? (
+              <CandidateTable candidates={filteredCandidates} observedCodes={observedCodes} selectedCode={selectedCandidate?.code} onSelect={setSelected} />
+            ) : (
+              <EmptyState title="暂无候选" description="运行策略后，这里会展示候选表和结构化证据。" />
+            )}
+          </>
         )}
       </section>
       <CandidateEvidencePanel candidate={selectedCandidate} runId={selectedRunId || latestRunId} />

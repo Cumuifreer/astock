@@ -1892,6 +1892,112 @@ button {
   font-weight: 800;
 }
 
+.strict-funnel-panel {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.strict-funnel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.strict-funnel-heading h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.strict-funnel-heading p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.strict-funnel-summary {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.strict-funnel-summary span,
+.strict-funnel-summary strong {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+}
+
+.strict-funnel-summary strong {
+  color: var(--accent);
+}
+
+.strict-funnel-table {
+  display: grid;
+  overflow-x: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.strict-funnel-head,
+.strict-funnel-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 90px 90px 90px;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 560px;
+  padding: 10px 12px;
+}
+
+.strict-funnel-head {
+  background: var(--bg-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.strict-funnel-row {
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.strict-funnel-row.bottleneck {
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.strict-funnel-name {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.strict-funnel-name strong {
+  color: var(--text);
+}
+
+.strict-funnel-name span {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.strict-funnel-row em {
+  color: #b91c1c;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .hero-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
