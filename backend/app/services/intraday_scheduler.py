@@ -44,6 +44,8 @@ class IntradayScheduler:
         slot = self._due_slot(now or datetime.now(CHINA_TZ), slots)
         if slot is None:
             return None
+        if not self.update_service.is_trading_day(slot.date()):
+            return None
         return self.update_service.start_scheduled_intraday_sample(slot)
 
     def _run(self) -> None:

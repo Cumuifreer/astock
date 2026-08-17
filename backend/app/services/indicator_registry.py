@@ -3,6 +3,26 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, Iterable, List, Optional
 
+from backend.app.config import settings
+
+
+TUSHARE_ONLY_INDICATOR_IDS = {
+    "main_net_amount",
+    "net_mf_amount",
+    "large_net_amount",
+    "super_large_net_amount",
+    "topic_count",
+    "topic_heat",
+    "theme_limit_count",
+    "limit_event",
+    "limit_fd_mv_ratio",
+    "top_list_net_amount",
+    "top_inst_net_buy",
+    "hot_money_net_amount",
+    "cyq_winner_rate",
+    "cost_50pct",
+    "price_to_cost_50pct",
+}
 
 INDICATOR_CATEGORIES: List[Dict[str, str]] = [
     {"id": "stock_pool", "label": "基础股票池", "description": "价格、成交、市值、市场范围和缺失数据处理。"},
@@ -922,6 +942,12 @@ def normalize_signal_mode(mode: Dict[str, Any]) -> Dict[str, Any]:
 def indicator_library(signal_modes: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     indicators = deepcopy(INDICATORS)
     categories = deepcopy(INDICATOR_CATEGORIES)
+    if not settings.tushare_enabled:
+        for indicator in indicators:
+            if indicator.get("id") in TUSHARE_ONLY_INDICATOR_IDS:
+                indicator["data_status"] = "unavailable"
+                indicator["analysis_ready"] = False
+                indicator["availability_reason"] = "免费模式未启用 Tushare，历史缓存不会作为当前信号使用。"
     return {
         "categories": categories,
         "indicators": indicators,
@@ -932,6 +958,7 @@ def indicator_library(signal_modes: Optional[List[Dict[str, Any]]] = None) -> Di
             "active_count": sum(1 for item in indicators if item["status"] == "active"),
             "available_count": sum(1 for item in indicators if item["status"] == "available"),
             "planned_count": sum(1 for item in indicators if item["status"] == "planned"),
+            "unavailable_count": sum(1 for item in indicators if item.get("data_status") == "unavailable"),
             "strategy_param_count": sum(1 for item in indicators if item.get("kind") == "strategy_param"),
             "signal_mode_count": 0,
             "interaction_rule_count": 0,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -32,10 +33,16 @@ def main() -> int:
 
     base_url = os.getenv("ASHARE_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
     payload = json.dumps({}).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    username = os.getenv("ASHARE_HTTP_BASIC_USERNAME", "")
+    password = os.getenv("ASHARE_HTTP_BASIC_PASSWORD", "")
+    if username and password:
+        token = base64.b64encode(f"{username}:{password}".encode()).decode()
+        headers["Authorization"] = f"Basic {token}"
     request = urllib.request.Request(
         f"{base_url}/api/tasks/intraday-snapshot",
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:

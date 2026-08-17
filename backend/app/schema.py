@@ -109,6 +109,53 @@ MIGRATIONS = [
     )
     """,
     """
+    ALTER TABLE historical_bars ADD COLUMN IF NOT EXISTS pe_ttm DOUBLE
+    """,
+    """
+    ALTER TABLE historical_bars ADD COLUMN IF NOT EXISTS pb_mrq DOUBLE
+    """,
+    """
+    ALTER TABLE historical_bars ADD COLUMN IF NOT EXISTS ps_ttm DOUBLE
+    """,
+    """
+    ALTER TABLE historical_bars ADD COLUMN IF NOT EXISTS pcf_ncf_ttm DOUBLE
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trading_calendar (
+        date DATE PRIMARY KEY,
+        is_trading_day BOOLEAN,
+        source TEXT,
+        updated_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS stock_industry (
+        code TEXT PRIMARY KEY,
+        name TEXT,
+        industry TEXT,
+        classification TEXT,
+        source TEXT,
+        updated_at TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS index_daily (
+        index_code TEXT,
+        trade_date DATE,
+        open DOUBLE,
+        high DOUBLE,
+        low DOUBLE,
+        close DOUBLE,
+        pre_close DOUBLE,
+        pct_chg DOUBLE,
+        volume DOUBLE,
+        amount DOUBLE,
+        source TEXT,
+        updated_at TIMESTAMP,
+        PRIMARY KEY (index_code, trade_date)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS daily_snapshots (
         code TEXT,
         date DATE,

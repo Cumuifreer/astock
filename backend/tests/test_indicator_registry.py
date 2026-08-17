@@ -31,8 +31,9 @@ def test_observation_indicators_point_to_editable_strategy_params():
     assert indicators["topic_heat"]["paired_strategy_ids"] == ["min_topic_heat"]
     assert indicators["theme_limit_count"]["paired_strategy_ids"] == ["min_theme_limit_count"]
     assert {"min_topic_count", "min_topic_heat", "min_theme_limit_count"}.issubset(set(indicators))
-    assert indicators["topic_heat"]["data_status"] == "executable"
-    assert indicators["theme_limit_count"]["data_status"] == "executable"
+    assert indicators["topic_heat"]["data_status"] == "unavailable"
+    assert indicators["theme_limit_count"]["data_status"] == "unavailable"
+    assert "免费模式" in indicators["topic_heat"]["availability_reason"]
 
 
 def test_indicator_library_no_longer_exposes_signal_mode_templates_or_interactions():
@@ -137,7 +138,7 @@ def test_indicator_library_exposes_rule_builder_metadata():
     assert topic_heat["direction"] == "higher_better"
 
     top_list = indicators["top_list_net_amount"]
-    assert top_list["data_status"] == "executable"
+    assert top_list["data_status"] == "unavailable"
     assert "filter" not in top_list["supported_actions"]
     assert {"score", "risk", "display"}.issubset(set(top_list["supported_actions"]))
     assert top_list["hard_filter_allowed"] is False
@@ -153,12 +154,12 @@ def test_indicator_contract_does_not_overstate_executable_actions():
     indicators = {indicator["id"]: indicator for indicator in library["indicators"]}
 
     moneyflow = indicators["main_net_amount"]
-    assert moneyflow["data_status"] == "executable"
+    assert moneyflow["data_status"] == "unavailable"
     assert moneyflow["supported_actions"] == ["score", "display"]
     assert moneyflow["hard_filter_allowed"] is False
 
     cost = indicators["cost_50pct"]
-    assert cost["data_status"] == "executable"
+    assert cost["data_status"] == "unavailable"
     assert cost["supported_actions"] == ["display"]
     assert cost["hard_filter_allowed"] is False
     assert cost["display_scope"] == "candidate"

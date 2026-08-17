@@ -133,7 +133,8 @@ class DailyBriefService:
                 logging.warning("Daily brief source failed: %s", exc)
             progress("抓取资讯源", index, len(enabled_sources) + 2)
 
-        articles = self._filter_articles(self._dedupe_articles(articles))
+        report_cutoff = datetime.combine(brief_date, datetime.max.time()).replace(microsecond=0)
+        articles = self._filter_articles(self._dedupe_articles(articles, reference_time=report_cutoff))
         self._save_articles(articles)
         progress("生成简报", len(enabled_sources) + 1, len(enabled_sources) + 2)
 
@@ -480,8 +481,12 @@ class DailyBriefService:
             )
         self.db.upsert("news_articles", rows, ["source_id", "url"])
 
-    def _dedupe_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        cutoff = datetime.utcnow() - timedelta(days=MAX_AGE_DAYS)
+    def _dedupe_articles(
+        self,
+        articles: List[Dict[str, Any]],
+        reference_time: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        cutoff = (reference_time or datetime.utcnow()) - timedelta(days=MAX_AGE_DAYS)
         seen = set()
         clean = []
         for article in articles:

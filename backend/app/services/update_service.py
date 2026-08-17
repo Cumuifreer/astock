@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
@@ -30,7 +31,9 @@ from backend.app.services.intraday_schedule import (
 from backend.app.services.market_utils import safe_float
 from backend.app.services.sector_filters import concept_theme_filter_sql
 from backend.app.services.strategy_service import normalize_strategy_config
-from backend.app.sources.base import SourceGuard
+from backend.app.sources.akshare_source import AkShareSource
+from backend.app.sources.baostock_source import BaostockSource
+from backend.app.sources.base import SourceFetchResult, SourceGuard, SourceUnavailable
 from backend.app.sources.tushare_source import TushareEnrichmentSource, TushareRealtimeSource
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
@@ -63,7 +66,7 @@ DEFAULT_DATA_DAG: List[Dict[str, Any]] = [
         "dependencies": ["stock_basic"],
         "freshness_policy": "intraday",
         "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.95},
-        "request_policy": {"source": "tushare", "rate_limit_group": "realtime"},
+        "request_policy": {"source": "akshare_sina", "rate_limit_group": "sina_paginated"},
     },
     {
         "id": "history_qfq",
@@ -72,7 +75,7 @@ DEFAULT_DATA_DAG: List[Dict[str, Any]] = [
         "dependencies": ["daily_snapshot"],
         "freshness_policy": "daily",
         "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.95},
-        "request_policy": {"source": "tushare", "rate_limit_group": "daily"},
+        "request_policy": {"source": "baostock", "rate_limit_group": "baostock"},
     },
     {
         "id": "daily_basic",
@@ -81,7 +84,7 @@ DEFAULT_DATA_DAG: List[Dict[str, Any]] = [
         "dependencies": ["history_qfq"],
         "freshness_policy": "daily",
         "coverage_policy": {"denominator": "active_stock", "min_complete_ratio": 0.95},
-        "request_policy": {"source": "tushare", "rate_limit_group": "daily_basic"},
+        "request_policy": {"source": "baostock", "rate_limit_group": "baostock"},
     },
     {
         "id": "stk_factor",
@@ -201,6 +204,7 @@ HISTORY_BACKFILL_CAPABILITIES = {
     "换手率",
 }
 DAILY_BASIC_BACKFILL_CAPABILITIES = {"每日指标", "流通市值"}
+TUSHARE_ONLY_BACKFILL_CAPABILITIES = {"技术因子", "资金流向", "涨跌停", "筹码分布", "龙虎榜/游资"}
 TUSHARE_TABLE_COLUMNS: Dict[str, List[str]] = {
     "tushare_daily_basic": [
         "code",
@@ -515,6 +519,11 @@ class UpdateService:
             min_delay=settings.public_source_min_delay,
             max_delay=settings.public_source_max_delay,
         )
+        self.baostock_guard = SourceGuard(
+            db,
+            min_delay=settings.baostock_min_delay,
+            max_delay=settings.baostock_max_delay,
+        )
         self.tushare_rate_limiter = TushareRateLimiter()
 
     def configure_runners(
@@ -532,6 +541,9 @@ class UpdateService:
             self.candidate_summary_runner = candidate_summary_runner
         if strategy_service is not None:
             self.strategy_service = strategy_service
+
+    def close(self) -> None:
+        self.executor.shutdown(wait=False, cancel_futures=True)
 
     def recover_interrupted_tasks(self) -> None:
         now = datetime.utcnow()
@@ -1331,34 +1343,61 @@ class UpdateService:
         include_bj = bool(options.get("include_bj", settings.include_bj))
         exclude_star = bool(options.get("exclude_star_board", settings.exclude_star_board))
         results = []
-        stock_source = TushareEnrichmentSource()
-        realtime_source = TushareRealtimeSource()
-        probes = [
-            (
-                self.public_guard,
-                "Tushare stock_basic",
-                "股票基础信息",
-                lambda: stock_source.fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
-            ),
-            (
-                self.public_guard,
-                "Tushare 实时日线",
-                "当天行情快照",
-                lambda: realtime_source.fetch_realtime_daily(
+        if settings.tushare_enabled:
+            stock_source = TushareEnrichmentSource()
+            realtime_source = TushareRealtimeSource()
+            probes = [
+                (
+                    self.public_guard,
+                    "Tushare stock_basic",
+                    "股票基础信息",
+                    lambda: stock_source.fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
+                ),
+                (
+                    self.public_guard,
+                    "Tushare 实时日线",
+                    "当天行情快照",
+                    lambda: realtime_source.fetch_realtime_daily(
+                        include_bj=include_bj,
+                        exclude_star=exclude_star,
+                    ),
+                ),
+            ]
+        else:
+            stock_source = BaostockSource()
+            probes = [
+                (
+                    self.baostock_guard,
+                    "Baostock",
+                    "股票基础信息",
+                    lambda: stock_source.fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
+                ),
+                (
+                    self.public_guard,
+                    "AkShare 新浪",
+                    "当天行情快照",
+                    lambda: AkShareSource().fetch_sina_snapshot(
+                        include_bj=include_bj,
+                        exclude_star=exclude_star,
+                    ),
+                ),
+            ]
+        for guard, source, capability, fetcher in probes:
+            if source == "AkShare 新浪":
+                result = self._fetch_sina_snapshot(
+                    capability,
                     include_bj=include_bj,
                     exclude_star=exclude_star,
-                ),
-            ),
-        ]
-        for guard, source, capability, fetcher in probes:
-            result = guard.call(
-                source,
-                capability,
-                fetcher,
-                ttl_minutes=settings.source_probe_ttl_minutes,
-                max_attempts=1,
-                ignore_circuit=True,
-            )
+                )
+            else:
+                result = guard.call(
+                    source,
+                    capability,
+                    fetcher,
+                    ttl_minutes=settings.source_probe_ttl_minutes,
+                    max_attempts=1,
+                    ignore_circuit=True,
+                )
             results.append(
                 {
                     "source": source,
@@ -1509,14 +1548,38 @@ class UpdateService:
         warnings: List[str] = []
         failed_sources = 0
         success_sources = 0
-        target_history_date = self._target_history_date()
+        baostock_source = BaostockSource()
+        baostock_context = None
+        baostock_client = None
+        if callable(getattr(baostock_source, "session", None)):
+            try:
+                baostock_context = baostock_source.session()
+                baostock_client = baostock_context.__enter__()
+            except Exception as exc:
+                baostock_context = None
+                warnings.append(f"Baostock 会话初始化失败：{exc}")
+        heuristic_target = self._target_history_date()
+        self._refresh_trade_calendar(
+            heuristic_target - timedelta(days=35),
+            heuristic_target + timedelta(days=35),
+            source=baostock_source,
+            client=baostock_client,
+        )
+        target_history_date = self._latest_cached_trading_day(heuristic_target) or heuristic_target
         start = target_history_date - timedelta(days=settings.default_history_days)
         end = target_history_date
         try:
             self._patch_task(task_id, stage="刷新股票池", source="Tushare stock_basic")
             self.record_checkpoint(task_id, "stock_basic", "股票基础信息", target_history_date, "all", "running")
             try:
-                stock_count = self._update_basics(force, include_bj, exclude_star, warnings)
+                stock_count = self._update_basics(
+                    force,
+                    include_bj,
+                    exclude_star,
+                    warnings,
+                    source=baostock_source,
+                    client=baostock_client,
+                )
                 self.record_checkpoint(
                     task_id,
                     "stock_basic",
@@ -1530,6 +1593,12 @@ class UpdateService:
                 self.record_checkpoint(task_id, "stock_basic", "股票基础信息", target_history_date, "all", "failed", error_message=str(exc))
                 raise
             success_sources += 1 if stock_count else 0
+            industry_count = self._update_baostock_industry(
+                force=force,
+                warnings=warnings,
+                source=baostock_source,
+                client=baostock_client,
+            )
 
             self._patch_task(
                 task_id,
@@ -1591,6 +1660,8 @@ class UpdateService:
                     task_id,
                     incremental=incremental_history,
                     target_history_date=target_history_date,
+                    source=baostock_source,
+                    client=baostock_client,
                 )
                 self.record_checkpoint(
                     task_id,
@@ -1625,10 +1696,21 @@ class UpdateService:
             else:
                 self._record_tushare_enrichment_skips(task_id, target_history_date, "tushare_not_configured")
 
-            self._patch_task(task_id, stage="刷新市场环境", source="Tushare 指数 / 本地宽度")
+            if not _tushare_enrichment_configured():
+                self._update_industry_heat(target_history_date)
+
+            self._patch_task(
+                task_id,
+                stage="刷新市场环境",
+                source="Tushare 指数 / 本地宽度" if _tushare_enrichment_configured() else "Baostock 指数 / 本地宽度",
+            )
             self.record_checkpoint(task_id, "market_environment", "市场环境", target_history_date, "all", "running")
             try:
-                market_environment_count = self._update_market_environment(target_history_date)
+                market_environment_count = self._update_market_environment(
+                    target_history_date,
+                    baostock_source=baostock_source,
+                    baostock_client=baostock_client,
+                )
                 self.record_checkpoint(
                     task_id,
                     "market_environment",
@@ -1642,7 +1724,11 @@ class UpdateService:
                 self.record_checkpoint(task_id, "market_environment", "市场环境", target_history_date, "all", "failed", error_message=str(exc))
                 raise
 
-            self._patch_task(task_id, stage="刷新流通市值", source="Tushare daily_basic / 本地缓存")
+            self._patch_task(
+                task_id,
+                stage="刷新流通市值",
+                source="Tushare daily_basic / 本地缓存" if _tushare_enrichment_configured() else "Baostock 换手率估算 / 本地缓存",
+            )
             float_count = self._update_float_values_from_snapshots()
             cleanup_counts = self.cleanup_intraday_history()
 
@@ -1663,6 +1749,7 @@ class UpdateService:
                 summary={
                     "mode": "daily_light" if light else "full",
                     "stock_count": stock_count,
+                    "industry_count": industry_count,
                     "snapshot_count": snapshot_count,
                     "history_success": history_success,
                     "history_failed": history_failed,
@@ -1688,14 +1775,18 @@ class UpdateService:
                 warning=str(exc),
                 finished_at=datetime.utcnow(),
             )
+        finally:
+            if baostock_context is not None:
+                baostock_context.__exit__(None, None, None)
 
     def _run_market_environment_update(self, task_id: str) -> None:
-        target_history_date = self._target_history_date()
+        heuristic_target = self._target_history_date()
+        target_history_date = self._latest_cached_trading_day(heuristic_target) or heuristic_target
         try:
             self._patch_task(
                 task_id,
                 stage="重算市场环境",
-                source="Tushare 指数 / 本地宽度",
+                source="Tushare 指数 / 本地宽度" if _tushare_enrichment_configured() else "Baostock 指数 / 本地宽度",
                 processed=0,
                 total=len(DEFAULT_DATA_DAG),
             )
@@ -1727,7 +1818,7 @@ class UpdateService:
                 task_id,
                 status="completed_full" if market_environment_count else "completed_partial",
                 stage="市场环境已重算",
-                source="Tushare 指数 / 本地宽度",
+                source="Tushare 指数 / 本地宽度" if _tushare_enrichment_configured() else "Baostock 指数 / 本地宽度",
                 processed=len(DEFAULT_DATA_DAG),
                 total=len(DEFAULT_DATA_DAG),
                 success=1 if market_environment_count else 0,
@@ -1837,6 +1928,18 @@ class UpdateService:
         task_id: str,
         warnings: List[str],
     ) -> Dict[str, Any]:
+        if capability in TUSHARE_ONLY_BACKFILL_CAPABILITIES and not _tushare_enrichment_configured():
+            message = f"{capability} 仅有 Tushare 数据定义；免费模式不请求、不伪造替代数据。"
+            warnings.append(message)
+            return {
+                "source": "免费模式",
+                "success": 0,
+                "failed": 0,
+                "skipped": 1,
+                "total": 1,
+                "processed": 1,
+                "rows": 0,
+            }
         if capability in HISTORY_BACKFILL_CAPABILITIES:
             return self._backfill_history_capability(
                 capability,
@@ -1847,6 +1950,17 @@ class UpdateService:
                 task_id=task_id,
             )
         if capability in DAILY_BASIC_BACKFILL_CAPABILITIES:
+            if not _tushare_enrichment_configured():
+                count = self._update_float_values_from_snapshots() if capability == "流通市值" else 0
+                return {
+                    "source": "Baostock 历史估值 / 本地计算",
+                    "success": count,
+                    "failed": 0,
+                    "skipped": 0 if count else 1,
+                    "total": 1,
+                    "processed": 1,
+                    "rows": count,
+                }
             source = TushareEnrichmentSource()
             self._patch_capability_backfill_progress(
                 task_id,
@@ -1912,6 +2026,17 @@ class UpdateService:
                 warnings=warnings,
             )
         if capability == "概念/行业成分":
+            if not _tushare_enrichment_configured():
+                count = self._update_baostock_industry(force=True, warnings=warnings)
+                return {
+                    "source": "Baostock 行业分类",
+                    "success": count,
+                    "failed": 0,
+                    "skipped": 0 if count else 1,
+                    "total": 1,
+                    "processed": 1,
+                    "rows": count,
+                }
             return self._backfill_ths_member_capability(
                 include_bj=include_bj,
                 exclude_star=exclude_star,
@@ -1924,7 +2049,7 @@ class UpdateService:
         if capability == "市场环境":
             count = self._update_market_environment(target_date)
             return {
-                "source": "Tushare index_daily / 本地宽度",
+                "source": "Tushare index_daily / 本地宽度" if _tushare_enrichment_configured() else "Baostock 指数 / 本地宽度",
                 "success": count,
                 "failed": 0,
                 "skipped": 0,
@@ -2925,22 +3050,54 @@ class UpdateService:
         self,
         trade_date: date,
         source: Optional[TushareEnrichmentSource] = None,
+        baostock_source: Optional[BaostockSource] = None,
+        baostock_client: Any = None,
     ) -> int:
-        resolved_source = source or TushareEnrichmentSource()
-        index_frame = self._fetch_tushare_optional(
-            "Tushare index_daily",
-            "市场环境",
-            lambda: resolved_source.fetch_index_daily(MARKET_INDEX_CODES, trade_date),
-            warnings=None,
-        )
-        index_count = self._persist_tushare_frame("tushare_index_daily", index_frame, ["index_code", "trade_date"])
-        if index_frame is None or index_frame.empty:
-            index_frame = pd.DataFrame(
-                self.db.query(
-                    "SELECT * FROM tushare_index_daily WHERE trade_date = ?",
-                    [trade_date],
-                )
+        if source is not None or _tushare_enrichment_configured():
+            resolved_source = source or TushareEnrichmentSource()
+            index_frame = self._fetch_tushare_optional(
+                "Tushare index_daily",
+                "市场环境",
+                lambda: resolved_source.fetch_index_daily(MARKET_INDEX_CODES, trade_date),
+                warnings=None,
             )
+            index_count = self._persist_tushare_frame(
+                "tushare_index_daily",
+                index_frame,
+                ["index_code", "trade_date"],
+            )
+            if index_frame is None or index_frame.empty:
+                index_frame = pd.DataFrame(
+                    self.db.query("SELECT * FROM tushare_index_daily WHERE trade_date = ?", [trade_date])
+                )
+        else:
+            try:
+                resolved_baostock = baostock_source or BaostockSource()
+                index_frame = resolved_baostock.fetch_index_history(
+                    MARKET_INDEX_CODES,
+                    trade_date,
+                    trade_date,
+                    client=baostock_client,
+                )
+                index_count = self.db.upsert(
+                    "index_daily",
+                    index_frame.to_dict("records"),
+                    ["index_code", "trade_date"],
+                ) if index_frame is not None and not index_frame.empty else 0
+            except Exception as exc:
+                index_count = 0
+                index_frame = pd.DataFrame()
+                self.baostock_guard.record(
+                    "Baostock",
+                    "市场指数",
+                    "failed",
+                    message=str(exc),
+                    ttl_minutes=60,
+                )
+            if index_frame is None or index_frame.empty:
+                index_frame = pd.DataFrame(
+                    self.db.query("SELECT * FROM index_daily WHERE trade_date = ?", [trade_date])
+                )
         environment = self._build_market_environment_row(trade_date, index_frame, index_count)
         if not environment:
             return 0
@@ -3023,6 +3180,8 @@ class UpdateService:
         )
 
     def _update_realtime_concept_heat(self, trade_date: date) -> int:
+        if not _tushare_enrichment_configured():
+            return self._update_industry_heat(trade_date)
         theme_filter_sql, theme_filter_params = concept_theme_filter_sql("m.con_name")
         rows = self.db.query(
             """
@@ -3093,6 +3252,75 @@ class UpdateService:
             )
         return self.db.upsert("market_sector_daily", output, ["sector_code", "sector_type", "trade_date"])
 
+    def _update_industry_heat(self, trade_date: date) -> int:
+        rows = self.db.query(
+            """
+            WITH quotes AS (
+              SELECT i.industry,
+                     COALESCE(s.code, h.code) AS code,
+                     COALESCE(s.name, b.name) AS name,
+                     COALESCE(s.pct_chg, h.pct_chg) AS pct_chg,
+                     COALESCE(s.amount, h.amount) AS amount,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY i.industry
+                       ORDER BY COALESCE(s.pct_chg, h.pct_chg) DESC NULLS LAST,
+                                COALESCE(s.amount, h.amount) DESC NULLS LAST
+                     ) AS rn
+              FROM stock_industry i
+              JOIN stock_basic b ON b.code = i.code
+              LEFT JOIN daily_snapshots s ON s.code = i.code AND s.date = ?
+              LEFT JOIN historical_bars h ON h.code = i.code AND h.date = ?
+              WHERE i.industry IS NOT NULL
+                AND i.industry <> ''
+                AND COALESCE(s.code, h.code) IS NOT NULL
+                AND b.suspended IS DISTINCT FROM TRUE
+            )
+            SELECT industry,
+                   COUNT(*) AS member_count,
+                   AVG(pct_chg) AS pct_chg,
+                   SUM(amount) AS amount,
+                   SUM(CASE WHEN pct_chg >= 5 THEN 1 ELSE 0 END) AS strong_count,
+                   SUM(CASE WHEN pct_chg >= 9.8 THEN 1 ELSE 0 END) AS limit_up_count,
+                   MAX(CASE WHEN rn = 1 THEN code END) AS leader_code,
+                   MAX(CASE WHEN rn = 1 THEN name END) AS leader_name,
+                   MAX(CASE WHEN rn = 1 THEN pct_chg END) AS leader_pct_chg
+            FROM quotes
+            GROUP BY industry
+            """,
+            [trade_date, trade_date],
+        )
+        output = []
+        for row in rows:
+            pct_chg = safe_float(row.get("pct_chg")) or 0
+            strong_count = int(row.get("strong_count") or 0)
+            industry = str(row.get("industry") or "")
+            output.append(
+                {
+                    "sector_code": f"BS-{industry}",
+                    "sector_name": industry,
+                    "sector_type": "industry",
+                    "trade_date": trade_date,
+                    "pct_chg": pct_chg,
+                    "amount": safe_float(row.get("amount")),
+                    "net_amount": None,
+                    "company_count": int(row.get("member_count") or 0),
+                    "member_count": int(row.get("member_count") or 0),
+                    "limit_up_count": int(row.get("limit_up_count") or 0),
+                    "strong_count": strong_count,
+                    "limit_up_count_status": "estimated_from_quote",
+                    "strong_count_status": "computed",
+                    "limit_data_date": trade_date,
+                    "quote_data_date": trade_date,
+                    "leader_code": row.get("leader_code"),
+                    "leader_name": row.get("leader_name"),
+                    "leader_pct_chg": row.get("leader_pct_chg"),
+                    "heat_score": round(_clamp(50 + pct_chg * 4 + strong_count * 1.5, 0, 100), 2),
+                    "source": "Baostock 行业分类 + 本地行情",
+                    "updated_at": datetime.utcnow(),
+                }
+            )
+        return self.db.upsert("market_sector_daily", output, ["sector_code", "sector_type", "trade_date"])
+
     def _build_market_environment_row(
         self,
         trade_date: date,
@@ -3136,7 +3364,10 @@ class UpdateService:
         limit_score = _clamp(50 + (limit_up_count - limit_down_count) / max(len(pct_values), 1) * 100, 0, 100)
         trend_score = round(index_score * 0.35 + breadth_score * 0.35 + turnover_score * 0.15 + limit_score * 0.15, 2)
         risk_level = "risk_on" if trend_score >= 65 else "neutral" if trend_score >= 45 else "risk_off"
-        source = "Tushare index_daily + 本地历史宽度" if index_count else "本地历史宽度"
+        index_source = None
+        if index_rows:
+            index_source = index_rows[0].get("source")
+        source = f"{index_source or '本地指数缓存'} + 本地历史宽度" if index_count or index_rows else "本地历史宽度"
         return {
             "date": trade_date,
             "trend_score": trend_score,
@@ -3373,6 +3604,8 @@ class UpdateService:
         radar_enabled = mode == "radar" and self.intraday_boards_enabled()
         warnings: List[str] = []
         try:
+            if not self.is_trading_day(trade_date):
+                raise SourceUnavailable(f"{trade_date.isoformat()} 不是交易日，未请求盘中数据。")
             self._patch_task(
                 task_id,
                 stage="拉取盘中快照",
@@ -3435,6 +3668,27 @@ class UpdateService:
                     "score_count": score_count,
                     "sample_at": sample_at.isoformat(timespec="seconds"),
                     "warnings": warnings,
+                },
+                finished_at=datetime.utcnow(),
+            )
+        except SourceUnavailable as exc:
+            latest_sample = self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots")
+            self._patch_task(
+                task_id,
+                status="completed_partial",
+                stage="盘中快照沿用本地缓存",
+                source="本地缓存",
+                processed=3,
+                total=3,
+                skipped=1,
+                warning=str(exc),
+                summary={
+                    "snapshot_count": 0,
+                    "candidate_count": 0,
+                    "cache_fallback": True,
+                    "latest_cached_sample_at": latest_sample,
+                    "sample_at": sample_at.isoformat(timespec="seconds"),
+                    "warnings": warnings or [str(exc)],
                 },
                 finished_at=datetime.utcnow(),
             )
@@ -3581,23 +3835,80 @@ class UpdateService:
                     raise
                 return ts_source.fetch_realtime_daily(include_bj=include_bj, exclude_star=exclude_star)
 
-        result = self.public_guard.call(
-            "Tushare 实时日线",
+        if _tushare_realtime_configured():
+            result = self.public_guard.call(
+                "Tushare 实时日线",
+                "盘中行情快照",
+                fetcher,
+                ttl_minutes=5,
+                max_attempts=1,
+                timeout_seconds=settings.tushare_timeout_seconds,
+            )
+            if result.status == "available":
+                if not _is_realtime_intraday_frame(result.frame):
+                    raise RuntimeError("非盘中实时快照不可用于盘中雷达。")
+                return result.frame
+            message = result.message or "Tushare 返回非盘中实时快照。"
+            warnings.append(f"Tushare 实时日线失败，回退新浪：{message}")
+        chosen = self._fetch_sina_snapshot(
             "盘中行情快照",
-            fetcher,
-            ttl_minutes=5,
-            max_attempts=1,
-            timeout_seconds=settings.tushare_timeout_seconds,
+            include_bj=include_bj,
+            exclude_star=exclude_star,
         )
-        if result.status == "available":
-            if not _is_realtime_intraday_frame(result.frame):
-                message = "Tushare 返回非盘中实时快照。"
-                warnings.append(message)
-                raise RuntimeError(f"非盘中实时快照不可用于盘中雷达：{message}")
-            return result.frame
-        message = result.message or "Tushare 实时日线不可用。"
-        warnings.append(f"Tushare 实时日线失败：{message}")
-        raise RuntimeError(f"Tushare 实时日线不可用：{message}")
+        if chosen.status != "available":
+            if chosen.message:
+                warnings.append(f"新浪盘中快照跳过，沿用本地缓存：{chosen.message}")
+            raise SourceUnavailable(chosen.message or "盘中快照不可用，沿用本地缓存。")
+        return chosen.frame
+
+    def _fetch_sina_snapshot(
+        self,
+        capability: str,
+        include_bj: bool,
+        exclude_star: bool,
+    ) -> SourceFetchResult:
+        gate_message = self._sina_gate_message()
+        if gate_message:
+            return SourceFetchResult(
+                source="AkShare 新浪",
+                capability=capability,
+                status="skipped",
+                message=gate_message,
+            )
+        source = AkShareSource()
+        return self.public_guard.call(
+            "AkShare 新浪",
+            capability,
+            lambda: source.fetch_sina_snapshot(include_bj=include_bj, exclude_star=exclude_star),
+            ttl_minutes=getattr(settings, "sina_failure_cooldown_minutes", 180),
+            max_attempts=1,
+            timeout_seconds=0,
+        )
+
+    def _sina_gate_message(self, now: Optional[datetime] = None) -> Optional[str]:
+        rows = self.db.query(
+            """
+            SELECT MAX(last_success) AS last_success,
+                   MAX(last_failure) AS last_failure
+            FROM source_status
+            WHERE source = 'AkShare 新浪'
+            """
+        )
+        row = rows[0] if rows else {}
+        current = now or datetime.utcnow()
+        last_success = _datetime_option(row.get("last_success"))
+        last_failure = _datetime_option(row.get("last_failure"))
+        if last_failure and (last_success is None or last_failure > last_success):
+            cooldown = timedelta(minutes=getattr(settings, "sina_failure_cooldown_minutes", 180))
+            if current - last_failure < cooldown:
+                remaining = max(1, int((cooldown - (current - last_failure)).total_seconds() // 60) + 1)
+                return f"新浪源失败冷却中，约 {remaining} 分钟后再试。"
+        if last_success:
+            interval = timedelta(minutes=getattr(settings, "sina_min_interval_minutes", 12))
+            if current - last_success < interval:
+                remaining = max(1, int((interval - (current - last_success)).total_seconds() // 60) + 1)
+                return f"距上次新浪全市场快照过近，约 {remaining} 分钟后再试。"
+        return None
 
     def _upsert_realtime_daily_snapshots(
         self,
@@ -3640,6 +3951,8 @@ class UpdateService:
         include_bj: bool,
         exclude_star: bool,
         warnings: List[str],
+        source: Optional[BaostockSource] = None,
+        client: Any = None,
     ) -> int:
         existing = self.db.scalar("SELECT COUNT(*) FROM stock_basic") or 0
         rows_written = 0
@@ -3651,21 +3964,28 @@ class UpdateService:
                 payload={"rows": existing, "cache": True},
             )
             return int(existing)
-        source = TushareEnrichmentSource()
-        result = self.public_guard.call(
-            "Tushare stock_basic",
-            "股票基础信息",
-            lambda: source.fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star),
-            ttl_minutes=settings.source_probe_ttl_minutes,
-            max_attempts=1,
-            timeout_seconds=settings.tushare_timeout_seconds,
-        )
-        if result.status == "available":
-            rows_written = self.db.upsert("stock_basic", result.frame.to_dict("records"), ["code"])
-            return rows_written or int(existing)
-        message = result.message or "Tushare stock_basic 不可用。"
-        warnings.append(f"Tushare 股票池失败：{message}")
-        raise RuntimeError(f"Tushare stock_basic 不可用：{message}")
+        baostock = source or BaostockSource()
+        try:
+            if client is None:
+                frame = baostock.fetch_stock_basics(include_bj=include_bj, exclude_star=exclude_star)
+            else:
+                frame = baostock.fetch_stock_basics(
+                    include_bj=include_bj,
+                    exclude_star=exclude_star,
+                    client=client,
+                )
+            rows_written += self.db.upsert("stock_basic", frame.to_dict("records"), ["code"])
+            self.baostock_guard.record(
+                "Baostock",
+                "股票基础信息",
+                "available",
+                payload={"rows": len(frame)},
+            )
+        except Exception as exc:
+            warnings.append(f"Baostock 股票池失败：{exc}")
+            self.baostock_guard.record("Baostock", "股票基础信息", "failed", message=str(exc))
+
+        return rows_written or int(existing)
 
     def _update_snapshots(
         self,
@@ -3674,8 +3994,10 @@ class UpdateService:
         exclude_star: bool,
         warnings: List[str],
     ) -> int:
+        shanghai_today = datetime.now(CHINA_TZ).date()
         today_rows = self.db.scalar(
-            "SELECT COUNT(*) FROM daily_snapshots WHERE date = current_date"
+            "SELECT COUNT(*) FROM daily_snapshots WHERE date = ?",
+            [shanghai_today],
         ) or 0
         if today_rows and not force:
             self.public_guard.record(
@@ -3685,20 +4007,72 @@ class UpdateService:
                 payload={"rows": today_rows, "cache": True},
             )
             return int(today_rows)
-        ts_source = TushareRealtimeSource()
-        result = self.public_guard.call(
-            "Tushare 实时日线",
+        if _tushare_realtime_configured():
+            ts_source = TushareRealtimeSource()
+            ts_result = self.public_guard.call(
+                "Tushare 实时日线",
+                "当天行情快照",
+                lambda: ts_source.fetch_realtime_daily(include_bj=include_bj, exclude_star=exclude_star),
+                ttl_minutes=5,
+                max_attempts=1,
+                timeout_seconds=settings.tushare_timeout_seconds,
+            )
+            if ts_result.status == "available":
+                return self._upsert_realtime_daily_snapshots(ts_result.frame)
+            if ts_result.message:
+                warnings.append(f"Tushare 实时日线快照失败：{ts_result.message}")
+        chosen = self._fetch_sina_snapshot(
             "当天行情快照",
-            lambda: ts_source.fetch_realtime_daily(include_bj=include_bj, exclude_star=exclude_star),
-            ttl_minutes=5,
-            max_attempts=1,
-            timeout_seconds=settings.tushare_timeout_seconds,
+            include_bj=include_bj,
+            exclude_star=exclude_star,
         )
-        if result.status != "available":
-            message = result.message or "Tushare 实时日线不可用。"
-            warnings.append(f"Tushare 实时日线快照失败：{message}")
-            raise RuntimeError(f"Tushare 实时日线不可用：{message}")
-        return self._upsert_realtime_daily_snapshots(result.frame)
+        if chosen.status != "available":
+            if chosen.message:
+                warnings.append(f"新浪快照跳过，沿用本地缓存：{chosen.message}")
+        if chosen.status == "available":
+            return self._upsert_realtime_daily_snapshots(chosen.frame)
+        if chosen.message:
+            warnings.append(f"快照全部降级到本地缓存：{chosen.message}")
+        return int(today_rows)
+
+    def _update_baostock_industry(
+        self,
+        force: bool,
+        warnings: List[str],
+        source: Optional[BaostockSource] = None,
+        client: Any = None,
+    ) -> int:
+        latest = _datetime_option(self.db.scalar("SELECT MAX(updated_at) FROM stock_industry"))
+        refresh_after = timedelta(days=getattr(settings, "baostock_industry_refresh_days", 30))
+        if not force and latest and datetime.utcnow() - latest < refresh_after:
+            return int(self.db.scalar("SELECT COUNT(*) FROM stock_industry") or 0)
+        try:
+            resolved_source = source or BaostockSource()
+            frame = (
+                resolved_source.fetch_stock_industry(client=client)
+                if client is not None
+                else resolved_source.fetch_stock_industry()
+            )
+            if frame is None or frame.empty:
+                raise SourceUnavailable("Baostock 行业分类为空。")
+            count = self.db.upsert("stock_industry", frame.to_dict("records"), ["code"])
+            self.baostock_guard.record(
+                "Baostock",
+                "概念/行业成分",
+                "available",
+                payload={"rows": count, "kind": "industry"},
+            )
+            return count
+        except Exception as exc:
+            warnings.append(f"Baostock 行业分类沿用本地缓存：{exc}")
+            self.baostock_guard.record(
+                "Baostock",
+                "概念/行业成分",
+                "failed",
+                message=str(exc),
+                ttl_minutes=60,
+            )
+            return int(self.db.scalar("SELECT COUNT(*) FROM stock_industry") or 0)
 
     def _history_stocks_for_update(
         self,
@@ -3775,23 +4149,104 @@ class UpdateService:
         task_id: str,
         incremental: bool = False,
         target_history_date: Optional[date] = None,
+        source: Optional[BaostockSource] = None,
+        client: Any = None,
     ) -> tuple:
-        try:
-            return self._update_tushare_history(stocks, start, end, task_id)
-        except Exception as exc:
-            self.public_guard.record(
-                "Tushare daily 前复权",
+        if _tushare_history_configured():
+            try:
+                return self._update_tushare_history(stocks, start, end, task_id)
+            except Exception as exc:
+                self.public_guard.record(
+                    "Tushare daily 前复权",
+                    "历史 K 线",
+                    "failed",
+                    message=str(exc),
+                    ttl_minutes=15,
+                )
+                self._patch_task(
+                    task_id,
+                    source="Baostock",
+                    warning=f"Tushare 历史 K 线失败，回退 Baostock：{exc}",
+                )
+
+        baostock = source or BaostockSource()
+        success = 0
+        failed = 0
+        skipped = 0
+        total = len(stocks)
+        target = target_history_date or self._target_history_date()
+        session_context = (
+            nullcontext(client)
+            if client is not None
+            else baostock.session() if callable(getattr(baostock, "session", None)) else nullcontext(None)
+        )
+        with session_context as session_client:
+            for index, row in enumerate(stocks, start=1):
+                code = row["code"]
+                latest = row.get("latest_history_date")
+                if latest is None:
+                    latest = self.db.scalar("SELECT MAX(date) FROM historical_bars WHERE code = ?", [code])
+                if incremental and latest and not force and str(latest) >= target.isoformat():
+                    skipped += 1
+                    self._patch_task(
+                        task_id,
+                        current_stock=code,
+                        processed=index,
+                        skipped=skipped,
+                        success=success,
+                        failed=failed,
+                    )
+                    continue
+                # BaoStock supplies qfq prices. Re-read the rolling window so a
+                # corporate action can rebase already stored bars.
+                fetch_start = start
+                if incremental and fetch_start > end:
+                    skipped += 1
+                    self._patch_task(
+                        task_id,
+                        current_stock=code,
+                        processed=index,
+                        skipped=skipped,
+                        success=success,
+                        failed=failed,
+                    )
+                    continue
+                try:
+                    self.baostock_guard.sleep()
+                    if session_client is None:
+                        frame = baostock.fetch_history(code, fetch_start, end)
+                    else:
+                        frame = baostock.fetch_history(code, fetch_start, end, client=session_client)
+                    if frame.empty:
+                        raise RuntimeError("Baostock 历史行情为空")
+                    self.db.upsert("historical_bars", frame.to_dict("records"), ["code", "date"])
+                    success += 1
+                except Exception as exc:
+                    failed += 1
+                    self.baostock_guard.record(
+                        "Baostock",
+                        "历史 K 线",
+                        "failed",
+                        message=f"{code}: {exc}",
+                        ttl_minutes=15,
+                    )
+                self._patch_task(
+                    task_id,
+                    current_stock=code,
+                    total=total,
+                    processed=index,
+                    success=success,
+                    failed=failed,
+                    skipped=skipped,
+                )
+        if success:
+            self.baostock_guard.record(
+                "Baostock",
                 "历史 K 线",
-                "failed",
-                message=str(exc),
-                ttl_minutes=15,
+                "available",
+                payload={"success": success, "failed": failed, "skipped": skipped},
             )
-            self._patch_task(
-                task_id,
-                source="Tushare daily 前复权",
-                warning=f"Tushare 历史 K 线失败：{exc}",
-            )
-            raise RuntimeError(f"Tushare 历史 K 线不可用：{exc}") from exc
+        return success, failed, skipped
 
     def _update_tushare_history(
         self,
@@ -3970,6 +4425,53 @@ class UpdateService:
         if current.weekday() < 5 and current.hour >= HISTORY_CLOSE_HOUR:
             return current_day
         return UpdateService._previous_weekday(current_day)
+
+    def is_trading_day(self, day: date) -> bool:
+        cached = self.db.scalar("SELECT is_trading_day FROM trading_calendar WHERE date = ?", [day])
+        if cached is None:
+            return day.weekday() < 5
+        return bool(cached)
+
+    def _latest_cached_trading_day(self, day: date) -> Optional[date]:
+        value = self.db.scalar(
+            "SELECT MAX(date) FROM trading_calendar WHERE date <= ? AND is_trading_day IS TRUE",
+            [day],
+        )
+        return _date_option(value)
+
+    def _refresh_trade_calendar(
+        self,
+        start: date,
+        end: date,
+        source: Optional[BaostockSource] = None,
+        client: Any = None,
+    ) -> int:
+        try:
+            resolved_source = source or BaostockSource()
+            frame = (
+                resolved_source.fetch_trade_calendar(start, end, client=client)
+                if client is not None
+                else resolved_source.fetch_trade_calendar(start, end)
+            )
+            if frame is None or frame.empty:
+                return 0
+            count = self.db.upsert("trading_calendar", frame.to_dict("records"), ["date"])
+            self.baostock_guard.record(
+                "Baostock",
+                "交易日历",
+                "available",
+                payload={"rows": count, "start": start.isoformat(), "end": end.isoformat()},
+            )
+            return count
+        except Exception as exc:
+            self.baostock_guard.record(
+                "Baostock",
+                "交易日历",
+                "failed",
+                message=str(exc),
+                ttl_minutes=60,
+            )
+            return 0
 
     @staticmethod
     def _previous_weekday(day: date) -> date:
@@ -4176,6 +4678,17 @@ def _date_option(value: Any) -> Optional[date]:
     if isinstance(value, datetime):
         return value.date()
     return date.fromisoformat(str(value)[:10])
+
+
+def _datetime_option(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo else value
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
 
 
 def _positive_int(value: Any, default: int) -> int:

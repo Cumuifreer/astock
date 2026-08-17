@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import random
+import queue
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, Optional
@@ -46,14 +47,21 @@ class SourceGuard:
         payload: Optional[Dict[str, Any]] = None,
     ) -> None:
         now = datetime.utcnow()
+        existing_rows = self.db.query(
+            "SELECT last_success, last_failure FROM source_status WHERE source = ? AND capability = ?",
+            [source, capability],
+        )
+        existing = existing_rows[0] if existing_rows else {}
+        succeeded = status in {"available", "completed_full", "completed_partial"}
+        failed = status in {"unavailable", "failed"}
         row = {
             "source": source,
             "capability": capability,
             "status": status,
             "last_checked": now,
-            "last_success": now if status in {"available", "completed_full", "completed_partial"} else None,
-            "last_failure": now if status in {"unavailable", "failed"} else None,
-            "failure_reason": message if status in {"unavailable", "failed"} else None,
+            "last_success": now if succeeded else existing.get("last_success"),
+            "last_failure": now if failed else existing.get("last_failure"),
+            "failure_reason": message if failed else None,
             "ttl_until": now + timedelta(minutes=ttl_minutes),
             "payload_json": payload or {},
         }
@@ -126,15 +134,25 @@ class SourceGuard:
 
     @staticmethod
     def _call_with_timeout(fetcher: Callable[[], pd.DataFrame], timeout_seconds: int) -> pd.DataFrame:
-        executor = ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(fetcher)
+        if timeout_seconds <= 0:
+            return fetcher()
+        result_queue: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
+
+        def run() -> None:
+            try:
+                result_queue.put((True, fetcher()))
+            except BaseException as exc:  # pragma: no cover - re-raised in caller
+                result_queue.put((False, exc))
+
+        worker = threading.Thread(target=run, name="source-fetch", daemon=True)
+        worker.start()
         try:
-            return future.result(timeout=timeout_seconds)
-        except TimeoutError:
-            future.cancel()
+            ok, value = result_queue.get(timeout=timeout_seconds)
+        except queue.Empty:
             raise SourceUnavailable(f"接口超过 {timeout_seconds} 秒未返回。")
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+        if ok:
+            return value
+        raise value
 
 
 def first_present(row: Dict[str, Any], candidates: list) -> Any:

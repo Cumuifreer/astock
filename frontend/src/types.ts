@@ -72,12 +72,14 @@ export interface StockDetail {
 }
 
 export interface SourceDiagnostics {
+  mode: 'free' | 'tushare_optional' | string;
+  tushare_enabled: boolean;
   tushare_token_configured: boolean;
   tushare_realtime_enabled: boolean;
   tushare_history_enabled: boolean;
   tushare_enrichment_enabled: boolean;
   tushare_http_url_configured: boolean;
-  tushare_http_url: string;
+  tushare_http_url: string | null;
   last_tushare_error: string | null;
   last_snapshot_source: string | null;
   last_history_source: string | null;
@@ -128,7 +130,8 @@ export interface IndicatorDefinition {
   recommended_rules?: IndicatorRecommendation[];
   choice_options?: Array<{ value: number | string | boolean; label: string }>;
   analysis_field?: string | null;
-  data_status?: 'executable' | 'display_only' | 'planned' | 'parameter' | string;
+  data_status?: 'executable' | 'display_only' | 'planned' | 'unavailable' | 'parameter' | string;
+  availability_reason?: string;
   display_scope?: 'candidate' | 'warehouse' | 'planned' | string | null;
   hard_filter_allowed?: boolean;
   min_coverage_for_filter?: number | null;
@@ -779,9 +782,13 @@ export interface RuntimeHealth {
     slots: RuntimeDailyUpdateSlot[];
   };
   llm?: {
+    enabled: boolean;
     configured: boolean;
     model: string;
     url_host: string;
+  };
+  access_control?: {
+    http_basic_enabled: boolean;
   };
 }
 

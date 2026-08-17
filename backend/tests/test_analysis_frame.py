@@ -1,9 +1,35 @@
 import pandas as pd
+from datetime import date
+from types import SimpleNamespace
 
 from backend.app.db import Database
 from backend.app.schema import migrate
+from backend.app.services import analysis_service as analysis_module
 from backend.app.services.analysis_service import AnalysisService, apply_strategy_filters
 from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG
+
+
+def test_tushare_enrichment_rows_expire_instead_of_being_reused_forever(tmp_path):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "tushare_daily_basic",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": "2026-05-01",
+                "turnover_rate": 3.6,
+                "source": "Tushare daily_basic",
+                "updated_at": "2026-05-01T17:00:00",
+            }
+        ],
+        ["code", "trade_date"],
+    )
+
+    service = AnalysisService(db)
+
+    assert service._latest_tushare_rows("tushare_daily_basic", date(2026, 5, 5), 7)
+    assert service._latest_tushare_rows("tushare_daily_basic", date(2026, 5, 20), 7) == []
 
 
 def test_analysis_frame_keeps_zero_snapshot_values(tmp_path):
@@ -271,7 +297,12 @@ def test_analysis_frame_uses_event_features_only_on_analysis_date_and_keeps_age(
     assert row["days_since_top_list"] == 1
 
 
-def test_theme_metrics_use_as_of_membership_and_exact_limit_event_date(tmp_path):
+def test_theme_metrics_use_as_of_membership_and_exact_limit_event_date(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        analysis_module,
+        "settings",
+        SimpleNamespace(tushare_enabled=True, analysis_batch_size=300),
+    )
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert(
@@ -375,7 +406,12 @@ def test_theme_metrics_use_as_of_membership_and_exact_limit_event_date(tmp_path)
     assert expired["topic_count"] == 0
 
 
-def test_analysis_frame_enriches_theme_metrics(tmp_path):
+def test_analysis_frame_enriches_theme_metrics(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        analysis_module,
+        "settings",
+        SimpleNamespace(tushare_enabled=True, analysis_batch_size=300),
+    )
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     bars = []
@@ -483,7 +519,12 @@ def test_analysis_frame_enriches_theme_metrics(tmp_path):
     assert row["topic_heat"] > 0
 
 
-def test_analysis_frame_enriches_tushare_feature_parameters(tmp_path):
+def test_analysis_frame_enriches_tushare_feature_parameters(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        analysis_module,
+        "settings",
+        SimpleNamespace(tushare_enabled=True, analysis_batch_size=300),
+    )
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert(

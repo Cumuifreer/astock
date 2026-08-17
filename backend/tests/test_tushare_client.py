@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from backend.app.config import _load_env_file, settings
+from backend.app.config import _load_env_file
 from backend.app.sources.base import SourceUnavailable
 from backend.app.sources.tushare_client import create_tushare_pro
 
@@ -45,13 +45,13 @@ def test_create_tushare_pro_sets_required_relay_http_url(monkeypatch):
             return FakePro()
 
         def pro_bar(self, api, ts_code="", limit=0):
-            assert getattr(api, "_DataApi__http_url") == settings.tushare_http_url
+            assert getattr(api, "_DataApi__http_url") == "http://101.35.233.113:8020/"
             return pd.DataFrame([{"ts_code": ts_code, "limit": limit}])
 
     fake = FakeTushare()
     monkeypatch.setitem(sys.modules, "tushare", fake)
 
-    ts, pro = create_tushare_pro("test-token")
+    ts, pro = create_tushare_pro("test-token", "http://101.35.233.113:8020/")
 
     assert ts is fake
     assert fake.token == "test-token"

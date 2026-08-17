@@ -2,7 +2,7 @@
 
 A-Share Signal 是一个本地优先的 A 股研究工作台。它把行情、策略、任务和分析结果都落在本机 DuckDB 里，适合个人做日常复盘、策略筛选、盘中观察和候选跟踪。
 
-它不是交易系统：不接券商账户，不做自动下单，也不提供投资建议。
+它不是交易系统：不接券商账户，不做自动下单，也不提供投资建议。公网部署可以用可选 HTTP Basic Auth 保护整站。
 
 ## 主要功能
 
@@ -24,7 +24,7 @@ FastAPI API and static hosting
         |
 DuckDB local warehouse
         |
-Tushare market-data sync tasks
+Baostock history + AkShare Sina intraday
 ```
 
 - 后端：FastAPI，负责 API、后台任务、数据同步、分析和静态文件托管。
@@ -35,13 +35,10 @@ Tushare market-data sync tasks
 
 ## 数据边界
 
-股票行情和股票增强数据只使用 Tushare：
-
-- `stock_basic`：股票基础信息。
-- `daily`、`adj_factor`、`daily_basic`：前复权历史 K 线、换手率、流通市值。
-- 实时日线接口：盘中快照和当天数据。
-- `stk_factor`、`moneyflow`、`limit_list_d`、`cyq_perf`、`cyq_chips`、`ths_member`、`top_list`、`top_inst`、`hm_detail`：策略特征、展示字段和风险证据。
-- `index_daily`：指数和市场环境计算。
+- Baostock：免费主源。负责股票基础信息、交易日历、前复权历史 K 线、换手率、PE/PB/PS/PCF、指数日线和行业分类。日更会用一个登录会话刷新所需股票的滚动前复权窗口，避免除权后历史口径漂移。
+- AkShare 新浪：仅负责盘中/当天全市场快照。项目自己控制分页、请求超时、页间随机延迟、最短调用间隔和失败冷却；不会使用东财或腾讯备用源。
+- Tushare：代码和历史表仍保留，但总开关默认关闭。只有显式设置 `ASHARE_TUSHARE_ENABLED=1` 后才会读取 token 并请求；旧增强数据有新鲜度上限，过期后不会继续参与当前分析。
+- 本地缓存：页面刷新、服务重启、外部源失败时都从 DuckDB 恢复已有状态。
 
 页面刷新、服务重启或网络临时不稳定时，前端继续读取 DuckDB 里已有的数据和任务状态。新闻资讯源不属于股票行情源，市场简报使用独立资讯抓取和 LLM 配置。
 
@@ -56,6 +53,13 @@ ASHARE_ANALYSIS_BATCH_SIZE=300
 ```
 
 调小这个值会让分析更慢，但更省内存。
+
+免费源支持的核心指标：
+
+- 换手率：来自 Baostock 历史 K 线字段 `turn`；缺失会计入覆盖率，策略可选择跳过或降级。
+- RPS：直接用本地历史收盘价计算 RPS20、RPS60、RPS120。计算方式为近 N 日涨幅在本地股票池中的百分位排名乘以 100。
+- 振幅：直接用本地 K 线计算，`(high - low) / prev_close`。
+- 流通市值：优先使用新浪原始 `nmc`；缺失时根据 Baostock 成交量和换手率估算流通股本并落入本地缓存。缺失不会导致分析失败。
 
 ## 盘中雷达
 
@@ -81,27 +85,57 @@ curl -sS http://127.0.0.1:8000/api/intraday/boards
 curl -sS http://127.0.0.1:8000/api/intraday/strategy-tracking
 ```
 
-## 市场简报和 LLM
+默认盘中采样降为 9 个时点：
 
-市场简报默认由后台调度器自动运行，时间由 `ASHARE_DAILY_BRIEF_TIME` 控制，支持逗号分隔多个时间，例如：
+`09:40,10:10,10:40,11:10,13:10,13:40,14:10,14:40,14:55`
+
+`ASHARE_INTRADAY_SCHEDULE` 是脚本、后端 scheduler 和状态页共同使用的时间表。轻量服务器上不建议全市场 5 分钟一次。
+
+默认免费配置可从 `.env.example` 复制：
 
 ```bash
-ASHARE_DAILY_BRIEF_TIME=08:20,18:20
-ASHARE_DAILY_BRIEF_SCHEDULER=1
-ASHARE_DAILY_BRIEF_API_KEY=your-key
-ASHARE_DAILY_BRIEF_MODEL=deepseek-chat
-ASHARE_DAILY_BRIEF_LLM_URL=https://api.deepseek.com/chat/completions
+export ASHARE_LLM_ENABLED=0
+export ASHARE_TUSHARE_ENABLED=0
+export ASHARE_INTRADAY_SCHEDULER=1
+export ASHARE_INTRADAY_SCHEDULE=09:40,10:10,10:40,11:10,13:10,13:40,14:10,14:40,14:55
+export ASHARE_SINA_MIN_INTERVAL_MINUTES=12
+export ASHARE_SINA_FAILURE_COOLDOWN_MINUTES=180
 ```
 
-候选股 AI 解读同样由后台任务自动处理。页面不会提供“生成按钮”，也不会因为打开页面而调用模型。
+轻量日更会刷新最近 `ASHARE_HISTORY_DAYS` 天的 BaoStock 前复权窗口。市场环境使用 BaoStock 指数、本地市场宽度和当日涨跌幅估算；行业热力使用 BaoStock 行业分类和本地行情。
 
-## 本地运行
+盘中调度只保留一套：默认使用进程内 scheduler。不要再同时启用外部 `ashare-intraday.timer`；如必须使用外部 timer，应设置 `ASHARE_INTRADAY_SCHEDULER=0`，两者只能选一个。
+
+## 资讯简报
+
+资讯简报会自动抓取国际科技、财经、时政等公开资讯源，保存原始条目和生成后的摘要到 DuckDB。默认每天北京时间 08:20 运行一次；也可以用逗号配置多个北京时间。 如果数据库里还没有任何简报，服务启动或打开首页时会自动排队生成第一份。
+
+LLM 默认关闭。关闭时不会读取 `DEEPSEEK_API_KEY` 或 `ASHARE_DAILY_BRIEF_API_KEY`，资讯简报仍会抓取公开资讯并生成规则降级摘要。以后需要恢复时显式打开：
+
+```bash
+export ASHARE_LLM_ENABLED=1
+export ASHARE_DAILY_BRIEF_API_KEY=your-api-key
+export ASHARE_DAILY_BRIEF_MODEL=deepseek-chat
+```
+
+可选配置：
+
+```bash
+export ASHARE_DAILY_BRIEF_TIME=08:20,18:20
+export ASHARE_DAILY_BRIEF_SCHEDULER=1
+export ASHARE_DAILY_BRIEF_SOURCE_TIMEOUT=12
+```
+
+只在 `ASHARE_LLM_ENABLED=1` 时才会读取密钥。仅在 systemd 中残留旧 key 不会启用或调用 LLM。
+
+候选股 AI 解读同样由后台任务处理。页面不会因为打开而调用模型；关闭 LLM 后保留任务和展示能力，但不会请求模型 API。
+
+## 本地启动
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
-
 npm --prefix frontend install
 npm --prefix frontend run build
 
@@ -134,20 +168,18 @@ cp .env.example .env
 常用配置：
 
 ```bash
-ASHARE_TUSHARE_TOKEN=your-token
-ASHARE_TUSHARE_HTTP_URL=http://101.35.233.113:8020/
-ASHARE_TUSHARE_REALTIME=1
-ASHARE_TUSHARE_HISTORY=1
-ASHARE_TUSHARE_ENRICHMENT=1
-ASHARE_TUSHARE_HISTORY_TIMEOUT=900
-ASHARE_TUSHARE_ENRICHMENT_CODE_LIMIT=200
+ASHARE_LLM_ENABLED=0
+ASHARE_TUSHARE_ENABLED=0
+ASHARE_INTRADAY_SCHEDULER=1
+ASHARE_INTRADAY_SCHEDULE=09:40,10:10,10:40,11:10,13:10,13:40,14:10,14:40,14:55
+ASHARE_SINA_MIN_INTERVAL_MINUTES=12
+ASHARE_SINA_FAILURE_COOLDOWN_MINUTES=180
 ASHARE_ANALYSIS_BATCH_SIZE=300
-
-ASHARE_DAILY_BRIEF_API_KEY=your-llm-key
-ASHARE_DAILY_BRIEF_MODEL=deepseek-chat
-ASHARE_DAILY_BRIEF_LLM_URL=https://api.deepseek.com/chat/completions
 ASHARE_DAILY_BRIEF_TIME=08:20,18:20
+ASHARE_DAILY_UPDATE_SCHEDULER=0
 ```
+
+需要恢复付费增强或 LLM 时，先分别设置 `ASHARE_TUSHARE_ENABLED=1` 或 `ASHARE_LLM_ENABLED=1`，再提供对应 token/key。
 
 ## systemd 部署示例
 
@@ -165,17 +197,17 @@ ExecStart=/opt/astock/.venv/bin/python -m uvicorn backend.app.main:app --host 0.
 Restart=always
 RestartSec=5
 Environment="ASHARE_DB_PATH=/opt/astock/data/ashare_signal.duckdb"
-Environment="ASHARE_TUSHARE_TOKEN=replace-with-your-token"
-Environment="ASHARE_TUSHARE_HTTP_URL=http://101.35.233.113:8020/"
-Environment="ASHARE_TUSHARE_REALTIME=1"
-Environment="ASHARE_TUSHARE_HISTORY=1"
-Environment="ASHARE_TUSHARE_ENRICHMENT=1"
+Environment="ASHARE_LLM_ENABLED=0"
+Environment="ASHARE_TUSHARE_ENABLED=0"
 Environment="ASHARE_ANALYSIS_BATCH_SIZE=300"
 Environment="ASHARE_INTRADAY_SCHEDULER=1"
+Environment="ASHARE_INTRADAY_SCHEDULE=09:40,10:10,10:40,11:10,13:10,13:40,14:10,14:40,14:55"
+Environment="ASHARE_INTRADAY_RETENTION_DAYS=10"
 Environment="ASHARE_DAILY_BRIEF_SCHEDULER=1"
 Environment="ASHARE_DAILY_BRIEF_TIME=08:20,18:20"
-Environment="ASHARE_DAILY_BRIEF_API_KEY=replace-with-your-key"
-Environment="ASHARE_DAILY_BRIEF_MODEL=deepseek-chat"
+# 公网部署请设置强随机密码，或在反向代理/VPN 层做等价保护。
+Environment="ASHARE_HTTP_BASIC_USERNAME=replace-with-user"
+Environment="ASHARE_HTTP_BASIC_PASSWORD=replace-with-strong-random-password"
 
 [Install]
 WantedBy=multi-user.target
@@ -199,6 +231,8 @@ python scripts/init_db.py
 sudo systemctl start ashare-signal
 sudo systemctl status ashare-signal --no-pager -l
 ```
+
+如果当前 unit 里仍有 `DEEPSEEK_API_KEY`、`ASHARE_DAILY_BRIEF_API_KEY`、`ASHARE_TUSHARE_TOKEN` 或旧 Tushare 中转地址，可以直接删除；即使暂时没删，总开关为 `0` 时应用也不会读取密钥。unit 修改后先执行 `sudo systemctl daemon-reload`。公网不应在无认证情况下直接暴露服务端口。
 
 ## 备份
 

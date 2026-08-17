@@ -55,7 +55,7 @@ LEFT JOIN (
 
 ACTIVE_STOCK_FILTER = "b.suspended IS DISTINCT FROM TRUE"
 INACTIVE_STOCK_FILTER = "b.suspended IS TRUE"
-FORBIDDEN_EXTERNAL_SOURCE_MARKERS = ("akshare", "baostock", "adata")
+FORBIDDEN_EXTERNAL_SOURCE_MARKERS = ("adata", "eastmoney", "东方财富", "tencent", "腾讯")
 
 
 def _is_forbidden_external_source(source: Any) -> bool:
@@ -93,31 +93,31 @@ def _format_brief_published(value: Any) -> str:
 
 CAPABILITY_DEFINITIONS = {
     "历史 K 线": {
-        "fallback_sources": ["Tushare daily 前复权", "本地缓存"],
+        "fallback_sources": ["Baostock", "本地缓存", "Tushare（显式启用）"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "当天行情快照": {
-        "fallback_sources": ["Tushare 实时日线", "本地缓存"],
+        "fallback_sources": ["AkShare 新浪（低频）", "本地缓存", "Tushare（显式启用）"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "股票基础信息": {
-        "fallback_sources": ["Tushare stock_basic", "本地缓存"],
+        "fallback_sources": ["Baostock", "本地缓存", "Tushare（显式启用）"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "流通市值": {
-        "fallback_sources": ["Tushare daily_basic", "Tushare 实时日线", "本地缓存"],
+        "fallback_sources": ["Baostock 成交量/换手率估算", "AkShare 新浪原始字段", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "换手率": {
-        "fallback_sources": ["Tushare daily_basic", "Tushare daily 前复权", "本地缓存"],
+        "fallback_sources": ["Baostock", "AkShare 新浪原始字段", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
@@ -135,19 +135,19 @@ CAPABILITY_DEFINITIONS = {
         "coverage_kind": "stock",
     },
     "ST / 停牌状态": {
-        "fallback_sources": ["Tushare stock_basic", "Tushare 日线缺行", "本地缓存"],
+        "fallback_sources": ["Baostock 股票状态/交易状态", "本地缓存"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "市场环境": {
-        "fallback_sources": ["Tushare index_daily", "本地历史宽度", "Tushare limit_list_d"],
+        "fallback_sources": ["Baostock 指数", "本地历史宽度", "本地涨跌幅估算"],
         "can_backfill": True,
         "participates_in_analysis": False,
         "coverage_kind": "dataset",
     },
     "每日指标": {
-        "fallback_sources": ["Tushare daily_basic"],
+        "fallback_sources": ["Baostock PE/PB/PS/PCF", "Tushare（显式启用）"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
@@ -177,13 +177,13 @@ CAPABILITY_DEFINITIONS = {
         "coverage_kind": "stock",
     },
     "概念/行业成分": {
-        "fallback_sources": ["Tushare ths_member"],
+        "fallback_sources": ["Baostock 行业分类", "Tushare 概念（显式启用）"],
         "can_backfill": True,
         "participates_in_analysis": True,
         "coverage_kind": "stock",
     },
     "板块热力": {
-        "fallback_sources": ["Tushare moneyflow_cnt_ths", "Tushare moneyflow_ind_ths", "Tushare ths_daily"],
+        "fallback_sources": ["Baostock 行业分类 + 本地行情", "Tushare（显式启用）"],
         "can_backfill": True,
         "participates_in_analysis": False,
         "coverage_kind": "dataset",
@@ -194,6 +194,16 @@ CAPABILITY_DEFINITIONS = {
         "participates_in_analysis": True,
         "coverage_kind": "event",
     },
+}
+
+TUSHARE_ONLY_CAPABILITIES = {"技术因子", "资金流向", "涨跌停", "筹码分布", "龙虎榜/游资"}
+TUSHARE_FRESHNESS_DAYS = {
+    "每日指标": 7,
+    "技术因子": 7,
+    "资金流向": 7,
+    "涨跌停": 0,
+    "筹码分布": 14,
+    "龙虎榜/游资": 30,
 }
 
 DATA_UPDATE_DAG: List[Dict[str, Any]] = [
@@ -359,6 +369,8 @@ class DataService:
         environment = self._latest_market_environment()
         trade_date = environment.get("date") if environment else self.db.scalar("SELECT MAX(date) FROM historical_bars")
         sector_nodes = self.sector_heatmap("concept", limit=40)
+        if not sector_nodes and not getattr(settings, "tushare_enabled", False):
+            sector_nodes = self.sector_heatmap("industry", limit=40)
         state = self._market_state(environment, sector_nodes)
         pulse = {
             "breadth_score": _round(environment.get("breadth_score") if environment else None),
@@ -385,7 +397,7 @@ class DataService:
             "realtime_capabilities": {
                 "daily_snapshots": "realtime",
                 "market_environment": "realtime_from_snapshots",
-                "intraday_concept_heat": "realtime_from_snapshots",
+                "intraday_sector_heat": "industry_from_baostock_and_realtime_snapshots",
                 "sector_moneyflow": "daily_or_source_dependent",
                 "limit_list": "daily_or_after_close",
                 "ths_daily": "daily_or_source_dependent",
@@ -563,25 +575,72 @@ class DataService:
             for row in tushare_rows
             if row.get("capability") in {"每日指标", "技术因子", "资金流向", "涨跌停", "筹码分布", "概念/行业成分", "龙虎榜/游资", "板块热力"}
         ]
+        tushare_enabled = bool(
+            getattr(
+                settings,
+                "tushare_enabled",
+                settings.tushare_realtime_enabled
+                or settings.tushare_history_enabled
+                or settings.tushare_enrichment_enabled,
+            )
+        )
+        if tushare_enabled:
+            realtime_diagnostic = _diagnostic_status(
+                realtime_status,
+                fallback_source=snapshot_source,
+                expected_source="Tushare 实时日线",
+            )
+            history_diagnostic = _diagnostic_status(
+                history_status,
+                fallback_source=history_source,
+                expected_source="Tushare daily 前复权",
+            )
+            enrichment_diagnostic = _aggregate_diagnostic_status(enrichment_statuses)
+        else:
+            sina_status = status_for("AkShare 新浪", "当天行情快照") or status_for(
+                "AkShare 新浪",
+                "盘中行情快照",
+            )
+            baostock_history_status = status_for("Baostock", "历史 K 线")
+            industry_status = status_for("Baostock", "概念/行业成分")
+            realtime_diagnostic = _diagnostic_status(
+                sina_status,
+                fallback_source=snapshot_source,
+                expected_source="AkShare 新浪",
+            )
+            history_diagnostic = _diagnostic_status(
+                baostock_history_status,
+                fallback_source=history_source,
+                expected_source="Baostock",
+            )
+            enrichment_diagnostic = _diagnostic_status(
+                industry_status,
+                fallback_source="Baostock 行业分类",
+                expected_source="Baostock",
+            )
 
-        realtime_status_value = _diagnostic_status(realtime_status, fallback_source=snapshot_source, expected_source="Tushare 实时日线")
-        history_status_value = _diagnostic_status(history_status, fallback_source=history_source, expected_source="Tushare daily 前复权")
+        snapshot_expected = "Tushare 实时日线" if tushare_enabled else "AkShare 新浪"
+        history_expected = "Tushare daily 前复权" if tushare_enabled else "Baostock"
 
         return {
+            "mode": "tushare_optional" if tushare_enabled else "free",
+            "tushare_enabled": tushare_enabled,
             "tushare_token_configured": bool(settings.tushare_token),
             "tushare_realtime_enabled": bool(settings.tushare_realtime_enabled),
             "tushare_history_enabled": bool(settings.tushare_history_enabled),
             "tushare_enrichment_enabled": bool(settings.tushare_enrichment_enabled),
-            "tushare_http_url_configured": bool(settings.tushare_http_url),
-            "tushare_http_url": settings.tushare_http_url,
-            "last_tushare_error": (tushare_failures[0].get("failure_reason") if tushare_failures else None),
+            "tushare_http_url_configured": bool(tushare_enabled and settings.tushare_http_url),
+            "tushare_http_url": settings.tushare_http_url if tushare_enabled else None,
+            "last_tushare_error": (
+                tushare_failures[0].get("failure_reason") if tushare_enabled and tushare_failures else None
+            ),
             "last_snapshot_source": snapshot_source,
             "last_history_source": history_source,
-            "snapshot_source": _source_contract("Tushare 实时日线", snapshot_source, realtime_status_value),
-            "history_source": _source_contract("Tushare daily 前复权", history_source, history_status_value),
-            "realtime_status": realtime_status_value,
-            "history_status": history_status_value,
-            "enrichment_status": _aggregate_diagnostic_status(enrichment_statuses),
+            "snapshot_source": _source_contract(snapshot_expected, snapshot_source, realtime_diagnostic),
+            "history_source": _source_contract(history_expected, history_source, history_diagnostic),
+            "realtime_status": realtime_diagnostic,
+            "history_status": history_diagnostic,
+            "enrichment_status": enrichment_diagnostic,
             "rows": list(latest_by_source_cap.values()),
         }
 
@@ -692,9 +751,19 @@ class DataService:
             },
             "daily_update_scheduler": daily_update_scheduler,
             "llm": {
-                "configured": bool(settings.daily_brief_api_key),
+                "enabled": bool(getattr(settings, "llm_enabled", bool(settings.daily_brief_api_key))),
+                "configured": bool(
+                    getattr(settings, "llm_enabled", bool(settings.daily_brief_api_key))
+                    and settings.daily_brief_api_key
+                ),
                 "model": settings.daily_brief_model,
                 "url_host": _url_host(settings.daily_brief_llm_url),
+            },
+            "access_control": {
+                "http_basic_enabled": bool(
+                    getattr(settings, "http_basic_username", "")
+                    and getattr(settings, "http_basic_password", "")
+                )
             },
         }
 
@@ -798,6 +867,12 @@ class DataService:
         elif status == "active" and not exact_code_search:
             clauses.append(ACTIVE_STOCK_FILTER)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        tushare_live_sql = "TRUE" if getattr(settings, "tushare_enabled", False) else "FALSE"
+        membership_count_sql = (
+            "(SELECT COUNT(*) FROM tushare_ths_member c WHERE c.code = b.code)"
+            if getattr(settings, "tushare_enabled", False)
+            else "(SELECT COUNT(*) FROM stock_industry i WHERE i.code = b.code AND i.industry IS NOT NULL)"
+        )
         total = self.db.scalar(f"SELECT COUNT(*) FROM stock_basic b {where}", params) or 0
         rows = self.db.query(
             f"""
@@ -806,21 +881,21 @@ class DataService:
                    CASE WHEN b.suspended IS TRUE THEN '非活跃' ELSE '活跃' END AS status_label,
                    {STOCK_BOARD_CASE} AS board,
                    s.latest_price, s.pct_chg, s.amount, s.volume,
-                   COALESCE(dbs.turnover_rate, s.turnover_rate) AS turnover_rate,
+                   COALESCE(CASE WHEN {tushare_live_sql} THEN dbs.turnover_rate END, s.turnover_rate) AS turnover_rate,
                    f.float_market_value,
-                   COALESCE(dbs.volume_ratio, hv.local_volume_ratio) AS volume_ratio,
+                   COALESCE(CASE WHEN {tushare_live_sql} THEN dbs.volume_ratio END, hv.local_volume_ratio) AS volume_ratio,
                    CASE
-                       WHEN dbs.volume_ratio IS NOT NULL THEN 'Tushare daily_basic'
+                       WHEN {tushare_live_sql} AND dbs.volume_ratio IS NOT NULL THEN 'Tushare daily_basic'
                        WHEN hv.local_volume_ratio IS NOT NULL THEN '本地K线'
                        ELSE NULL
                    END AS volume_ratio_source,
-                   mf.main_net_amount,
-                   mf.net_mf_amount,
-                   cyq.winner_rate,
-                   cyq.cost_50pct,
-                   (SELECT COUNT(*) FROM tushare_ths_member c WHERE c.code = b.code) AS concept_count,
-                   (SELECT limit_type FROM tushare_limit_list_d l WHERE l.code = b.code ORDER BY trade_date DESC LIMIT 1) AS latest_limit_type,
-                   (SELECT net_amount FROM tushare_top_list t WHERE t.code = b.code ORDER BY trade_date DESC LIMIT 1) AS latest_top_net_amount,
+                   CASE WHEN {tushare_live_sql} THEN mf.main_net_amount END AS main_net_amount,
+                   CASE WHEN {tushare_live_sql} THEN mf.net_mf_amount END AS net_mf_amount,
+                   CASE WHEN {tushare_live_sql} THEN cyq.winner_rate END AS winner_rate,
+                   CASE WHEN {tushare_live_sql} THEN cyq.cost_50pct END AS cost_50pct,
+                   {membership_count_sql} AS concept_count,
+                   (SELECT limit_type FROM tushare_limit_list_d l WHERE l.code = b.code AND {tushare_live_sql} ORDER BY trade_date DESC LIMIT 1) AS latest_limit_type,
+                   (SELECT net_amount FROM tushare_top_list t WHERE t.code = b.code AND {tushare_live_sql} ORDER BY trade_date DESC LIMIT 1) AS latest_top_net_amount,
                    (SELECT COUNT(*) FROM historical_bars h WHERE h.code = b.code) AS history_days,
                    (SELECT MAX(date) FROM historical_bars h WHERE h.code = b.code) AS latest_history_date
             FROM stock_basic b
@@ -850,15 +925,17 @@ class DataService:
 
     def stock_detail(self, code: str) -> Dict[str, Any]:
         target = code.strip().upper()
+        tushare_enabled = bool(getattr(settings, "tushare_enabled", False))
+        tushare_live_sql = "TRUE" if tushare_enabled else "FALSE"
         basic_rows = self.db.query(
             f"""
             SELECT b.code, b.name, b.exchange, b.list_date, b.source, b.is_st, b.suspended,
                    {STOCK_BOARD_CASE} AS board,
                    s.latest_price, s.pct_chg, s.amount, s.volume,
-                   COALESCE(dbs.turnover_rate, s.turnover_rate) AS turnover_rate,
-                   COALESCE(dbs.volume_ratio, hv.local_volume_ratio) AS volume_ratio,
+                   COALESCE(CASE WHEN {tushare_live_sql} THEN dbs.turnover_rate END, s.turnover_rate) AS turnover_rate,
+                   COALESCE(CASE WHEN {tushare_live_sql} THEN dbs.volume_ratio END, hv.local_volume_ratio) AS volume_ratio,
                    CASE
-                       WHEN dbs.volume_ratio IS NOT NULL THEN 'Tushare daily_basic'
+                       WHEN {tushare_live_sql} AND dbs.volume_ratio IS NOT NULL THEN 'Tushare daily_basic'
                        WHEN hv.local_volume_ratio IS NOT NULL THEN '本地K线'
                        ELSE NULL
                    END AS volume_ratio_source,
@@ -884,7 +961,21 @@ class DataService:
         if not basic_rows:
             return {"basic": None}
         basic = basic_rows[0]
-        daily_basic = self._latest_code_row("tushare_daily_basic", target)
+        daily_basic = self._latest_code_row("tushare_daily_basic", target) if tushare_enabled else None
+        if not tushare_enabled:
+            valuation_rows = self.db.query(
+                """
+                SELECT code, date AS trade_date, turn AS turnover_rate,
+                       pe_ttm AS pe, pe_ttm, pb_mrq AS pb, ps_ttm, pcf_ncf_ttm,
+                       source
+                FROM historical_bars
+                WHERE code = ?
+                ORDER BY date DESC
+                LIMIT 1
+                """,
+                [target],
+            )
+            daily_basic = valuation_rows[0] if valuation_rows else None
         if basic.get("volume_ratio") is not None and (not daily_basic or daily_basic.get("volume_ratio") is None):
             daily_basic = dict(daily_basic or {})
             daily_basic.setdefault("code", target)
@@ -898,10 +989,18 @@ class DataService:
         return {
             "basic": basic,
             "daily_basic": daily_basic,
-            "factor": self._latest_code_row("tushare_stk_factor", target),
-            "moneyflow": self._latest_code_row("tushare_moneyflow", target),
-            "cyq_perf": self._latest_code_row("tushare_cyq_perf", target),
+            "factor": self._latest_code_row("tushare_stk_factor", target) if tushare_enabled else None,
+            "moneyflow": self._latest_code_row("tushare_moneyflow", target) if tushare_enabled else None,
+            "cyq_perf": self._latest_code_row("tushare_cyq_perf", target) if tushare_enabled else None,
             "concepts": self.db.query(
+                """
+                SELECT 'BS-' || industry AS con_code, industry AS con_name, NULL AS weight,
+                       NULL AS in_date, NULL AS out_date, NULL AS is_new, updated_at
+                FROM stock_industry
+                WHERE code = ? AND industry IS NOT NULL
+                """,
+                [target],
+            ) if not tushare_enabled else self.db.query(
                 """
                 SELECT con_code, con_name, weight, in_date, out_date, is_new, updated_at
                 FROM tushare_ths_member
@@ -920,7 +1019,7 @@ class DataService:
                 LIMIT 10
                 """,
                 [target],
-            ),
+            ) if tushare_enabled else [],
             "top_events": self.db.query(
                 """
                 SELECT trade_date, reason, net_amount, amount_rate
@@ -930,7 +1029,7 @@ class DataService:
                 LIMIT 10
                 """,
                 [target],
-            ),
+            ) if tushare_enabled else [],
             "history": self.db.query(
                 """
                 SELECT date, close, pct_chg, amount, turn
@@ -1380,6 +1479,7 @@ class DataService:
             WHERE {ACTIVE_STOCK_FILTER}
             """
         )
+        latest_baostock_industry = self.db.scalar("SELECT MAX(updated_at) FROM stock_industry")
         latest_tushare_top = self.db.scalar(
             """
             SELECT MAX(trade_date)
@@ -1449,8 +1549,32 @@ class DataService:
             if not _is_forbidden_external_source(row.get("source"))
         }
 
-        def latest_code_count(table: str, latest: Any) -> int:
-            if not latest:
+        reference_candidates = [
+            _date_value(value)
+            for value in [
+                latest_history,
+                latest_snapshot,
+                latest_tushare_daily_basic,
+                latest_tushare_stk_factor,
+                latest_tushare_moneyflow,
+                latest_tushare_limit,
+                latest_tushare_cyq,
+                latest_tushare_top,
+            ]
+        ]
+        reference_date = max((value for value in reference_candidates if value), default=date.today())
+
+        def is_fresh(latest: Any, capability: str) -> bool:
+            latest_date = _date_value(latest)
+            max_age = TUSHARE_FRESHNESS_DAYS.get(capability)
+            return bool(
+                latest_date
+                and max_age is not None
+                and reference_date - timedelta(days=max_age) <= latest_date <= reference_date
+            )
+
+        def latest_code_count(table: str, latest: Any, capability: str) -> int:
+            if not latest or not is_fresh(latest, capability):
                 return 0
             return int(
                 self.db.scalar(
@@ -1467,7 +1591,7 @@ class DataService:
             )
 
         latest_cyq_count = 0
-        if latest_tushare_cyq:
+        if latest_tushare_cyq and is_fresh(latest_tushare_cyq, "筹码分布"):
             latest_cyq_count = int(
                 self.db.scalar(
                     """
@@ -1491,7 +1615,7 @@ class DataService:
                 or 0
             )
         latest_top_count = 0
-        if latest_tushare_top:
+        if latest_tushare_top and is_fresh(latest_tushare_top, "龙虎榜/游资"):
             latest_top_count = int(
                 self.db.scalar(
                     """
@@ -1505,6 +1629,40 @@ class DataService:
                     )
                     """,
                     [latest_tushare_top, latest_tushare_top, latest_tushare_top],
+                )
+                or 0
+            )
+
+        industry_membership_count = int(
+            self.db.scalar(
+                f"""
+                SELECT COUNT(DISTINCT i.code)
+                FROM stock_industry i
+                JOIN stock_basic b ON b.code = i.code
+                WHERE i.industry IS NOT NULL AND i.industry <> ''
+                  AND {ACTIVE_STOCK_FILTER}
+                """
+            )
+            or 0
+        )
+        if getattr(settings, "tushare_enabled", False):
+            industry_membership_count = int(
+                self.db.scalar(
+                    f"""
+                    SELECT COUNT(DISTINCT code)
+                    FROM (
+                        SELECT i.code
+                        FROM stock_industry i
+                        JOIN stock_basic b ON b.code = i.code
+                        WHERE i.industry IS NOT NULL AND i.industry <> ''
+                          AND {ACTIVE_STOCK_FILTER}
+                        UNION
+                        SELECT t.code
+                        FROM tushare_ths_member t
+                        JOIN stock_basic b ON b.code = t.code
+                        WHERE {ACTIVE_STOCK_FILTER}
+                    )
+                    """
                 )
                 or 0
             )
@@ -1580,20 +1738,28 @@ class DataService:
             )
             or 0,
             "市场环境": self.db.scalar("SELECT COUNT(*) FROM market_environment") or 0,
-            "每日指标": latest_code_count("tushare_daily_basic", latest_tushare_daily_basic),
-            "技术因子": latest_code_count("tushare_stk_factor", latest_tushare_stk_factor),
-            "资金流向": latest_code_count("tushare_moneyflow", latest_tushare_moneyflow),
-            "涨跌停": latest_code_count("tushare_limit_list_d", latest_tushare_limit),
+            "每日指标": max(
+                latest_code_count("tushare_daily_basic", latest_tushare_daily_basic, "每日指标"),
+                int(
+                    self.db.scalar(
+                        f"""
+                        SELECT COUNT(DISTINCT h.code)
+                        FROM historical_bars h
+                        JOIN stock_basic b ON b.code = h.code
+                        WHERE h.date = ?
+                          AND (h.pe_ttm IS NOT NULL OR h.pb_mrq IS NOT NULL OR h.ps_ttm IS NOT NULL)
+                          AND {ACTIVE_STOCK_FILTER}
+                        """,
+                        [latest_history],
+                    )
+                    or 0
+                ),
+            ),
+            "技术因子": latest_code_count("tushare_stk_factor", latest_tushare_stk_factor, "技术因子"),
+            "资金流向": latest_code_count("tushare_moneyflow", latest_tushare_moneyflow, "资金流向"),
+            "涨跌停": latest_code_count("tushare_limit_list_d", latest_tushare_limit, "涨跌停"),
             "筹码分布": latest_cyq_count,
-            "概念/行业成分": self.db.scalar(
-                f"""
-                SELECT COUNT(DISTINCT t.code)
-                FROM tushare_ths_member t
-                JOIN stock_basic b ON b.code = t.code
-                WHERE {ACTIVE_STOCK_FILTER}
-                """
-            )
-            or 0,
+            "概念/行业成分": industry_membership_count,
             "龙虎榜/游资": latest_top_count,
             "板块热力": self.db.scalar("SELECT COUNT(*) FROM market_sector_daily WHERE trade_date = ?", [latest_sector_heat]) or 0,
         }
@@ -1643,7 +1809,7 @@ class DataService:
             elif capability == "市场环境":
                 latest_update = latest_market_environment
             elif capability == "每日指标":
-                latest_update = latest_tushare_daily_basic
+                latest_update = latest_tushare_daily_basic if is_fresh(latest_tushare_daily_basic, capability) else latest_history
             elif capability == "技术因子":
                 latest_update = latest_tushare_stk_factor
             elif capability == "资金流向":
@@ -1653,7 +1819,7 @@ class DataService:
             elif capability == "筹码分布":
                 latest_update = latest_tushare_cyq
             elif capability == "概念/行业成分":
-                latest_update = latest_tushare_ths
+                latest_update = latest_baostock_industry or latest_tushare_ths
             elif capability == "龙虎榜/游资":
                 latest_update = latest_tushare_top
             elif capability == "板块热力":
@@ -1668,7 +1834,13 @@ class DataService:
                     "latest_update": latest_update,
                     "last_failure_reason": last_failure_reason,
                     "uses_cache": True,
-                    "can_backfill": definition["can_backfill"],
+                    "can_backfill": bool(
+                        definition["can_backfill"]
+                        and (
+                            capability not in TUSHARE_ONLY_CAPABILITIES
+                            or getattr(settings, "tushare_enabled", False)
+                        )
+                    ),
                     "participates_in_analysis": definition["participates_in_analysis"],
                     "updated_at": datetime.utcnow(),
                 }

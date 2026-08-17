@@ -4,6 +4,7 @@ import pandas as pd
 
 from backend.app.db import Database
 from backend.app.schema import migrate
+from backend.app.services import update_service as update_module
 from backend.app.services.data_service import DataService
 from backend.app.services.update_service import UpdateService
 
@@ -314,7 +315,8 @@ def _snapshot(code: str, name: str, pct_chg: float, amount: float = 10_000_000) 
     }
 
 
-def test_realtime_concept_heat_skips_non_theme_pools(tmp_path):
+def test_realtime_concept_heat_skips_non_theme_pools(tmp_path, monkeypatch):
+    monkeypatch.setattr(update_module, "_tushare_enrichment_configured", lambda: True)
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert(

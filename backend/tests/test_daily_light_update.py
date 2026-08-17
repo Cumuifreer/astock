@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from datetime import date, datetime
 
 import pandas as pd
@@ -139,6 +140,49 @@ def test_incremental_history_start_continues_after_latest_bar(tmp_path):
         19,
     )
     assert service._history_fetch_start(date(2026, 1, 1), None, incremental=True) == date(2026, 1, 1)
+
+
+def test_baostock_history_reuses_one_session_and_refreshes_qfq_window(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    calls = []
+    session_client = object()
+
+    class FakeBaostock:
+        @contextmanager
+        def session(self):
+            calls.append("login")
+            try:
+                yield session_client
+            finally:
+                calls.append("logout")
+
+        def fetch_history(self, code, start_date, end_date, client=None):
+            calls.append((code, start_date, end_date, client))
+            return pd.DataFrame([_bar(code, end_date.isoformat())])
+
+    service = UpdateService(db)
+    monkeypatch.setattr(service.baostock_guard, "sleep", lambda: None)
+    result = service._update_history(
+        [
+            {"code": "000001.SZ", "latest_history_date": "2026-05-21"},
+            {"code": "600000.SH", "latest_history_date": "2026-05-20"},
+        ],
+        date(2026, 1, 1),
+        date(2026, 5, 22),
+        force=False,
+        task_id="missing-task",
+        incremental=True,
+        target_history_date=date(2026, 5, 22),
+        source=FakeBaostock(),
+    )
+
+    history_calls = [item for item in calls if isinstance(item, tuple)]
+    assert result == (2, 0, 0)
+    assert calls[0] == "login"
+    assert calls[-1] == "logout"
+    assert len(history_calls) == 2
+    assert all(item[1] == date(2026, 1, 1) and item[3] is session_client for item in history_calls)
 
 
 def test_history_update_prefers_tushare_batch_and_refreshes_qfq_window(tmp_path, monkeypatch):

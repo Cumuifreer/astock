@@ -13,7 +13,7 @@ import pandas as pd
 
 from backend.app.config import settings
 from backend.app.db import Database
-from backend.app.services.indicator_registry import INDICATOR_BY_ID
+from backend.app.services.indicator_registry import INDICATOR_BY_ID, TUSHARE_ONLY_INDICATOR_IDS
 from backend.app.services.market_utils import safe_float, to_sina_chart_symbol
 from backend.app.services.strategy_service import normalize_strategy_config
 
@@ -2081,7 +2081,7 @@ def _emit_analysis_progress(progress: Optional[AnalysisProgress], stage: str, pr
 class AnalysisService:
     def __init__(self, db: Database, batch_size: Optional[int] = None):
         self.db = db
-        configured_size = batch_size if batch_size is not None else settings.analysis_batch_size
+        configured_size = batch_size if batch_size is not None else getattr(settings, "analysis_batch_size", 300)
         self.batch_size = max(1, int(configured_size or 300))
 
     def run(
@@ -2093,6 +2093,13 @@ class AnalysisService:
     ) -> str:
         run_id = run_id or f"analysis-{uuid.uuid4().hex[:12]}"
         strategy = normalize_strategy_config(config)
+        if not settings.tushare_enabled:
+            for rule in strategy.get("strategy_rules") or []:
+                if str(rule.get("indicator_id") or "") in TUSHARE_ONLY_INDICATOR_IDS:
+                    rule["enabled"] = False
+            strategy["min_topic_count"] = None
+            strategy["min_topic_heat"] = None
+            strategy["min_theme_limit_count"] = None
         strategy_name = _strategy_name(strategy)
         strategy.setdefault("strategy_name", strategy_name)
         strategy.setdefault("name", strategy_name)
@@ -2303,6 +2310,10 @@ class AnalysisService:
                         "ma_short": ma_short,
                         "ma_long": ma_long,
                         "float_market_value": float_mv,
+                        "pe": safe_float(latest_bar.get("pe_ttm")),
+                        "pb": safe_float(latest_bar.get("pb_mrq")),
+                        "ps_ttm": safe_float(latest_bar.get("ps_ttm")),
+                        "pcf_ncf_ttm": safe_float(latest_bar.get("pcf_ncf_ttm")),
                         "volume_ratio": volume_ratio,
                         "ma_distance": ma_distance,
                         "is_st": _truthy_flag(latest_bar.get("is_st")) or _truthy_flag(latest_bar.get("basic_is_st")),
@@ -2317,8 +2328,8 @@ class AnalysisService:
                 )
             del bars
             _release_analysis_memory()
-        frame = self._enrich_tushare_features(pd.DataFrame(output), target_date)
-        return self._enrich_theme_metrics(frame, target_date)
+        frame = self._enrich_tushare_features(pd.DataFrame(output), analysis_date)
+        return self._enrich_theme_metrics(frame, analysis_date)
 
     def _latest_history_date(self) -> Optional[date]:
         value = self.db.scalar(
@@ -2442,16 +2453,20 @@ class AnalysisService:
         if "feature_dates" not in enriched.columns:
             enriched["feature_dates"] = [{} for _ in range(len(enriched))]
         reference_date = _analysis_frame_date(enriched, as_of_date)
-        daily_basic = _records_by_code(self._latest_tushare_rows("tushare_daily_basic", reference_date))
-        moneyflow = _records_by_code(self._latest_tushare_rows("tushare_moneyflow", reference_date))
+        daily_basic = _records_by_code(self._latest_tushare_rows("tushare_daily_basic", reference_date, 7))
+        moneyflow = _records_by_code(self._latest_tushare_rows("tushare_moneyflow", reference_date, 7))
         limits = _records_by_code(self._tushare_rows_on_date("tushare_limit_list_d", reference_date))
-        last_limits = _records_by_code(self._latest_tushare_rows("tushare_limit_list_d", reference_date))
-        cyq_perf = _records_by_code(self._latest_tushare_rows("tushare_cyq_perf", reference_date))
+        last_limits = _records_by_code(self._latest_tushare_rows("tushare_limit_list_d", reference_date, 30))
+        cyq_perf = _records_by_code(self._latest_tushare_rows("tushare_cyq_perf", reference_date, 14))
         top_list = _records_by_code(self._top_list_rows_on_date(reference_date))
-        last_top_list = _records_by_code(self._latest_top_list_rows(reference_date))
-        top_inst = _records_by_code(self._sum_rows_on_date("tushare_top_inst", "net_buy", "top_inst_net_buy", reference_date))
-        hot_money = _records_by_code(self._sum_rows_on_date("tushare_hm_detail", "net_amount", "hot_money_net_amount", reference_date))
-        chips = _records_by_code(self._latest_chip_rows(reference_date))
+        last_top_list = _records_by_code(self._latest_top_list_rows(reference_date, 30))
+        top_inst = _records_by_code(
+            self._latest_sum_rows("tushare_top_inst", "net_buy", "top_inst_net_buy", reference_date, 30)
+        )
+        hot_money = _records_by_code(
+            self._latest_sum_rows("tushare_hm_detail", "net_amount", "hot_money_net_amount", reference_date, 30)
+        )
+        chips = _records_by_code(self._latest_chip_rows(reference_date, 14))
 
         for index, row in enriched.iterrows():
             code = str(row.get("code"))
@@ -2556,9 +2571,13 @@ class AnalysisService:
             enriched.at[index, "feature_dates"] = feature_dates
         return enriched
 
-    def _latest_tushare_rows(self, table: str, as_of_date: Optional[date] = None) -> List[Dict[str, Any]]:
-        where = "WHERE trade_date <= ?" if as_of_date else ""
-        params: List[Any] = [as_of_date] if as_of_date else []
+    def _latest_tushare_rows(
+        self,
+        table: str,
+        as_of_date: Optional[date] = None,
+        max_age_days: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        where, params = _freshness_where(as_of_date, max_age_days)
         return self.db.query(
             f"""
             SELECT *
@@ -2613,9 +2632,9 @@ class AnalysisService:
         value_column: str,
         output_column: str,
         as_of_date: Optional[date] = None,
+        max_age_days: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        where = "WHERE trade_date <= ?" if as_of_date else ""
-        params: List[Any] = [as_of_date] if as_of_date else []
+        where, params = _freshness_where(as_of_date, max_age_days)
         return self.db.query(
             f"""
             WITH latest AS (
@@ -2653,9 +2672,12 @@ class AnalysisService:
             [trade_date],
         )
 
-    def _latest_top_list_rows(self, as_of_date: Optional[date] = None) -> List[Dict[str, Any]]:
-        where = "WHERE trade_date <= ?" if as_of_date else ""
-        params: List[Any] = [as_of_date] if as_of_date else []
+    def _latest_top_list_rows(
+        self,
+        as_of_date: Optional[date] = None,
+        max_age_days: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        where, params = _freshness_where(as_of_date, max_age_days)
         return self.db.query(
             f"""
             WITH latest AS (
@@ -2677,9 +2699,12 @@ class AnalysisService:
             params,
         )
 
-    def _latest_chip_rows(self, as_of_date: Optional[date] = None) -> List[Dict[str, Any]]:
-        where = "WHERE trade_date <= ?" if as_of_date else ""
-        params: List[Any] = [as_of_date] if as_of_date else []
+    def _latest_chip_rows(
+        self,
+        as_of_date: Optional[date] = None,
+        max_age_days: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        where, params = _freshness_where(as_of_date, max_age_days)
         return self.db.query(
             f"""
             WITH latest AS (
@@ -2708,6 +2733,8 @@ class AnalysisService:
         enriched["topic_count"] = 0
         enriched["theme_limit_count"] = 0
         enriched["topic_heat"] = 0.0
+        if not settings.tushare_enabled:
+            return enriched
         codes = {str(code) for code in enriched["code"].dropna().tolist()}
         if not codes:
             return enriched
@@ -2926,6 +2953,19 @@ def _subtract_optional(left: Any, right: Any) -> Optional[float]:
 
 def _records_by_code(rows: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     return {str(row.get("code")): row for row in rows if row.get("code")}
+
+
+def _freshness_where(
+    as_of_date: Optional[date],
+    max_age_days: Optional[int],
+) -> tuple[str, List[Any]]:
+    reference = as_of_date or date.today()
+    clauses = ["trade_date <= ?"]
+    params: List[Any] = [reference]
+    if max_age_days is not None:
+        clauses.append("trade_date >= ?")
+        params.append(reference - timedelta(days=max(0, max_age_days)))
+    return "WHERE " + " AND ".join(clauses), params
 
 
 def _date_text(value: Any) -> Optional[str]:

@@ -1,10 +1,12 @@
 from datetime import date
+from types import SimpleNamespace
 
 import pandas as pd
 
 from backend.app.db import Database
 from backend.app.schema import migrate
 from backend.app.services.data_service import DataService
+from backend.app.services import data_service as data_module
 from backend.app.services import update_service as update_module
 from backend.app.services.update_service import UpdateService
 
@@ -206,6 +208,8 @@ def test_tushare_daily_basic_updates_float_values_and_data_map(tmp_path):
 
 
 def test_tushare_enrichment_update_persists_all_capability_tables(tmp_path, monkeypatch):
+    monkeypatch.setattr(update_module, "_tushare_enrichment_configured", lambda: True)
+    monkeypatch.setattr(data_module, "settings", SimpleNamespace(tushare_enabled=True))
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert("stock_basic", [_stock("000001.SZ"), _stock("600000.SH")], ["code"])
@@ -271,6 +275,7 @@ def test_tushare_optional_fetch_retries_rate_limit_before_warning(tmp_path, monk
 
 
 def test_capability_backfill_daily_basic_only_updates_requested_layer(tmp_path, monkeypatch):
+    monkeypatch.setattr(update_module, "_tushare_enrichment_configured", lambda: True)
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert("stock_basic", [_stock("000001.SZ"), _stock("600000.SH")], ["code"])
@@ -294,6 +299,7 @@ def test_capability_backfill_daily_basic_only_updates_requested_layer(tmp_path, 
 
 
 def test_capability_backfill_cyq_loops_until_missing_codes_are_filled(tmp_path, monkeypatch):
+    monkeypatch.setattr(update_module, "_tushare_enrichment_configured", lambda: True)
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert("stock_basic", [_stock("000001.SZ"), _stock("600000.SH")], ["code"])
@@ -357,6 +363,7 @@ def test_capability_backfill_cyq_loops_until_missing_codes_are_filled(tmp_path, 
 
 
 def test_capability_backfill_ths_member_uses_board_loop(tmp_path, monkeypatch):
+    monkeypatch.setattr(update_module, "_tushare_enrichment_configured", lambda: True)
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert("stock_basic", [_stock("000001.SZ"), _stock("600000.SH")], ["code"])

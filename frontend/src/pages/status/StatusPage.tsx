@@ -94,7 +94,7 @@ export function StatusPage() {
         <div className="grid-3 status-summary-grid">
           <Metric label="系统状态" value={systemLabel(activeTask)} />
           <Metric label="任务队列" value={`运行 ${runningTasks.length} · 排队 ${queuedTasks.length}`} />
-          <Metric label="AI 模型" value={llmLabel(llm)} tone={llm?.configured ? 'neutral' : 'risk'} />
+          <Metric label="AI 模型" value={llmLabel(llm)} tone={llm?.enabled === false || llm?.configured ? 'neutral' : 'risk'} />
         </div>
         <ScheduleStatusStrip dailyUpdateScheduler={dailyUpdateScheduler} scheduler={scheduler} />
         {effectiveActiveRows.length ? (
@@ -270,7 +270,8 @@ function ScheduleStatusStrip({ scheduler, dailyUpdateScheduler }: { scheduler?: 
   );
 }
 
-function llmLabel(llm?: { configured?: boolean; model?: string | null; url_host?: string | null } | null) {
+function llmLabel(llm?: { enabled?: boolean; configured?: boolean; model?: string | null; url_host?: string | null } | null) {
+  if (llm?.enabled === false) return '已关闭（规则摘要）';
   if (!llm?.configured) return '未配置';
   const marker = `${llm.model || ''} ${llm.url_host || ''}`.toLowerCase();
   if (marker.includes('deepseek')) return 'DeepSeek';

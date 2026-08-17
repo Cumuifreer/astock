@@ -63,6 +63,7 @@ export function composeStrategyConfig(
 export function usableRuleIndicators(library?: IndicatorLibrary, options: { includePaired?: boolean } = {}): IndicatorDefinition[] {
   return (library?.indicators || [])
     .filter((indicator) => indicator.kind === 'data' && indicator.status !== 'planned')
+    .filter((indicator) => indicator.data_status !== 'unavailable')
     .filter((indicator) => options.includePaired || !indicator.paired_strategy_ids?.length)
     .filter((indicator) => indicator.operator_semantics !== 'market_context')
     .filter((indicator) => indicator.data_status !== 'display_only' || indicator.display_scope === 'candidate')

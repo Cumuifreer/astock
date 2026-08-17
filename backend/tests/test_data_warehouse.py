@@ -1,7 +1,9 @@
 from datetime import date, datetime
+from types import SimpleNamespace
 
 from backend.app.db import Database
 from backend.app.schema import migrate
+from backend.app.services import data_service as data_module
 from backend.app.services.data_service import CAPABILITY_DEFINITIONS, DataService
 
 
@@ -205,7 +207,8 @@ def test_capabilities_reads_cached_rows_without_writing(tmp_path, monkeypatch):
     ]
 
 
-def test_stock_warehouse_turnover_rate_prefers_tushare_daily_basic(tmp_path):
+def test_stock_warehouse_turnover_rate_prefers_tushare_daily_basic(tmp_path, monkeypatch):
+    monkeypatch.setattr(data_module, "settings", SimpleNamespace(tushare_enabled=True))
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     seed_stock_basics(db)
@@ -650,7 +653,8 @@ def test_capabilities_treat_event_datasets_as_event_counts_and_drop_legacy_conce
     assert by_name["涨跌停"]["missing_count"] == 0
 
 
-def test_stock_warehouse_detail_includes_tushare_enrichment_profile(tmp_path):
+def test_stock_warehouse_detail_includes_tushare_enrichment_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(data_module, "settings", SimpleNamespace(tushare_enabled=True))
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     seed_stock_basics(db)

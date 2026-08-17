@@ -112,7 +112,7 @@ export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchR
                     const parameterKeys = indicatorParameterKeys(indicator);
                     const isParameter = parameterKeys.length > 0;
                     const enabled = isParameter ? parameterEnabled(config, parameterKeys, parameterByKey) : Boolean(rule?.enabled);
-                    const disabled = indicator.status === 'planned' || indicator.data_status === 'planned';
+                    const disabled = indicator.status === 'planned' || ['planned', 'unavailable'].includes(indicator.data_status || '');
                     const alwaysOn = parameterKeys.length > 0 && parameterKeys.every((key) => alwaysOnKeys.has(key));
                     const booleanOnly = isSingleBooleanParameter(parameterKeys, parameterByKey);
                     return (
@@ -383,6 +383,7 @@ function groupIndicators(indicators: IndicatorDefinition[]): Array<[string, Indi
 
 function sectionForIndicator(indicator: IndicatorDefinition) {
   const id = indicator.group_id || indicator.category_id || indicator.group_label;
+  if (indicator.data_status === 'unavailable') return '当前不可用';
   if (indicator.status === 'planned' || indicator.data_status === 'planned') return '待接入';
   if (id === 'stock_pool' || indicator.category_id === 'stock_pool' || indicator.group_label === '基础股票池') return '基础股票池';
   if (['price_volume', 'quote'].includes(id) || indicator.category_id === 'quote') return '流动性与成交';
@@ -499,6 +500,7 @@ function inputHint(indicator: IndicatorDefinition) {
 }
 
 function statusLabel(indicator: IndicatorDefinition) {
+  if (indicator.data_status === 'unavailable') return '当前不可用';
   if (indicator.data_status === 'planned' || indicator.status === 'planned') return '待接入';
   if (indicator.data_status === 'display_only') return '自动展示';
   if (indicator.data_status === 'partial') return '覆盖较少';
@@ -506,6 +508,7 @@ function statusLabel(indicator: IndicatorDefinition) {
 }
 
 function statusTone(indicator: IndicatorDefinition): 'good' | 'watch' | 'neutral' {
+  if (indicator.data_status === 'unavailable') return 'neutral';
   if (indicator.data_status === 'planned' || indicator.status === 'planned') return 'neutral';
   if (indicator.data_status === 'partial') return 'watch';
   return 'good';

@@ -11,14 +11,13 @@ from backend.app.services.intraday_scheduler import IntradayScheduler
 from backend.app.services.update_service import UpdateService
 
 
-def test_default_intraday_schedule_has_10_minute_slots():
+def test_default_intraday_schedule_uses_low_frequency_sina_slots():
     slots = parse_intraday_schedule("")
 
-    assert len(slots) == 25
-    assert slots[0] == (9, 35)
-    assert slots[1] == (9, 45)
-    assert slots[-2:] == [(14, 50), (14, 55)]
-    assert DEFAULT_INTRADAY_SCHEDULE_TEXT.startswith("09:35,09:45,09:55")
+    assert len(slots) == 9
+    assert slots[:2] == [(9, 40), (10, 10)]
+    assert slots[-2:] == [(14, 40), (14, 55)]
+    assert DEFAULT_INTRADAY_SCHEDULE_TEXT.startswith("09:40,10:10,10:40")
 
 
 def test_intraday_schedule_parser_sorts_deduplicates_and_falls_back():
@@ -90,10 +89,10 @@ def test_intraday_scheduler_uses_radar_slots_when_any_board_is_enabled(tmp_path,
     monkeypatch.setattr(service, "executor", NoopExecutor())
     scheduler = IntradayScheduler(service, poll_seconds=1, catchup_minutes=8)
 
-    task_id = scheduler.tick(datetime(2026, 5, 22, 10, 5, tzinfo=ZoneInfo("Asia/Shanghai")))
+    task_id = scheduler.tick(datetime(2026, 5, 22, 10, 11, tzinfo=ZoneInfo("Asia/Shanghai")))
 
     rows = db.query("SELECT id, payload_json FROM task_runs WHERE kind = 'intraday'")
-    assert task_id == "intraday-auto-20260522-1005"
+    assert task_id == "intraday-auto-20260522-1010"
     assert len(rows) == 1
     assert '"mode": "radar"' in rows[0]["payload_json"]
 
@@ -130,6 +129,21 @@ def test_intraday_scheduler_ignores_non_trading_hours(tmp_path, monkeypatch):
     scheduler = IntradayScheduler(service, poll_seconds=1, catchup_minutes=8)
 
     assert scheduler.tick(datetime(2026, 5, 22, 15, 20, tzinfo=ZoneInfo("Asia/Shanghai"))) is None
+    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'intraday'") == 0
+
+
+def test_intraday_scheduler_skips_cached_exchange_holiday(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    db.upsert(
+        "trading_calendar",
+        [{"date": "2026-05-22", "is_trading_day": False, "source": "test", "updated_at": "2026-05-01"}],
+        ["date"],
+    )
+    service = UpdateService(db)
+    scheduler = IntradayScheduler(service, poll_seconds=30, catchup_minutes=8)
+
+    assert scheduler.tick(datetime(2026, 5, 22, 14, 56, tzinfo=ZoneInfo("Asia/Shanghai"))) is None
     assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'intraday'") == 0
 
 
@@ -178,8 +192,8 @@ def test_runtime_health_reports_scheduler_slots_and_data_dates(tmp_path, monkeyp
     assert health["scheduler"]["enabled"] is True
     assert health["scheduler"]["timezone"] == "Asia/Shanghai"
     assert health["scheduler"]["is_weekend"] is False
-    assert len(health["scheduler"]["slots"]) == 25
-    assert health["scheduler"]["slot_count"] == 25
+    assert len(health["scheduler"]["slots"]) == 9
+    assert health["scheduler"]["slot_count"] == 9
     assert health["scheduler"]["completed_count"] >= 0
     assert health["scheduler"]["remaining_count"] == 0
     assert health["scheduler"]["latest_slot"]["time"] == "14:55"

@@ -6,6 +6,7 @@ import pytest
 
 from backend.app.db import Database
 from backend.app.schema import migrate
+from backend.app.services import update_service as update_module
 from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.strategy_service import StrategyService
 from backend.app.services.update_service import UpdateService
@@ -1227,7 +1228,7 @@ def test_intraday_task_rejects_frame_date_mismatch_unless_forced(tmp_path, monke
         [
             {
                 "code": "000001.SZ",
-                "date": "2026-05-22",
+                "date": "2026-05-21",
                 "name": "平安银行",
                 "latest_price": 10.55,
                 "pct_chg": 4.2,
@@ -1242,7 +1243,7 @@ def test_intraday_task_rejects_frame_date_mismatch_unless_forced(tmp_path, monke
     )
     monkeypatch.setattr(service, "_fetch_intraday_snapshot_frame", lambda include_bj, exclude_star, warnings: stale_frame)
 
-    service._run_intraday_sample(task_id, {"sample_at": "2026-05-23T10:00:00"})
+    service._run_intraday_sample(task_id, {"sample_at": "2026-05-22T10:00:00"})
 
     task = db.query("SELECT status, error_message FROM task_runs WHERE id = ?", [task_id])[0]
     assert task["status"] == "failed"
@@ -1251,13 +1252,14 @@ def test_intraday_task_rejects_frame_date_mismatch_unless_forced(tmp_path, monke
 
     forced_task_id = "intraday-stale-force"
     service._write_task(forced_task_id, kind="intraday", status="running", stage="启动")
-    service._run_intraday_sample(forced_task_id, {"sample_at": "2026-05-23T10:00:00", "force": True})
+    service._run_intraday_sample(forced_task_id, {"sample_at": "2026-05-22T10:00:00", "force": True})
     forced_task = db.query("SELECT status FROM task_runs WHERE id = ?", [forced_task_id])[0]
     assert forced_task["status"] == "completed_full"
     assert db.scalar("SELECT COUNT(*) FROM intraday_snapshots") == 1
 
 
 def test_intraday_task_refreshes_market_environment_and_concept_heat(tmp_path, monkeypatch):
+    monkeypatch.setattr(update_module, "_tushare_enrichment_configured", lambda: True)
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     db.upsert("stock_basic", [_stock("000001.SZ", "平安银行"), _stock("000002.SZ", "万科A")], ["code"])
@@ -1394,6 +1396,7 @@ def test_intraday_snapshot_rejects_daily_fallback_freshness(tmp_path, monkeypatc
             )
 
     monkeypatch.setattr("backend.app.services.update_service.TushareRealtimeSource", FakeTushareSource)
+    monkeypatch.setattr(update_module, "_tushare_realtime_configured", lambda: True)
 
     with pytest.raises(RuntimeError, match="非盘中实时"):
         service._fetch_intraday_snapshot_frame(include_bj=False, exclude_star=False, warnings=[])

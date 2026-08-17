@@ -14,7 +14,12 @@ type SectorHeatmapProps = {
 };
 
 export function SectorHeatmap({ sectors }: SectorHeatmapProps) {
-  const [mode, setMode] = useState<HeatMode>('concept');
+  const [mode, setMode] = useState<HeatMode>(() => (
+    sectors.some((sector) => (sector.sector_type || sector.type) === 'industry')
+    && !sectors.some((sector) => (sector.sector_type || sector.type) === 'concept')
+      ? 'industry'
+      : 'concept'
+  ));
   const queryType = mode === 'industry' ? 'industry' : 'concept';
   const queryMetric = mode === 'money' ? 'moneyflow' : mode === 'limit' ? 'limit' : 'heat';
   const shouldFetchHeatmap = mode !== 'concept' || !sectors.length;

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from backend.app.auth import basic_auth_matches
 from backend.app.api.routes import router, update_service
 from backend.app.config import settings
 from backend.app.services.daily_brief_scheduler import DailyBriefScheduler
@@ -15,6 +16,22 @@ from backend.app.services.intraday_scheduler import IntradayScheduler
 
 
 app = FastAPI(title="A-Share Signal", version="1.0.0")
+
+
+@app.middleware("http")
+async def optional_http_basic_auth(request: Request, call_next):
+    username = settings.http_basic_username
+    password = settings.http_basic_password
+    if username and password:
+        authorization = request.headers.get("Authorization", "")
+        if not basic_auth_matches(authorization, username, password):
+            return Response(
+                status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="A-Share Signal", charset="UTF-8"'},
+            )
+    return await call_next(request)
+
+
 app.include_router(router)
 intraday_scheduler = IntradayScheduler(
     update_service,
@@ -50,6 +67,7 @@ def stop_schedulers() -> None:
     intraday_scheduler.stop()
     daily_brief_scheduler.stop()
     daily_update_scheduler.stop()
+    update_service.close()
 
 
 @app.get("/")

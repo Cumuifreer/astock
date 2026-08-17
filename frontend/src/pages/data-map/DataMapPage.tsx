@@ -315,20 +315,26 @@ function DataHealth({
 function SourceDiagnosticsPanel({ diagnostics, loading }: { diagnostics?: SourceDiagnostics; loading: boolean }) {
   const healthCards = useMemo(
     () => [
-      ['Tushare 配置', diagnostics?.tushare_token_configured ? '已配置' : '未配置', diagnostics?.last_tushare_error],
+      ['运行模式', diagnostics?.tushare_enabled ? 'Tushare 可选模式' : '免费模式', diagnostics?.last_tushare_error],
       ['今日行情', statusLabel(diagnostics?.snapshot_source?.status || diagnostics?.realtime_status), sourceContractLabel(diagnostics?.snapshot_source, diagnostics?.last_snapshot_source)],
       ['历史行情', statusLabel(diagnostics?.history_source?.status || diagnostics?.history_status), sourceContractLabel(diagnostics?.history_source, diagnostics?.last_history_source)],
-      ['补充交易数据', statusLabel(diagnostics?.enrichment_status), diagnostics?.tushare_http_url_configured ? '已配置' : '缺少中转配置'],
+      [
+        '补充交易数据',
+        statusLabel(diagnostics?.enrichment_status),
+        diagnostics?.tushare_enabled
+          ? (diagnostics?.tushare_http_url_configured ? 'Tushare 已配置' : '缺少中转配置')
+          : 'Baostock 行业/估值；付费增强停用',
+      ],
     ],
     [diagnostics],
   );
-  if (loading) return <LoadingState label="读取 Tushare 诊断" />;
+  if (loading) return <LoadingState label="读取数据源诊断" />;
   return (
     <section className="surface pad">
       <div className="section-heading">
         <div>
-          <h2>Tushare 同步诊断</h2>
-          <p>查看 Tushare 配置、最近失败原因和本地 DuckDB 缓存状态。</p>
+          <h2>数据源同步诊断</h2>
+          <p>查看当前免费/可选模式、最近失败原因和本地 DuckDB 缓存状态。</p>
         </div>
       </div>
       <div className="grid-4">
