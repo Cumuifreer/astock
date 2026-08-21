@@ -174,6 +174,8 @@ ASHARE_INTRADAY_SCHEDULER=1
 ASHARE_INTRADAY_SCHEDULE=09:40,10:10,10:40,11:10,13:10,13:40,14:10,14:40,14:55
 ASHARE_SINA_MIN_INTERVAL_MINUTES=12
 ASHARE_SINA_FAILURE_COOLDOWN_MINUTES=180
+ASHARE_BAOSTOCK_SOCKET_TIMEOUT=30
+ASHARE_BAOSTOCK_MAX_CONSECUTIVE_FAILURES=8
 ASHARE_ANALYSIS_BATCH_SIZE=300
 ASHARE_DAILY_BRIEF_TIME=08:20,18:20
 ASHARE_DAILY_UPDATE_SCHEDULER=0
@@ -203,6 +205,8 @@ Environment="ASHARE_ANALYSIS_BATCH_SIZE=300"
 Environment="ASHARE_INTRADAY_SCHEDULER=1"
 Environment="ASHARE_INTRADAY_SCHEDULE=09:40,10:10,10:40,11:10,13:10,13:40,14:10,14:40,14:55"
 Environment="ASHARE_INTRADAY_RETENTION_DAYS=10"
+Environment="ASHARE_BAOSTOCK_SOCKET_TIMEOUT=30"
+Environment="ASHARE_BAOSTOCK_MAX_CONSECUTIVE_FAILURES=8"
 Environment="ASHARE_DAILY_BRIEF_SCHEDULER=1"
 Environment="ASHARE_DAILY_BRIEF_TIME=08:20,18:20"
 # 公网部署请设置强随机密码，或在反向代理/VPN 层做等价保护。
@@ -243,6 +247,15 @@ python scripts/backup_db.py
 ```
 
 备份文件会写入 `data/backups/`。
+
+如果服务被外部数据源卡住，应先停止 systemd 服务并完成备份，再把残留的
+`queued/running` 任务标记为失败；脚本只修改任务状态，不删除行情数据：
+
+```bash
+sudo systemctl stop ashare-signal
+python scripts/backup_db.py
+python scripts/fail_active_tasks.py
+```
 
 ## 快速检查
 

@@ -764,7 +764,17 @@ class UpdateService:
     def start_update(self, options: Optional[Dict[str, Any]] = None) -> str:
         payload = options or {}
         with self._queue_lock:
-            existing = self._active_task_for_payload("update", payload)
+            existing_rows = self.db.query(
+                """
+                SELECT id
+                FROM task_runs
+                WHERE kind = 'update'
+                  AND status IN ('queued', 'running')
+                ORDER BY started_at, id
+                LIMIT 1
+                """
+            )
+            existing = existing_rows[0] if existing_rows else None
             if existing:
                 return str(existing["id"])
             task_id = f"update-{uuid.uuid4().hex[:12]}"
@@ -806,7 +816,7 @@ class UpdateService:
             task_id,
             kind="update",
             stage="准备轻量日更" if payload["mode"] == "daily_light" else "准备定时更新",
-            source="Tushare",
+            source="Tushare" if _tushare_enrichment_configured() else "Baostock + AkShare 新浪",
             summary={"scheduled": True, "schedule_key": schedule_key, "mode": payload["mode"]},
             payload=payload,
         )
@@ -1055,7 +1065,7 @@ class UpdateService:
             task_id,
             kind="intraday",
             stage="准备盘中轻量刷新" if mode == "light_refresh" else "准备盘中采样",
-            source="Tushare 实时日线",
+            source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
             summary={"mode": mode},
             payload=payload,
         )
@@ -1084,7 +1094,7 @@ class UpdateService:
             task_id,
             kind="intraday",
             stage="准备盘中轻量刷新" if mode == "light_refresh" else "准备盘中采样",
-            source="Tushare 实时日线",
+            source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
             summary={"schedule_key": schedule_key, "scheduled": True, "mode": mode},
             payload={
                 "sample_at": slot.isoformat(timespec="seconds"),
@@ -1147,22 +1157,35 @@ class UpdateService:
         slot = scheduled_at.replace(second=0, microsecond=0)
         brief_date = slot.date()
         task_id = f"brief-auto-{brief_date:%Y%m%d}-{slot:%H%M}"
-        if self.db.scalar("SELECT id FROM task_runs WHERE id = ?", [task_id]):
-            return None
-        schedule_key = slot.strftime("%Y-%m-%d %H:%M")
-        self._enqueue_task(
-            task_id,
-            kind="brief",
-            stage="准备资讯简报",
-            source="新闻资讯 + LLM",
-            summary={"scheduled": True, "schedule_key": schedule_key, "report_date": brief_date.isoformat()},
-            payload={
-                "scheduled": True,
-                "report_date": brief_date.isoformat(),
-                "schedule_key": schedule_key,
-            },
-        )
-        return task_id
+        with self._queue_lock:
+            if self.db.scalar("SELECT id FROM task_runs WHERE id = ?", [task_id]):
+                return None
+            existing = self.db.scalar(
+                """
+                SELECT id
+                FROM task_runs
+                WHERE kind = 'brief'
+                  AND status IN ('queued', 'running')
+                ORDER BY started_at
+                LIMIT 1
+                """
+            )
+            if existing:
+                return None
+            schedule_key = slot.strftime("%Y-%m-%d %H:%M")
+            self._enqueue_task(
+                task_id,
+                kind="brief",
+                stage="准备资讯简报",
+                source="新闻资讯 + LLM",
+                summary={"scheduled": True, "schedule_key": schedule_key, "report_date": brief_date.isoformat()},
+                payload={
+                    "scheduled": True,
+                    "report_date": brief_date.isoformat(),
+                    "schedule_key": schedule_key,
+                },
+            )
+            return task_id
 
     def _enqueue_task(
         self,
@@ -1603,7 +1626,7 @@ class UpdateService:
             self._patch_task(
                 task_id,
                 stage="刷新快照",
-                source="Tushare 实时日线",
+                source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
             )
             self.record_checkpoint(task_id, "daily_snapshot", "当天行情快照", target_history_date, "all", "running")
             try:
@@ -1617,7 +1640,7 @@ class UpdateService:
                     "completed" if snapshot_count else "partial",
                     rows_written=snapshot_count,
                     payload={
-                        "source": "Tushare 实时日线",
+                        "source": "Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
                         "warnings": warnings[-2:],
                     },
                 )
@@ -1639,7 +1662,7 @@ class UpdateService:
             self._patch_task(
                 task_id,
                 stage="轻量补齐历史 K 线" if incremental_history else "刷新历史 K 线",
-                source="Tushare daily 前复权",
+                source="Tushare daily 前复权" if _tushare_history_configured() else "Baostock",
                 total=total,
             )
             self.record_checkpoint(
@@ -1649,7 +1672,10 @@ class UpdateService:
                 target_history_date,
                 "all",
                 "running",
-                payload={"stock_count": total, "source": "Tushare daily 前复权"},
+                payload={
+                    "stock_count": total,
+                    "source": "Tushare daily 前复权" if _tushare_history_configured() else "Baostock",
+                },
             )
             try:
                 history_success, history_failed, history_skipped = self._update_history(
@@ -4173,6 +4199,8 @@ class UpdateService:
         success = 0
         failed = 0
         skipped = 0
+        consecutive_failures = 0
+        max_consecutive_failures = max(1, int(settings.baostock_max_consecutive_failures))
         total = len(stocks)
         target = target_history_date or self._target_history_date()
         session_context = (
@@ -4197,9 +4225,7 @@ class UpdateService:
                         failed=failed,
                     )
                     continue
-                # BaoStock supplies qfq prices. Re-read the rolling window so a
-                # corporate action can rebase already stored bars.
-                fetch_start = start
+                fetch_start = self._history_fetch_start(start, latest, incremental)
                 if incremental and fetch_start > end:
                     skipped += 1
                     self._patch_task(
@@ -4221,8 +4247,10 @@ class UpdateService:
                         raise RuntimeError("Baostock 历史行情为空")
                     self.db.upsert("historical_bars", frame.to_dict("records"), ["code", "date"])
                     success += 1
+                    consecutive_failures = 0
                 except Exception as exc:
                     failed += 1
+                    consecutive_failures += 1
                     self.baostock_guard.record(
                         "Baostock",
                         "历史 K 线",
@@ -4230,6 +4258,20 @@ class UpdateService:
                         message=f"{code}: {exc}",
                         ttl_minutes=15,
                     )
+                    if consecutive_failures >= max_consecutive_failures:
+                        self._patch_task(
+                            task_id,
+                            current_stock=code,
+                            total=total,
+                            processed=index,
+                            success=success,
+                            failed=failed,
+                            skipped=skipped,
+                        )
+                        raise SourceUnavailable(
+                            f"Baostock 连续 {consecutive_failures} 只股票请求失败，"
+                            "已中止本轮历史更新，避免阻塞任务队列。"
+                        ) from exc
                 self._patch_task(
                     task_id,
                     current_stock=code,

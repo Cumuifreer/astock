@@ -571,7 +571,7 @@ def test_core_task_starters_reuse_active_matching_payloads(tmp_path, monkeypatch
     monkeypatch.setattr(service, "executor", NoopExecutor())
 
     update_first = service.start_update({"mode": "daily_light"})
-    update_second = service.start_update({"mode": "daily_light"})
+    update_second = service.start_update({"mode": "full", "force": True})
     analyze_first = service.start_analysis({"candidate_limit": 5}, AnalysisService(db))
     analyze_second = service.start_analysis({"candidate_limit": 5}, AnalysisService(db))
     backtest_first = service.start_backtest({"config": {"candidate_limit": 3}}, object())

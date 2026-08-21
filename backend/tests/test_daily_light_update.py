@@ -182,7 +182,49 @@ def test_baostock_history_reuses_one_session_and_refreshes_qfq_window(tmp_path, 
     assert calls[0] == "login"
     assert calls[-1] == "logout"
     assert len(history_calls) == 2
-    assert all(item[1] == date(2026, 1, 1) and item[3] is session_client for item in history_calls)
+    assert history_calls[0][1] == date(2026, 5, 22)
+    assert history_calls[1][1] == date(2026, 5, 21)
+    assert all(item[3] is session_client for item in history_calls)
+
+
+def test_baostock_history_stops_after_consecutive_failures(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    calls = []
+
+    class FailingBaostock:
+        @contextmanager
+        def session(self):
+            yield self
+
+        def fetch_history(self, code, start_date, end_date, client=None):
+            calls.append(code)
+            raise TimeoutError("socket timed out")
+
+    service = UpdateService(db)
+    monkeypatch.setattr(service.baostock_guard, "sleep", lambda: None)
+    monkeypatch.setattr(update_module, "_tushare_history_configured", lambda: False)
+    monkeypatch.setattr(
+        update_module,
+        "settings",
+        type("Settings", (), {"baostock_max_consecutive_failures": 2})(),
+    )
+
+    try:
+        service._update_history(
+            [{"code": "000001.SZ"}, {"code": "000002.SZ"}, {"code": "000003.SZ"}],
+            date(2026, 5, 1),
+            date(2026, 5, 22),
+            force=False,
+            task_id="missing-task",
+            source=FailingBaostock(),
+        )
+    except update_module.SourceUnavailable as exc:
+        assert "连续 2 只股票请求失败" in str(exc)
+    else:
+        raise AssertionError("expected the Baostock circuit breaker to abort the update")
+
+    assert calls == ["000001.SZ", "000002.SZ"]
 
 
 def test_history_update_prefers_tushare_batch_and_refreshes_qfq_window(tmp_path, monkeypatch):

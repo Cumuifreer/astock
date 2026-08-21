@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import socket
 from contextlib import contextmanager
 from datetime import date, datetime
 from typing import Any, Dict, Iterator, List, Optional
 
 import pandas as pd
 
+from backend.app.config import settings
 from backend.app.services.market_utils import (
     normalize_a_share_code,
     safe_bool_from_flag,
@@ -17,8 +19,14 @@ from backend.app.services.market_utils import (
 class BaostockSource:
     name = "Baostock"
 
-    def __init__(self) -> None:
+    def __init__(self, socket_timeout_seconds: Optional[float] = None) -> None:
         self._bs = None
+        configured_timeout = (
+            settings.baostock_socket_timeout_seconds
+            if socket_timeout_seconds is None
+            else socket_timeout_seconds
+        )
+        self.socket_timeout_seconds = max(1.0, float(configured_timeout))
 
     @property
     def bs(self) -> Any:
@@ -31,13 +39,29 @@ class BaostockSource:
     @contextmanager
     def session(self) -> Iterator[Any]:
         bs = self.bs
-        login = bs.login()
+        previous_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(self.socket_timeout_seconds)
+        try:
+            login = bs.login()
+        finally:
+            socket.setdefaulttimeout(previous_timeout)
         if getattr(login, "error_code", "0") != "0":
             raise RuntimeError(getattr(login, "error_msg", "Baostock 登录失败"))
+        self._set_session_socket_timeout()
         try:
             yield bs
         finally:
             bs.logout()
+
+    def _set_session_socket_timeout(self) -> None:
+        try:
+            from baostock.common import context as bs_context  # type: ignore
+
+            session_socket = getattr(bs_context, "default_socket", None)
+            if session_socket is not None:
+                session_socket.settimeout(self.socket_timeout_seconds)
+        except Exception:
+            return
 
     def fetch_stock_basics(
         self,

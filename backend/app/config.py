@@ -75,6 +75,10 @@ class Settings:
     exclude_star_board: bool = os.getenv("ASHARE_EXCLUDE_STAR_BOARD", "0") == "1"
     baostock_min_delay: float = float(os.getenv("ASHARE_BAOSTOCK_MIN_DELAY", "0.12"))
     baostock_max_delay: float = float(os.getenv("ASHARE_BAOSTOCK_MAX_DELAY", "0.45"))
+    baostock_socket_timeout_seconds: float = float(os.getenv("ASHARE_BAOSTOCK_SOCKET_TIMEOUT", "30"))
+    baostock_max_consecutive_failures: int = int(
+        os.getenv("ASHARE_BAOSTOCK_MAX_CONSECUTIVE_FAILURES", "8")
+    )
     baostock_industry_refresh_days: int = int(os.getenv("ASHARE_BAOSTOCK_INDUSTRY_REFRESH_DAYS", "30"))
     public_source_min_delay: float = float(os.getenv("ASHARE_PUBLIC_SOURCE_MIN_DELAY", "0.8"))
     public_source_max_delay: float = float(os.getenv("ASHARE_PUBLIC_SOURCE_MAX_DELAY", "2.2"))
