@@ -3719,6 +3719,11 @@ class UpdateService:
             )
         except SourceUnavailable as exc:
             latest_sample = self.db.scalar("SELECT MAX(sample_at) FROM intraday_snapshots")
+            latest_sample_text = (
+                latest_sample.isoformat(timespec="seconds")
+                if isinstance(latest_sample, datetime)
+                else latest_sample
+            )
             self._patch_task(
                 task_id,
                 status="completed_partial",
@@ -3733,7 +3738,7 @@ class UpdateService:
                     "snapshot_count": 0,
                     "candidate_count": 0,
                     "cache_fallback": True,
-                    "latest_cached_sample_at": latest_sample,
+                    "latest_cached_sample_at": latest_sample_text,
                     "sample_at": sample_at.isoformat(timespec="seconds"),
                     "warnings": warnings or [str(exc)],
                 },

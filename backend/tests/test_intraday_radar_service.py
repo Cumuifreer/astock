@@ -10,6 +10,7 @@ from backend.app.services import update_service as update_module
 from backend.app.services.intraday_service import IntradayRadarService
 from backend.app.services.strategy_service import StrategyService
 from backend.app.services.update_service import UpdateService
+from backend.app.sources.base import SourceUnavailable
 
 
 def _stock(code: str, name: str) -> dict:
@@ -1009,6 +1010,52 @@ def test_intraday_task_records_snapshot_and_runs_radar(tmp_path, monkeypatch):
     assert task["kind"] == "intraday"
     assert radar["summary"]["candidate_count"] == 1
     assert radar["rows"][0]["status"] == "刚突破"
+
+
+def test_intraday_task_cache_fallback_serializes_latest_sample_datetime(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    cached_sample = datetime(2026, 5, 21, 14, 55)
+    db.upsert(
+        "intraday_snapshots",
+        [
+            {
+                "code": "000001.SZ",
+                "trade_date": "2026-05-21",
+                "sample_at": cached_sample,
+                "name": "平安银行",
+                "latest_price": 10.55,
+                "pct_chg": 4.2,
+                "high": 10.6,
+                "low": 9.9,
+                "volume": 3_100_000.0,
+                "amount": 62_000_000.0,
+                "source": "AkShare 新浪",
+                "created_at": cached_sample,
+            }
+        ],
+        ["code", "sample_at"],
+    )
+    service = UpdateService(db)
+    task_id = "intraday-cache-fallback"
+    service._write_task(task_id, kind="intraday", status="running", stage="启动")
+
+    def unavailable(*_args, **_kwargs):
+        raise SourceUnavailable("新浪源失败冷却中")
+
+    monkeypatch.setattr(service, "_fetch_intraday_snapshot_frame", unavailable)
+
+    service._run_intraday_sample(task_id, {"sample_at": "2026-05-22T10:00:00"})
+
+    task = db.query(
+        "SELECT status, stage, warning, summary_json FROM task_runs WHERE id = ?",
+        [task_id],
+    )[0]
+    summary = json.loads(task["summary_json"])
+    assert task["status"] == "completed_partial"
+    assert task["stage"] == "盘中快照沿用本地缓存"
+    assert task["warning"] == "新浪源失败冷却中"
+    assert summary["latest_cached_sample_at"] == "2026-05-21T14:55:00"
 
 
 def test_intraday_task_does_not_run_strategy_tracking_even_when_legacy_auto_flag_is_set(tmp_path, monkeypatch):
