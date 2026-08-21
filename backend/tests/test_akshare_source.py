@@ -82,6 +82,7 @@ def test_sina_snapshot_uses_controlled_pagination_and_keeps_raw_market_fields(mo
 
     session = Session()
     sleeps = []
+    progress = []
     monkeypatch.setattr(
         akshare_module,
         "settings",
@@ -94,10 +95,14 @@ def test_sina_snapshot_uses_controlled_pagination_and_keeps_raw_market_fields(mo
     )
     monkeypatch.setattr(akshare_module.time, "sleep", sleeps.append)
 
-    frame = AkShareSource().fetch_sina_snapshot(session=session)
+    frame = AkShareSource().fetch_sina_snapshot(
+        session=session,
+        progress=lambda page, total, count: progress.append((page, total, count)),
+    )
 
     assert len(frame) == 81
     assert len(session.calls) == 3
     assert sleeps == [0.1]
+    assert progress == [(0, 2, 0), (1, 2, 80), (2, 2, 81)]
     assert frame.iloc[0]["turnover_rate"] == 2.5
     assert frame.iloc[0]["float_market_value"] == 1_234_000

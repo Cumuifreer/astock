@@ -5,7 +5,7 @@ import random
 import re
 import time
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -38,6 +38,7 @@ class AkShareSource:
         include_bj: bool = False,
         exclude_star: bool = False,
         session: Optional[requests.Session] = None,
+        progress: Optional[Callable[[int, int, int], None]] = None,
     ) -> pd.DataFrame:
         """Fetch Sina's paginated A-share snapshot with bounded, polite requests.
 
@@ -84,6 +85,8 @@ class AkShareSource:
             expected_count = int(count_match.group())
             page_size = max(1, int(sina.zh_sina_a_stock_payload.get("num", 80)))
             page_count = max(1, math.ceil(expected_count / page_size))
+            if progress is not None:
+                progress(0, page_count, 0)
 
             for page in range(1, page_count + 1):
                 if time.monotonic() >= deadline:
@@ -102,6 +105,8 @@ class AkShareSource:
                 if not isinstance(page_rows, list):
                     raise SourceUnavailable(f"新浪快照第 {page} 页格式异常。")
                 rows.extend(item for item in page_rows if isinstance(item, dict))
+                if progress is not None:
+                    progress(page, page_count, len(rows))
                 if page < page_count:
                     delay = random.uniform(settings.sina_page_min_delay, settings.sina_page_max_delay)
                     if time.monotonic() + delay >= deadline:

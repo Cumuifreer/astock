@@ -1,6 +1,12 @@
+import time
+
+import pandas as pd
+import pytest
+
 from backend.app.db import Database
+from backend.app.config import settings
 from backend.app.schema import migrate
-from backend.app.sources.base import SourceGuard
+from backend.app.sources.base import SourceFetchResult, SourceGuard, SourceUnavailable
 from backend.app.services.update_service import UpdateService
 
 
@@ -43,3 +49,31 @@ def test_sina_global_interval_skips_second_full_market_request(tmp_path, monkeyp
 
     assert result.status == "skipped"
     assert "过近" in str(result.message)
+
+
+def test_sina_fetch_has_outer_timeout_even_if_source_itself_hangs(tmp_path, monkeypatch):
+    db = Database(tmp_path / "ashare_test.duckdb")
+    migrate(db)
+    service = UpdateService(db)
+    captured = {}
+
+    def capture_call(source, capability, fetcher, **kwargs):
+        captured.update(kwargs)
+        return SourceFetchResult(source=source, capability=capability, status="failed", message="timeout")
+
+    monkeypatch.setattr(service.public_guard, "call", capture_call)
+
+    result = service._fetch_sina_snapshot("盘中行情快照", include_bj=False, exclude_star=False)
+
+    assert result.status == "failed"
+    assert captured["max_attempts"] == 1
+    assert captured["timeout_seconds"] == int(settings.sina_total_timeout_seconds) + 5
+
+
+def test_source_guard_outer_timeout_returns_control_for_hung_fetcher():
+    def hung_fetcher():
+        time.sleep(0.2)
+        return pd.DataFrame([{"code": "000001.SZ"}])
+
+    with pytest.raises(SourceUnavailable, match="接口超过"):
+        SourceGuard._call_with_timeout(hung_fetcher, timeout_seconds=0.01)

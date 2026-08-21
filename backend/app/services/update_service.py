@@ -12,7 +12,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -3635,14 +3635,33 @@ class UpdateService:
             self._patch_task(
                 task_id,
                 stage="拉取盘中快照",
-                source="Tushare 实时日线",
+                source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
                 total=3,
                 processed=0,
                 success=0,
                 failed=0,
                 skipped=0,
             )
-            frame = self._fetch_intraday_snapshot_frame(include_bj, exclude_star, warnings)
+
+            def snapshot_progress(page: int, page_count: int, row_count: int) -> None:
+                if self.db.scalar("SELECT status FROM task_runs WHERE id = ?", [task_id]) != "running":
+                    return
+                self._patch_task(
+                    task_id,
+                    current_stock=f"新浪分页 {page}/{page_count} · {row_count} 行",
+                )
+
+            try:
+                frame = self._fetch_intraday_snapshot_frame(
+                    include_bj,
+                    exclude_star,
+                    warnings,
+                    progress=snapshot_progress,
+                )
+            except TypeError as exc:
+                if "progress" not in str(exc):
+                    raise
+                frame = self._fetch_intraday_snapshot_frame(include_bj, exclude_star, warnings)
             if not force:
                 _validate_intraday_frame_date(frame, trade_date)
             snapshot_count = self.intraday_service.record_snapshots(
@@ -3676,6 +3695,7 @@ class UpdateService:
                 status="completed_full" if not warnings else "completed_partial",
                 stage="盘中雷达完成" if radar_enabled else "盘中轻量刷新完成",
                 source="本地仓库",
+                current_stock=None,
                 total=3,
                 processed=3,
                 success=1,
@@ -3704,6 +3724,7 @@ class UpdateService:
                 status="completed_partial",
                 stage="盘中快照沿用本地缓存",
                 source="本地缓存",
+                current_stock=None,
                 processed=3,
                 total=3,
                 skipped=1,
@@ -3723,6 +3744,7 @@ class UpdateService:
                 task_id,
                 status="failed",
                 stage="盘中雷达失败",
+                current_stock=None,
                 failed=1,
                 error_message=str(exc),
                 warning=str(exc),
@@ -3742,7 +3764,7 @@ class UpdateService:
             self._patch_task(
                 task_id,
                 stage="拉取策略追踪快照",
-                source="Tushare 实时日线",
+                source="Tushare 实时日线" if _tushare_realtime_configured() else "AkShare 新浪",
                 total=3,
                 processed=0,
                 success=0,
@@ -3846,6 +3868,7 @@ class UpdateService:
         include_bj: bool,
         exclude_star: bool,
         warnings: List[str],
+        progress: Optional[Callable[[int, int, int], None]] = None,
     ) -> pd.DataFrame:
         ts_source = TushareRealtimeSource()
 
@@ -3880,6 +3903,7 @@ class UpdateService:
             "盘中行情快照",
             include_bj=include_bj,
             exclude_star=exclude_star,
+            progress=progress,
         )
         if chosen.status != "available":
             if chosen.message:
@@ -3892,6 +3916,7 @@ class UpdateService:
         capability: str,
         include_bj: bool,
         exclude_star: bool,
+        progress: Optional[Callable[[int, int, int], None]] = None,
     ) -> SourceFetchResult:
         gate_message = self._sina_gate_message()
         if gate_message:
@@ -3902,13 +3927,26 @@ class UpdateService:
                 message=gate_message,
             )
         source = AkShareSource()
+
+        def fetch() -> pd.DataFrame:
+            if progress is None:
+                return source.fetch_sina_snapshot(
+                    include_bj=include_bj,
+                    exclude_star=exclude_star,
+                )
+            return source.fetch_sina_snapshot(
+                include_bj=include_bj,
+                exclude_star=exclude_star,
+                progress=progress,
+            )
+
         return self.public_guard.call(
             "AkShare 新浪",
             capability,
-            lambda: source.fetch_sina_snapshot(include_bj=include_bj, exclude_star=exclude_star),
+            fetch,
             ttl_minutes=getattr(settings, "sina_failure_cooldown_minutes", 180),
             max_attempts=1,
-            timeout_seconds=0,
+            timeout_seconds=max(1, int(settings.sina_total_timeout_seconds) + 5),
         )
 
     def _sina_gate_message(self, now: Optional[datetime] = None) -> Optional[str]:
