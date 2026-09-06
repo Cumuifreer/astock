@@ -8,8 +8,8 @@ def test_disabled_integrations_do_not_load_residual_systemd_secrets():
     env = dict(os.environ)
     env.update(
         {
-            "ASHARE_LLM_ENABLED": "0",
-            "ASHARE_TUSHARE_ENABLED": "0",
+            "ASHARE_LLM_ENABLED": "1",
+            "ASHARE_TUSHARE_ENABLED": "1",
             "DEEPSEEK_API_KEY": "residual-deepseek-secret",
             "ASHARE_DAILY_BRIEF_API_KEY": "residual-brief-secret",
             "TUSHARE_TOKEN": "residual-tushare-secret",
@@ -22,8 +22,8 @@ def test_disabled_integrations_do_not_load_residual_systemd_secrets():
             "-c",
             (
                 "import json; from backend.app.config import settings; "
-                "print(json.dumps({'llm': settings.daily_brief_api_key, "
-                "'tushare': settings.tushare_token, 'llm_enabled': settings.llm_enabled, "
+                "print(json.dumps({'llm': getattr(settings, 'daily_brief_api_key', ''), "
+                "'tushare': getattr(settings, 'tushare_token', ''), 'llm_enabled': settings.llm_enabled, "
                 "'tushare_enabled': settings.tushare_enabled}))"
             ),
         ],
@@ -73,7 +73,7 @@ def test_disabled_integrations_skip_secrets_while_loading_env_file(tmp_path):
                 "import json, os; from backend.app.config import settings; "
                 "print(json.dumps({'env_llm': os.environ.get('DEEPSEEK_API_KEY'), "
                 "'env_tushare': os.environ.get('ASHARE_TUSHARE_TOKEN'), "
-                "'llm': settings.daily_brief_api_key, 'tushare': settings.tushare_token}))"
+                "'llm': getattr(settings, 'daily_brief_api_key', ''), 'tushare': getattr(settings, 'tushare_token', '')}))"
             ),
         ],
         check=True,

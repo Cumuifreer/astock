@@ -43,12 +43,13 @@ export function StrategyPage() {
 
   useEffect(() => {
     if (!defaultConfig || initialized) return;
+    const saved = strategies.find(preset => preset.is_default) || strategies[0];
     setDraft({
-      presetId: null,
-      name: nextUnnamedName(strategies),
-      config: cloneConfig(defaultConfig),
-      isSystem: false,
-      isDefault: false,
+      presetId: saved?.id || null,
+      name: saved?.name || nextUnnamedName(strategies),
+      config: cloneConfig(saved?.config || defaultConfig),
+      isSystem: Boolean(saved?.is_system),
+      isDefault: Boolean(saved?.is_default),
     });
   }, [defaultConfig, initialized, setDraft, strategies]);
 
@@ -73,7 +74,7 @@ export function StrategyPage() {
     [currentConfig, strategyName],
   );
   const invalidate = () => {
-    void queryClient.invalidateQueries();
+    void queryClient.invalidateQueries({ queryKey: ['bootstrap'] });
   };
   const patchBootstrapStrategies = (updater: (rows: StrategyPreset[]) => StrategyPreset[]) => {
     queryClient.setQueryData(['bootstrap'], (current: unknown) => {
@@ -162,7 +163,8 @@ export function StrategyPage() {
     mutationFn: () => runStrategy(namedConfig),
     onSuccess: () => {
       invalidate();
-      window.location.hash = '#status';
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      window.location.hash = '#data-map';
       showToast('分析任务已开始，可在任务状态查看进度', 'success');
     },
     onError: (error) => showToast(error instanceof Error ? error.message : '分析任务启动失败', 'danger'),
@@ -193,6 +195,7 @@ export function StrategyPage() {
   };
 
   if (bootstrap.isLoading) return <LoadingState label="加载策略能力" />;
+  if (bootstrap.isError) return <p role="alert">策略读取失败：{bootstrap.error.message}</p>;
   if (!config) return <EmptyState title="策略选股暂不可用" description="策略基础配置加载后会自动进入配置界面。" />;
 
   return (

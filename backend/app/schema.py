@@ -7,7 +7,6 @@ from datetime import datetime
 
 from backend.app.db import Database
 from backend.app.services.strategy_service import (
-    DEFAULT_STRATEGY_CONFIG,
     SYSTEM_PRESETS,
     _config_hash,
     _strategy_summary,

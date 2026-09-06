@@ -2,17 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend.app.auth import basic_auth_matches
-from backend.app.api.routes import router, update_service
+from backend.app.api.routes import router, update_service, db
+from backend.app.schema import migrate
 from backend.app.config import settings
-from backend.app.services.daily_brief_scheduler import DailyBriefScheduler
 from backend.app.services.daily_update_scheduler import DailyUpdateScheduler
-from backend.app.services.intraday_schedule import parse_intraday_schedule
-from backend.app.services.intraday_scheduler import IntradayScheduler
 
 
 app = FastAPI(title="A-Share Signal", version="1.0.0")
@@ -33,17 +31,6 @@ async def optional_http_basic_auth(request: Request, call_next):
 
 
 app.include_router(router)
-intraday_scheduler = IntradayScheduler(
-    update_service,
-    poll_seconds=settings.intraday_scheduler_poll_seconds,
-    catchup_minutes=settings.intraday_scheduler_catchup_minutes,
-    slots=parse_intraday_schedule(settings.intraday_schedule),
-)
-daily_brief_scheduler = DailyBriefScheduler(
-    update_service,
-    poll_seconds=settings.daily_brief_scheduler_poll_seconds,
-    schedule_time=settings.daily_brief_schedule_time,
-)
 daily_update_scheduler = DailyUpdateScheduler(
     update_service,
     poll_seconds=settings.daily_update_scheduler_poll_seconds,
@@ -54,18 +41,20 @@ daily_update_scheduler = DailyUpdateScheduler(
 
 @app.on_event("startup")
 def start_schedulers() -> None:
-    if settings.intraday_scheduler_enabled:
-        intraday_scheduler.start()
-    if settings.daily_brief_scheduler_enabled:
-        daily_brief_scheduler.start()
+    migrate(db)
+    update_service.recover_interrupted_tasks()
+    update_service.db.execute(
+        "UPDATE task_runs SET status = 'failed', finished_at = current_timestamp, "
+        "error_message = '该功能已停用' WHERE status = 'queued' AND kind NOT IN ('update', 'analyze')",
+        write=True,
+    )
+    update_service.kick_queue()
     if getattr(settings, "daily_update_scheduler_enabled", False):
         daily_update_scheduler.start()
 
 
 @app.on_event("shutdown")
 def stop_schedulers() -> None:
-    intraday_scheduler.stop()
-    daily_brief_scheduler.stop()
     daily_update_scheduler.stop()
     update_service.close()
 
@@ -86,6 +75,8 @@ if settings.frontend_dist.exists():
 
 @app.get("/{path:path}")
 def spa_fallback(path: str) -> FileResponse:
+    if path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="接口不存在或已停用。")
     index = settings.frontend_dist / "index.html"
     if index.exists():
         return FileResponse(index)

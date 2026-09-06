@@ -12,16 +12,5 @@ export const queryKeys = {
   analysis: {
     reports: () => ['result-reports'] as const,
     report: (runId?: string) => ['result-report', runId] as const,
-    candidateAiSummary: (runId?: string, code?: string) => ['candidate-ai-summary', runId, code] as const,
-  },
-  backtest: {
-    runs: () => ['backtest-runs'] as const,
-    signalEvaluation: (runId?: string) => ['signal-evaluation', runId] as const,
-    portfolio: (runId?: string) => ['portfolio-backtest', runId] as const,
-  },
-  intraday: {
-    boards: () => ['intraday-boards'] as const,
-    strategyTracking: () => ['intraday-strategy-tracking'] as const,
-    timeline: (code?: string, tradeDate?: string | null) => ['intraday-timeline', code, tradeDate] as const,
   },
 };

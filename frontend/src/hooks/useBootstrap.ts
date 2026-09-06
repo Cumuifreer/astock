@@ -9,6 +9,7 @@ function hasLibraryData(library: IndicatorLibrary | undefined): library is Indic
 export function useBootstrap() {
   return useQuery({
     queryKey: ['bootstrap'],
+    staleTime: 5 * 60_000,
     queryFn: async (): Promise<Bootstrap> => {
       const bootstrap = await getBootstrap();
       const embeddedLibrary = (bootstrap as Bootstrap & { indicator_library?: IndicatorLibrary }).indicator_library;

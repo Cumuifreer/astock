@@ -8,7 +8,7 @@ from backend.app.services.strategy_service import DEFAULT_STRATEGY_CONFIG
 
 
 def _run(run_id: str, signal_mode: str, finished_at: datetime, status: str = "completed_full") -> dict:
-    config = {**DEFAULT_STRATEGY_CONFIG, "signal_mode": signal_mode}
+    config = {**DEFAULT_STRATEGY_CONFIG, "signal_mode": signal_mode, "name": signal_mode}
     summary = {"candidate_count": 1, "zero_reason": None}
     return {
         "id": run_id,
@@ -21,7 +21,7 @@ def _run(run_id: str, signal_mode: str, finished_at: datetime, status: str = "co
     }
 
 
-def test_analysis_reports_keep_recent_three_per_signal_mode(tmp_path):
+def test_analysis_reports_keep_more_than_three_per_strategy(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     base = datetime(2026, 5, 21, 10, 0)
@@ -36,13 +36,14 @@ def test_analysis_reports_keep_recent_three_per_signal_mode(tmp_path):
     ]
     db.upsert("analysis_runs", rows, ["id"])
 
-    result = DataService(db).analysis_reports(per_mode_limit=3)
+    result = DataService(db).analysis_reports()
 
     groups = {group["signal_mode"]: group["reports"] for group in result["groups"]}
     assert [report["id"] for report in groups["platform_breakout"]] == [
         "breakout-4",
         "breakout-3",
         "breakout-2",
+        "breakout-1",
     ]
     assert [report["id"] for report in groups["platform_setup"]] == ["setup-2", "setup-1"]
     assert "failed-1" not in [report["id"] for group in result["groups"] for report in group["reports"]]

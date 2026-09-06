@@ -58,10 +58,10 @@ export function CandidateTable({ candidates, observedCodes, selectedCode, onSele
 
 function candidateTags(candidate: Candidate, observed: boolean): string[] {
   const tags: string[] = [];
-  if (Number(candidate.signal_score || 0) >= 80 || Number(candidate.rps20 || 0) >= 85) tags.push('强势');
-  if (Number(candidate.metrics?.volume_ratio || 0) >= 1.5 || Number(candidate.amount || 0) >= 100000000) tags.push('放量');
-  if (candidate.metrics?.strong_theme_name || candidate.metrics?.theme_sync_score) tags.push('题材');
-  if (Array.isArray(candidate.metrics?.risk_flags) ? candidate.metrics.risk_flags.length : Number(candidate.amplitude || 0) >= 0.08) tags.push('风险');
+  if (Number(candidate.rps20 || 0) >= 85) tags.push('RPS≥85');
+  if (Number(candidate.metrics?.volume_ratio || 0) >= 1.5) tags.push('量比≥1.5');
+  if (Number(candidate.amount || 0) >= 100000000) tags.push('成交额≥1亿');
+  if (Number(candidate.amplitude || 0) >= 0.08) tags.push('振幅≥8%');
   if (observed) tags.push('已观察');
   return tags.length ? tags.slice(0, 4) : ['观察'];
 }

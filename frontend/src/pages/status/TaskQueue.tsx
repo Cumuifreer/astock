@@ -32,6 +32,8 @@ export function TaskQueue({ tasks, progressByTaskId = {}, title, emptyLabel = '�
           <p className="card-copy">
             {task.stage || '等待阶段'} · 最近心跳 {formatDateTime(task.updated_at)}
           </p>
+          {task.error_message && <p role="alert">{task.error_message}</p>}
+          {task.warning && !task.error_message && <p className="card-copy">{task.warning}</p>}
           <Progress label={`${kindLabel(task.kind)} ${statusLabel(task.status)}`} state={task.status} value={taskProgressValue(task, progressByTaskId[task.id])} />
           <div className="rule-chip-grid">
             <Badge>已处理 {task.processed}</Badge>

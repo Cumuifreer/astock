@@ -89,7 +89,7 @@ def test_light_daily_update_selects_stocks_behind_target_history_date(tmp_path):
         target_history_date=date(2026, 5, 20),
     )
 
-    assert [row["code"] for row in rows] == ["000001.SZ", "300750.SZ", "600000.SH"]
+    assert [row["code"] for row in rows] == ["000001.SZ", "000003.SZ", "300750.SZ", "600000.SH"]
 
 
 def test_history_update_stock_picker_excludes_inactive_stocks_in_full_and_light_modes(tmp_path):
@@ -129,16 +129,12 @@ def test_target_history_date_uses_previous_trading_day_before_china_close(tmp_pa
     assert service._target_history_date(datetime(2026, 5, 23, 10, 0)) == date(2026, 5, 22)
 
 
-def test_incremental_history_start_continues_after_latest_bar(tmp_path):
+def test_incremental_history_refreshes_the_adjusted_analysis_window(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     service = UpdateService(db)
 
-    assert service._history_fetch_start(date(2026, 1, 1), "2026-05-18", incremental=True) == date(
-        2026,
-        5,
-        19,
-    )
+    assert service._history_fetch_start(date(2026, 1, 1), "2026-05-18", incremental=True) == date(2026, 1, 1)
     assert service._history_fetch_start(date(2026, 1, 1), None, incremental=True) == date(2026, 1, 1)
 
 
@@ -182,8 +178,8 @@ def test_baostock_history_reuses_one_session_and_refreshes_qfq_window(tmp_path, 
     assert calls[0] == "login"
     assert calls[-1] == "logout"
     assert len(history_calls) == 2
-    assert history_calls[0][1] == date(2026, 5, 22)
-    assert history_calls[1][1] == date(2026, 5, 21)
+    assert history_calls[0][1] == date(2026, 1, 1)
+    assert history_calls[1][1] == date(2026, 1, 1)
     assert all(item[3] is session_client for item in history_calls)
 
 
@@ -203,7 +199,6 @@ def test_baostock_history_stops_after_consecutive_failures(tmp_path, monkeypatch
 
     service = UpdateService(db)
     monkeypatch.setattr(service.baostock_guard, "sleep", lambda: None)
-    monkeypatch.setattr(update_module, "_tushare_history_configured", lambda: False)
     monkeypatch.setattr(
         update_module,
         "settings",
@@ -225,245 +220,3 @@ def test_baostock_history_stops_after_consecutive_failures(tmp_path, monkeypatch
         raise AssertionError("expected the Baostock circuit breaker to abort the update")
 
     assert calls == ["000001.SZ", "000002.SZ"]
-
-
-def test_history_update_prefers_tushare_batch_and_refreshes_qfq_window(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    db.upsert("stock_basic", [_stock("000001.SZ"), _stock("600000.SH")], ["code"])
-
-    class FakeTushareHistorySource:
-        def fetch_history_reference_factors(self, end, codes=None):
-            assert end == date(2026, 5, 22)
-            assert codes == ["000001.SZ", "600000.SH"]
-            return {"000001.SZ": 2.0, "600000.SH": 1.0}, "2026-05-22"
-
-        def fetch_history_day(self, day, reference_factors, codes=None, progress=None):
-            if day != date(2026, 5, 22):
-                return pd.DataFrame()
-            return pd.DataFrame(
-                [
-                    {
-                        "code": "000001.SZ",
-                        "date": "2026-05-22",
-                        "open": 5.0,
-                        "high": 6.0,
-                        "low": 4.5,
-                        "close": 5.5,
-                        "prev_close": 4.5,
-                        "volume": 100_000.0,
-                        "amount": 1_200_000.0,
-                        "turn": 2.5,
-                        "pct_chg": 22.22,
-                        "tradestatus": "1",
-                        "is_st": None,
-                        "source": "Tushare daily 前复权",
-                        "updated_at": "2026-05-22T18:30:00",
-                    },
-                    {
-                        "code": "600000.SH",
-                        "date": "2026-05-22",
-                        "open": 10.0,
-                        "high": 10.8,
-                        "low": 9.8,
-                        "close": 10.6,
-                        "prev_close": 10.0,
-                        "volume": 80_000.0,
-                        "amount": 900_000.0,
-                        "turn": 1.2,
-                        "pct_chg": 6.0,
-                        "tradestatus": "1",
-                        "is_st": None,
-                        "source": "Tushare daily 前复权",
-                        "updated_at": "2026-05-22T18:30:00",
-                    },
-                ]
-            )
-
-    monkeypatch.setattr(update_module, "_tushare_history_configured", lambda: True, raising=False)
-    monkeypatch.setattr(update_module, "TushareEnrichmentSource", FakeTushareHistorySource)
-
-    success, failed, skipped = UpdateService(db)._update_history(
-        [{"code": "000001.SZ", "latest_history_date": "2026-05-21"}, {"code": "600000.SH"}],
-        date(2026, 1, 1),
-        date(2026, 5, 22),
-        force=False,
-        task_id="missing-task",
-        incremental=True,
-        target_history_date=date(2026, 5, 22),
-    )
-
-    rows = db.query("SELECT code, open, source FROM historical_bars ORDER BY code")
-    assert (success, failed, skipped) == (2, 0, 0)
-    assert [row["code"] for row in rows] == ["000001.SZ", "600000.SH"]
-    assert rows[0]["open"] == 5.0
-    assert rows[0]["source"] == "Tushare daily 前复权"
-
-
-def test_tushare_history_streams_each_day_to_db_and_task_heartbeat(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    db.upsert("stock_basic", [_stock("000001.SZ"), _stock("600000.SH")], ["code"])
-    service = UpdateService(db)
-    service._write_task("task-stream", kind="update", status="running", stage="轻量补齐历史 K 线")
-
-    class FakeStreamingTushareSource:
-        def fetch_history_reference_factors(self, end, codes=None):
-            assert end == date(2026, 5, 22)
-            assert codes == ["000001.SZ", "600000.SH"]
-            return {"000001.SZ": 2.0, "600000.SH": 1.0}, "2026-05-22"
-
-        def fetch_history_day(self, day, reference_factors, codes=None, progress=None):
-            assert reference_factors == {"000001.SZ": 2.0, "600000.SH": 1.0}
-            assert codes == ["000001.SZ", "600000.SH"]
-            if progress:
-                progress("daily")
-                progress("adj_factor")
-                progress("daily_basic")
-            return pd.DataFrame(
-                [
-                    {
-                        "code": "000001.SZ",
-                        "date": day.isoformat(),
-                        "open": 5.0,
-                        "high": 6.0,
-                        "low": 4.5,
-                        "close": 5.5,
-                        "prev_close": 4.5,
-                        "volume": 100_000.0,
-                        "amount": 1_200_000.0,
-                        "turn": 2.5,
-                        "pct_chg": 22.22,
-                        "tradestatus": "1",
-                        "is_st": None,
-                        "source": "Tushare daily 前复权",
-                        "updated_at": "2026-05-22T18:30:00",
-                    }
-                ]
-            )
-
-    monkeypatch.setattr(update_module, "TushareEnrichmentSource", FakeStreamingTushareSource)
-
-    success, failed, skipped = service._update_tushare_history(
-        [{"code": "000001.SZ"}, {"code": "600000.SH"}],
-        date(2026, 5, 21),
-        date(2026, 5, 22),
-        "task-stream",
-    )
-
-    rows = db.query("SELECT code, date FROM historical_bars ORDER BY date, code")
-    task = db.query("SELECT * FROM task_runs WHERE id = 'task-stream'")[0]
-    summary = update_module.json.loads(task["summary_json"])
-    progress = summary["history_progress"]
-    assert (success, failed, skipped) == (1, 0, 1)
-    assert [row["date"].isoformat() for row in rows] == ["2026-05-21", "2026-05-22"]
-    assert task["processed"] == 2
-    assert task["total"] == 2
-    assert progress["mode"] == "streaming"
-    assert progress["current_date"] == "2026-05-22"
-    assert progress["step"] == "完成"
-    assert progress["written_rows"] == 2
-    assert progress["reference_date"] == "2026-05-22"
-
-
-def test_tushare_history_stream_keeps_written_days_when_later_day_fails(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    db.upsert("stock_basic", [_stock("000001.SZ")], ["code"])
-    service = UpdateService(db)
-    service._write_task("task-fail", kind="update", status="running", stage="轻量补齐历史 K 线")
-
-    class PartlyFailingTushareSource:
-        def fetch_history_reference_factors(self, end, codes=None):
-            return {"000001.SZ": 2.0}, "2026-05-22"
-
-        def fetch_history_day(self, day, reference_factors, codes=None, progress=None):
-            if day == date(2026, 5, 22):
-                raise RuntimeError("Tushare timeout")
-            return pd.DataFrame(
-                [
-                    {
-                        "code": "000001.SZ",
-                        "date": day.isoformat(),
-                        "open": 5.0,
-                        "high": 6.0,
-                        "low": 4.5,
-                        "close": 5.5,
-                        "prev_close": 4.5,
-                        "volume": 100_000.0,
-                        "amount": 1_200_000.0,
-                        "turn": 2.5,
-                        "pct_chg": 22.22,
-                        "tradestatus": "1",
-                        "is_st": None,
-                        "source": "Tushare daily 前复权",
-                        "updated_at": "2026-05-21T18:30:00",
-                    }
-                ]
-            )
-
-    monkeypatch.setattr(update_module, "TushareEnrichmentSource", PartlyFailingTushareSource)
-
-    try:
-        service._update_tushare_history(
-            [{"code": "000001.SZ"}],
-            date(2026, 5, 21),
-            date(2026, 5, 22),
-            "task-fail",
-        )
-    except RuntimeError:
-        pass
-
-    rows = db.query("SELECT code, date FROM historical_bars")
-    assert [(row["code"], row["date"].isoformat()) for row in rows] == [("000001.SZ", "2026-05-21")]
-
-
-def test_tushare_history_counts_latest_weekday_when_end_is_weekend(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    db.upsert("stock_basic", [_stock("000001.SZ")], ["code"])
-    service = UpdateService(db)
-    service._write_task("task-weekend", kind="update", status="running", stage="轻量补齐历史 K 线")
-
-    class WeekendTushareSource:
-        def fetch_history_reference_factors(self, end, codes=None):
-            assert end == date(2026, 5, 24)
-            return {"000001.SZ": 2.0}, "2026-05-22"
-
-        def fetch_history_day(self, day, reference_factors, codes=None, progress=None):
-            assert day == date(2026, 5, 22)
-            return pd.DataFrame(
-                [
-                    {
-                        "code": "000001.SZ",
-                        "date": day.isoformat(),
-                        "open": 5.0,
-                        "high": 6.0,
-                        "low": 4.5,
-                        "close": 5.5,
-                        "prev_close": 4.5,
-                        "volume": 100_000.0,
-                        "amount": 1_200_000.0,
-                        "turn": 2.5,
-                        "pct_chg": 22.22,
-                        "tradestatus": "1",
-                        "is_st": None,
-                        "source": "Tushare daily 前复权",
-                        "updated_at": "2026-05-22T18:30:00",
-                    }
-                ]
-            )
-
-    monkeypatch.setattr(update_module, "TushareEnrichmentSource", WeekendTushareSource)
-
-    success, failed, skipped = service._update_tushare_history(
-        [{"code": "000001.SZ"}],
-        date(2026, 5, 22),
-        date(2026, 5, 24),
-        "task-weekend",
-    )
-
-    task = db.query("SELECT * FROM task_runs WHERE id = 'task-weekend'")[0]
-    summary = update_module.json.loads(task["summary_json"])
-    assert (success, failed, skipped) == (1, 0, 0)
-    assert summary["history_progress"]["current_date"] == "2026-05-22"

@@ -667,17 +667,7 @@ def _rank_candidates(
     candidate_rows = []
     for _, row in working.iterrows():
         candidate = row.to_dict()
-        candidate["signal_type"] = _signal_type(candidate, strategy)
         candidate["signal_score"] = _signal_score(candidate, strategy)
-        candidate["score_breakdown"] = _score_breakdown(candidate, strategy)
-        candidate["strategy_rule_results"] = _strategy_rule_results(candidate, strategy)
-        candidate["display_metrics"] = _display_metrics(candidate, strategy)
-        candidate["freshness"] = _freshness_metrics(candidate, strategy)
-        candidate["interpretation"] = _candidate_interpretation(candidate, strategy)
-        reasons = _candidate_reasons(candidate, strategy)
-        if score_mode:
-            reasons = ["综合评分：未达标项只影响分数"] + reasons
-        candidate["reasons"] = reasons
         candidate_rows.append(candidate)
 
     sort_by = strategy.get("sort_by") or "signal_score"
@@ -688,6 +678,15 @@ def _rank_candidates(
     )
     limit = int(strategy.get("candidate_limit") or 50)
     limited = candidate_rows[:limit]
+    for candidate in limited:
+        candidate["signal_type"] = _signal_type(candidate, strategy)
+        candidate["score_breakdown"] = _score_breakdown(candidate, strategy)
+        candidate["strategy_rule_results"] = _strategy_rule_results(candidate, strategy)
+        candidate["display_metrics"] = _display_metrics(candidate, strategy)
+        candidate["freshness"] = _freshness_metrics(candidate, strategy)
+        candidate["interpretation"] = _candidate_interpretation(candidate, strategy)
+        reasons = _candidate_reasons(candidate, strategy)
+        candidate["reasons"] = (["综合评分：未达标项只影响分数"] if score_mode else []) + reasons
     funnel.append(
         {
             "step_name": "候选数量",
@@ -770,16 +769,7 @@ def _apply_strategy_rule_filters(
             continue
         column = str(indicator.get("analysis_field") or indicator.get("id") or "")
         if column not in working.columns:
-            funnel.append(
-                {
-                    "step_name": f"{indicator.get('name') or column}规则",
-                    "before_count": int(len(working)),
-                    "after_count": int(len(working)),
-                    "removed_count": 0,
-                    "note": "字段尚未进入分析帧，规则已忽略",
-                }
-            )
-            continue
+            working = working.assign(**{column: float("nan")})
         before = len(working)
         mask = _strategy_rule_mask(working[column], rule)
         working = working[mask]
@@ -2132,6 +2122,7 @@ class AnalysisService:
             status = "completed_full"
             summary = {
                 "strategy_name": strategy_name,
+                "trade_date": str(rows["bar_date"].max()) if not rows.empty else None,
                 "candidate_count": len(candidates),
                 "zero_reason": zero_reason,
                 "analyzed_count": len(rows),
@@ -2168,7 +2159,7 @@ class AnalysisService:
         as_of_date: Optional[date] = None,
         progress: Optional[AnalysisProgress] = None,
     ) -> pd.DataFrame:
-        target_date = _date_value(as_of_date) if as_of_date else None
+        target_date = _date_value(as_of_date) if as_of_date else self._latest_history_date()
         _emit_analysis_progress(progress, "读取本地行情", 1)
         analysis_date = target_date or self._latest_history_date()
         if analysis_date is None:
@@ -2176,64 +2167,12 @@ class AnalysisService:
         codes = self._history_codes(target_date)
         if not codes:
             return pd.DataFrame()
-        _emit_analysis_progress(progress, "合并快照与市值", 2)
-        if target_date:
-            snapshots = pd.DataFrame()
-            if strategy.get("_backtest_float_market_value_policy") == "latest_proxy":
-                float_values = pd.DataFrame(
-                    self.db.query(
-                        """
-                        SELECT *
-                        FROM (
-                            SELECT *,
-                                   ROW_NUMBER() OVER (
-                                       PARTITION BY code
-                                       ORDER BY
-                                           CASE WHEN date <= ? THEN 0 ELSE 1 END,
-                                           date DESC
-                                   ) AS row_num
-                            FROM float_market_values
-                        )
-                        WHERE row_num = 1
-                        """,
-                        [target_date],
-                    )
-                )
-            else:
-                float_values = pd.DataFrame(
-                    self.db.query(
-                        """
-                        SELECT *
-                        FROM (
-                            SELECT *,
-                                   ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) AS row_num
-                            FROM float_market_values
-                            WHERE date <= ?
-                        )
-                        WHERE row_num = 1
-                        """,
-                        [target_date],
-                    )
-                )
-        else:
-            snapshots = pd.DataFrame(
-                self.db.query(
-                    """
-                    SELECT *
-                    FROM daily_snapshots
-                    WHERE date = (SELECT MAX(date) FROM daily_snapshots)
-                    """
-                )
-            )
-            float_values = pd.DataFrame(
-                self.db.query(
-                    """
-                    SELECT *
-                    FROM float_market_values
-                    WHERE date = (SELECT MAX(date) FROM float_market_values)
-                    """
-                )
-            )
+        _emit_analysis_progress(progress, "读取交易日市值", 2)
+        float_values = self.db.query(
+            """SELECT code, date, float_market_value, source
+               FROM float_market_values WHERE date = ?""", [analysis_date],
+        )
+        float_by_code = {row["code"]: row for row in float_values}
         _emit_analysis_progress(progress, "计算相对强弱", 3)
         rps_scores = self._compute_rps_scores_from_db(target_date, windows=(20, 60, 120))
         _emit_analysis_progress(progress, "计算技术形态", 4)
@@ -2257,9 +2196,8 @@ class AnalysisService:
                     continue
                 if not target_date and analysis_date and latest_bar_date != analysis_date:
                     continue
-                snapshot = _first_record(snapshots, code)
-                float_record = _first_record(float_values, code)
-                latest_price = _first_number((snapshot or {}).get("latest_price"), latest_bar.get("close"))
+                float_record = float_by_code.get(code)
+                latest_price = safe_float(latest_bar.get("close"))
                 ma_short_window = int(strategy.get("ma_short_window") or 20)
                 ma_long_window = int(strategy.get("ma_long_window") or 60)
                 closes = pd.to_numeric(group["close"], errors="coerce").dropna()
@@ -2267,7 +2205,7 @@ class AnalysisService:
                 ma_short = float(closes.tail(ma_short_window).mean()) if len(closes) >= ma_short_window else None
                 ma_long = float(closes.tail(ma_long_window).mean()) if len(closes) >= ma_long_window else None
                 prev_volume_mean = float(volumes.iloc[:-1].tail(20).mean()) if len(volumes) > 1 else None
-                latest_volume = _first_number((snapshot or {}).get("volume"), latest_bar.get("volume"))
+                latest_volume = safe_float(latest_bar.get("volume"))
                 volume_ratio = (
                     latest_volume / prev_volume_mean
                     if latest_volume is not None and prev_volume_mean is not None and prev_volume_mean > 0
@@ -2281,9 +2219,13 @@ class AnalysisService:
                 float_mv = (
                     _first_number(
                         (float_record or {}).get("float_market_value"),
-                        (snapshot or {}).get("float_market_value"),
                     )
                 )
+                if float_mv is None:
+                    turn = safe_float(latest_bar.get("turn"))
+                    if turn and turn > 0 and latest_volume and latest_price:
+                        float_mv = latest_volume / (turn / 100) * latest_price
+                        float_record = {"source": "本地历史换手率估算"}
                 platform_metrics = compute_platform_breakout_metrics(group, strategy)
                 if "platform_setup" in analysis_engines:
                     platform_metrics.update(compute_platform_setup_metrics(group, strategy))
@@ -2292,13 +2234,13 @@ class AnalysisService:
                 output.append(
                     {
                         "code": code,
-                        "name": (snapshot or {}).get("name") or latest_bar.get("name") or code,
+                        "name": latest_bar.get("name") or code,
                         "bar_date": _date_text(latest_bar_date),
                         "latest_price": latest_price,
-                        "pct_chg": _first_number((snapshot or {}).get("pct_chg"), latest_bar.get("pct_chg")),
-                        "amount": _first_number((snapshot or {}).get("amount"), latest_bar.get("amount")),
+                        "pct_chg": safe_float(latest_bar.get("pct_chg")),
+                        "amount": safe_float(latest_bar.get("amount")),
                         "volume": latest_volume,
-                        "turnover_rate": _first_number((snapshot or {}).get("turnover_rate"), latest_bar.get("turn")),
+                        "turnover_rate": safe_float(latest_bar.get("turn")),
                         "amplitude": compute_amplitude(
                             safe_float(latest_bar.get("high")),
                             safe_float(latest_bar.get("low")),
@@ -2316,11 +2258,10 @@ class AnalysisService:
                         "pcf_ncf_ttm": safe_float(latest_bar.get("pcf_ncf_ttm")),
                         "volume_ratio": volume_ratio,
                         "ma_distance": ma_distance,
-                        "is_st": _truthy_flag(latest_bar.get("is_st")) or _truthy_flag(latest_bar.get("basic_is_st")),
-                        "suspended": str(latest_bar.get("tradestatus")) == "0" or _truthy_flag(latest_bar.get("suspended")),
+                        "is_st": _truthy_flag(latest_bar.get("is_st")),
+                        "suspended": str(latest_bar.get("tradestatus")) == "0",
                         "data_sources": {
                             "history": latest_bar.get("source"),
-                            "snapshot": (snapshot or {}).get("source"),
                             "float_market_value": (float_record or {}).get("source"),
                         },
                         **platform_metrics,
@@ -2328,15 +2269,13 @@ class AnalysisService:
                 )
             del bars
             _release_analysis_memory()
-        frame = self._enrich_tushare_features(pd.DataFrame(output), analysis_date)
-        return self._enrich_theme_metrics(frame, analysis_date)
+        return pd.DataFrame(output)
 
     def _latest_history_date(self) -> Optional[date]:
         value = self.db.scalar(
             """
             SELECT MAX(date)
             FROM historical_bars
-            WHERE date >= current_date - INTERVAL 260 DAY
             """
         )
         return _date_value(value)
@@ -2350,7 +2289,7 @@ class AnalysisService:
                 WHERE h.date >= ? AND h.date <= ?
                 ORDER BY h.code
                 """,
-                [target_date - timedelta(days=380), target_date],
+                [target_date - timedelta(days=settings.default_history_days), target_date],
             )
         else:
             rows = self.db.query(
@@ -2378,7 +2317,7 @@ class AnalysisService:
                       AND h.code IN ({placeholders})
                     ORDER BY h.code, h.date
                     """,
-                    [target_date - timedelta(days=380), target_date, *codes],
+                    [target_date - timedelta(days=settings.default_history_days), target_date, *codes],
                 )
             )
         return pd.DataFrame(
@@ -2418,8 +2357,11 @@ class AnalysisService:
         return scores
 
     def _rps_return_rows(self, target_date: Optional[date], window: int) -> List[Dict[str, Any]]:
+        target_date = target_date or self._latest_history_date()
+        if target_date is None:
+            return []
         if target_date:
-            params: Sequence[Any] = [target_date - timedelta(days=380), target_date, window + 1]
+            params: Sequence[Any] = [target_date - timedelta(days=settings.default_history_days), target_date, window + 1]
             date_filter = "date >= ? AND date <= ?"
         else:
             params = [window + 1]
@@ -2441,369 +2383,11 @@ class AnalysisService:
             WHERE latest.row_num = 1
               AND start.row_num = ?
               AND start.close > 0
+              AND latest.date = ?
             ORDER BY latest.code
             """,
-            params,
+            [*params, target_date],
         )
-
-    def _enrich_tushare_features(self, frame: pd.DataFrame, as_of_date: Optional[date] = None) -> pd.DataFrame:
-        if frame.empty or "code" not in frame:
-            return frame
-        enriched = frame.copy()
-        if "feature_dates" not in enriched.columns:
-            enriched["feature_dates"] = [{} for _ in range(len(enriched))]
-        reference_date = _analysis_frame_date(enriched, as_of_date)
-        daily_basic = _records_by_code(self._latest_tushare_rows("tushare_daily_basic", reference_date, 7))
-        moneyflow = _records_by_code(self._latest_tushare_rows("tushare_moneyflow", reference_date, 7))
-        limits = _records_by_code(self._tushare_rows_on_date("tushare_limit_list_d", reference_date))
-        last_limits = _records_by_code(self._latest_tushare_rows("tushare_limit_list_d", reference_date, 30))
-        cyq_perf = _records_by_code(self._latest_tushare_rows("tushare_cyq_perf", reference_date, 14))
-        top_list = _records_by_code(self._top_list_rows_on_date(reference_date))
-        last_top_list = _records_by_code(self._latest_top_list_rows(reference_date, 30))
-        top_inst = _records_by_code(
-            self._latest_sum_rows("tushare_top_inst", "net_buy", "top_inst_net_buy", reference_date, 30)
-        )
-        hot_money = _records_by_code(
-            self._latest_sum_rows("tushare_hm_detail", "net_amount", "hot_money_net_amount", reference_date, 30)
-        )
-        chips = _records_by_code(self._latest_chip_rows(reference_date, 14))
-
-        for index, row in enriched.iterrows():
-            code = str(row.get("code"))
-            sources = dict(row.get("data_sources") or {})
-            feature_dates = dict(row.get("feature_dates") or {})
-
-            daily = daily_basic.get(code)
-            if daily:
-                _assign_first_number(enriched, index, "turnover_rate", daily.get("turnover_rate"))
-                _assign_first_number(enriched, index, "volume_ratio", daily.get("volume_ratio"))
-                _assign_first_number(enriched, index, "float_market_value", daily.get("circ_mv"))
-                _assign_first_number(enriched, index, "total_market_value", daily.get("total_mv"))
-                _assign_first_number(enriched, index, "pe", daily.get("pe"))
-                _assign_first_number(enriched, index, "pb", daily.get("pb"))
-                sources["daily_basic"] = daily.get("source") or "Tushare daily_basic"
-                feature_dates["daily_basic"] = _date_text(daily.get("trade_date"))
-
-            flow = moneyflow.get(code)
-            if flow:
-                _assign_first_number(enriched, index, "main_net_amount", flow.get("main_net_amount"))
-                _assign_first_number(enriched, index, "net_mf_amount", flow.get("net_mf_amount"))
-                large = _subtract_optional(flow.get("buy_lg_amount"), flow.get("sell_lg_amount"))
-                super_large = _subtract_optional(flow.get("buy_elg_amount"), flow.get("sell_elg_amount"))
-                medium = _subtract_optional(flow.get("buy_md_amount"), flow.get("sell_md_amount"))
-                small = _subtract_optional(flow.get("buy_sm_amount"), flow.get("sell_sm_amount"))
-                _assign_first_number(enriched, index, "large_net_amount", large)
-                _assign_first_number(enriched, index, "super_large_net_amount", super_large)
-                _assign_first_number(enriched, index, "medium_net_amount", medium)
-                _assign_first_number(enriched, index, "small_net_amount", small)
-                amount = safe_float(row.get("amount"))
-                main = safe_float(flow.get("main_net_amount"))
-                if main is not None and amount is not None and amount > 0:
-                    enriched.at[index, "main_net_amount_ratio"] = _round_optional(main / amount, 6)
-                sources["moneyflow"] = flow.get("source") or "Tushare moneyflow"
-                feature_dates["moneyflow"] = _date_text(flow.get("trade_date"))
-
-            last_limit = last_limits.get(code)
-            days_since_limit = _days_since_event(reference_date, (last_limit or {}).get("trade_date"))
-            if days_since_limit is not None:
-                enriched.at[index, "days_since_limit_event"] = days_since_limit
-            limit_row = limits.get(code)
-            if limit_row:
-                enriched.at[index, "limit_type"] = limit_row.get("limit_type")
-                _assign_first_number(enriched, index, "limit_open_times", limit_row.get("open_times"))
-                _assign_first_number(enriched, index, "limit_fd_amount", limit_row.get("fd_amount"))
-                fd_amount = safe_float(limit_row.get("fd_amount"))
-                float_mv = safe_float(enriched.at[index, "float_market_value"]) if "float_market_value" in enriched else None
-                if fd_amount is not None and float_mv is not None and float_mv > 0:
-                    enriched.at[index, "limit_fd_mv_ratio"] = _round_optional(fd_amount / float_mv, 6)
-                sources["limit_event"] = limit_row.get("source") or "Tushare limit_list_d"
-                feature_dates["limit_event"] = _date_text(limit_row.get("trade_date"))
-
-            cyq = cyq_perf.get(code)
-            if cyq:
-                _assign_first_number(enriched, index, "cyq_winner_rate", cyq.get("winner_rate"))
-                _assign_first_number(enriched, index, "cost_15pct", cyq.get("cost_15pct"))
-                _assign_first_number(enriched, index, "cost_50pct", cyq.get("cost_50pct"))
-                _assign_first_number(enriched, index, "cost_85pct", cyq.get("cost_85pct"))
-                latest_price = safe_float(row.get("latest_price"))
-                cost_50 = safe_float(cyq.get("cost_50pct"))
-                cost_15 = safe_float(cyq.get("cost_15pct"))
-                cost_85 = safe_float(cyq.get("cost_85pct"))
-                if latest_price is not None and cost_50 is not None and cost_50 > 0:
-                    enriched.at[index, "price_to_cost_50pct"] = _round_optional((latest_price - cost_50) / cost_50, 6)
-                if cost_15 is not None and cost_85 is not None and cost_50 is not None and cost_50 > 0:
-                    enriched.at[index, "cost_width_15_85"] = _round_optional((cost_85 - cost_15) / cost_50, 6)
-                sources["cyq_perf"] = cyq.get("source") or "Tushare cyq_perf"
-                feature_dates["cyq_perf"] = _date_text(cyq.get("trade_date"))
-
-            chip = chips.get(code)
-            if chip:
-                _assign_first_number(enriched, index, "cyq_chip_peak_percent", chip.get("cyq_chip_peak_percent"))
-                _assign_first_number(enriched, index, "cyq_chip_price_span", chip.get("cyq_chip_price_span"))
-                sources["cyq_chips"] = chip.get("source") or "Tushare cyq_chips"
-                feature_dates["cyq_chips"] = _date_text(chip.get("trade_date"))
-
-            top = top_list.get(code)
-            last_top = last_top_list.get(code)
-            days_since_top = _days_since_event(reference_date, (last_top or {}).get("trade_date"))
-            if days_since_top is not None:
-                enriched.at[index, "days_since_top_list"] = days_since_top
-            if top:
-                _assign_first_number(enriched, index, "top_list_net_amount", top.get("top_list_net_amount"))
-                _assign_first_number(enriched, index, "top_list_amount_rate", top.get("top_list_amount_rate"))
-                enriched.at[index, "top_list_reason"] = top.get("top_list_reason")
-                sources["top_list"] = top.get("source") or "Tushare top_list"
-                feature_dates["top_list"] = _date_text(top.get("trade_date"))
-
-            inst = top_inst.get(code)
-            if inst:
-                _assign_first_number(enriched, index, "top_inst_net_buy", inst.get("top_inst_net_buy"))
-                sources["top_inst"] = inst.get("source") or "Tushare top_inst"
-                feature_dates["top_inst"] = _date_text(inst.get("trade_date"))
-
-            hot = hot_money.get(code)
-            if hot:
-                _assign_first_number(enriched, index, "hot_money_net_amount", hot.get("hot_money_net_amount"))
-                sources["hot_money"] = hot.get("source") or "Tushare hm_detail"
-                feature_dates["hot_money"] = _date_text(hot.get("trade_date"))
-
-            enriched.at[index, "data_sources"] = sources
-            enriched.at[index, "feature_dates"] = feature_dates
-        return enriched
-
-    def _latest_tushare_rows(
-        self,
-        table: str,
-        as_of_date: Optional[date] = None,
-        max_age_days: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        where, params = _freshness_where(as_of_date, max_age_days)
-        return self.db.query(
-            f"""
-            SELECT *
-            FROM (
-                SELECT *,
-                       ROW_NUMBER() OVER (PARTITION BY code ORDER BY trade_date DESC) AS row_num
-                FROM {table}
-                {where}
-            )
-            WHERE row_num = 1
-            """,
-            params,
-        )
-
-    def _tushare_rows_on_date(self, table: str, trade_date: Optional[date]) -> List[Dict[str, Any]]:
-        if not trade_date:
-            return []
-        return self.db.query(
-            f"""
-            SELECT *
-            FROM {table}
-            WHERE trade_date = ?
-            """,
-            [trade_date],
-        )
-
-    def _sum_rows_on_date(
-        self,
-        table: str,
-        value_column: str,
-        output_column: str,
-        trade_date: Optional[date],
-    ) -> List[Dict[str, Any]]:
-        if not trade_date:
-            return []
-        return self.db.query(
-            f"""
-            SELECT code,
-                   trade_date,
-                   SUM({value_column}) AS {output_column},
-                   MAX(source) AS source
-            FROM {table}
-            WHERE trade_date = ?
-            GROUP BY code, trade_date
-            """,
-            [trade_date],
-        )
-
-    def _latest_sum_rows(
-        self,
-        table: str,
-        value_column: str,
-        output_column: str,
-        as_of_date: Optional[date] = None,
-        max_age_days: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        where, params = _freshness_where(as_of_date, max_age_days)
-        return self.db.query(
-            f"""
-            WITH latest AS (
-                SELECT code, MAX(trade_date) AS trade_date
-                FROM {table}
-                {where}
-                GROUP BY code
-            )
-            SELECT t.code,
-                   t.trade_date,
-                   SUM(t.{value_column}) AS {output_column},
-                   MAX(t.source) AS source
-            FROM {table} t
-            JOIN latest l ON l.code = t.code AND l.trade_date = t.trade_date
-            GROUP BY t.code, t.trade_date
-            """,
-            params,
-        )
-
-    def _top_list_rows_on_date(self, trade_date: Optional[date]) -> List[Dict[str, Any]]:
-        if not trade_date:
-            return []
-        return self.db.query(
-            """
-            SELECT t.code,
-                   t.trade_date,
-                   SUM(t.net_amount) AS top_list_net_amount,
-                   MAX(t.amount_rate) AS top_list_amount_rate,
-                   string_agg(COALESCE(t.reason, ''), ' / ') AS top_list_reason,
-                   MAX(t.source) AS source
-            FROM tushare_top_list t
-            WHERE t.trade_date = ?
-            GROUP BY t.code, t.trade_date
-            """,
-            [trade_date],
-        )
-
-    def _latest_top_list_rows(
-        self,
-        as_of_date: Optional[date] = None,
-        max_age_days: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        where, params = _freshness_where(as_of_date, max_age_days)
-        return self.db.query(
-            f"""
-            WITH latest AS (
-                SELECT code, MAX(trade_date) AS trade_date
-                FROM tushare_top_list
-                {where}
-                GROUP BY code
-            )
-            SELECT t.code,
-                   t.trade_date,
-                   SUM(t.net_amount) AS top_list_net_amount,
-                   MAX(t.amount_rate) AS top_list_amount_rate,
-                   string_agg(COALESCE(t.reason, ''), ' / ') AS top_list_reason,
-                   MAX(t.source) AS source
-            FROM tushare_top_list t
-            JOIN latest l ON l.code = t.code AND l.trade_date = t.trade_date
-            GROUP BY t.code, t.trade_date
-            """,
-            params,
-        )
-
-    def _latest_chip_rows(
-        self,
-        as_of_date: Optional[date] = None,
-        max_age_days: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        where, params = _freshness_where(as_of_date, max_age_days)
-        return self.db.query(
-            f"""
-            WITH latest AS (
-                SELECT code, MAX(trade_date) AS trade_date
-                FROM tushare_cyq_chips
-                {where}
-                GROUP BY code
-            )
-            SELECT c.code,
-                   c.trade_date,
-                   MAX(c.percent) AS cyq_chip_peak_percent,
-                   MAX(c.price) - MIN(c.price) AS cyq_chip_price_span,
-                   MAX(c.source) AS source
-            FROM tushare_cyq_chips c
-            JOIN latest l ON l.code = c.code AND l.trade_date = c.trade_date
-            GROUP BY c.code, c.trade_date
-            """,
-            params,
-        )
-
-    def _enrich_theme_metrics(self, frame: pd.DataFrame, as_of_date: Optional[date] = None) -> pd.DataFrame:
-        if frame.empty or "code" not in frame:
-            return frame
-        enriched = frame.copy()
-        enriched["concept_count"] = 0
-        enriched["topic_count"] = 0
-        enriched["theme_limit_count"] = 0
-        enriched["topic_heat"] = 0.0
-        if not settings.tushare_enabled:
-            return enriched
-        codes = {str(code) for code in enriched["code"].dropna().tolist()}
-        if not codes:
-            return enriched
-        reference_date = _analysis_frame_date(enriched, as_of_date)
-        members = [
-            row
-            for row in self.db.query(
-                """
-                SELECT code, con_code, in_date, out_date
-                FROM tushare_ths_member
-                WHERE code IS NOT NULL AND con_code IS NOT NULL
-                """
-            )
-            if str(row.get("code")) in codes and _theme_member_active(row, reference_date)
-        ]
-        if not members:
-            return enriched
-
-        themes_by_code: Dict[str, set[str]] = {}
-        codes_by_theme: Dict[str, set[str]] = {}
-        for row in members:
-            code = str(row.get("code"))
-            theme = str(row.get("con_code"))
-            themes_by_code.setdefault(code, set()).add(theme)
-            codes_by_theme.setdefault(theme, set()).add(code)
-
-        limit_codes: set[str] = set()
-        if reference_date:
-            for row in self.db.query(
-                """
-                SELECT code, limit_type
-                FROM tushare_limit_list_d
-                WHERE trade_date = ?
-                """,
-                [reference_date],
-            ):
-                limit_type = str(row.get("limit_type") or "").upper()
-                if "U" in limit_type or "UP" in limit_type or "涨停" in limit_type:
-                    limit_codes.add(str(row.get("code")))
-
-        frame_by_code = enriched.set_index("code", drop=False)
-        theme_heat: Dict[str, float] = {}
-        theme_limit_counts: Dict[str, int] = {}
-        for theme, member_codes in codes_by_theme.items():
-            present_codes = [code for code in member_codes if code in frame_by_code.index]
-            if not present_codes:
-                continue
-            subset = frame_by_code.loc[present_codes]
-            if isinstance(subset, pd.Series):
-                subset = subset.to_frame().T
-            pct = pd.to_numeric(subset.get("pct_chg"), errors="coerce")
-            rps = pd.to_numeric(subset.get("rps20"), errors="coerce")
-            positive_ratio = float((pct > 0).mean()) if len(pct) else 0.0
-            strong_ratio = float((rps >= 70).mean()) if len(rps) else 0.0
-            limit_count = len(member_codes & limit_codes)
-            theme_limit_counts[theme] = limit_count
-            avg_pct = max(float(pct.fillna(0).mean()) if len(pct) else 0.0, 0.0)
-            heat = positive_ratio * 35 + strong_ratio * 35 + min(limit_count, 5) * 6 + min(avg_pct, 10) * 2
-            theme_heat[theme] = round(min(100.0, heat), 2)
-
-        for index, row in enriched.iterrows():
-            code = str(row.get("code"))
-            themes = themes_by_code.get(code, set())
-            enriched.at[index, "concept_count"] = len(themes)
-            enriched.at[index, "topic_count"] = len(themes)
-            if themes:
-                enriched.at[index, "theme_limit_count"] = max((theme_limit_counts.get(theme, 0) for theme in themes), default=0)
-                enriched.at[index, "topic_heat"] = max((theme_heat.get(theme, 0.0) for theme in themes), default=0.0)
-        return enriched
 
     def _persist_results(
         self,

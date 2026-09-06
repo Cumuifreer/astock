@@ -1,28 +1,20 @@
-import { useEffect, useState } from 'react';
-import * as Popover from '@radix-ui/react-popover';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, MoreHorizontal } from 'lucide-react';
+import { Suspense, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { routes, type RouteId, findRoute } from './routes';
 import { Button } from '../design/Button';
 import { Badge } from '../design/Badge';
-import { useToast } from '../design/Toast';
-import { startUpdate, getTasks } from '../api/data';
+import { getTasks } from '../api/data';
 import { queryKeys } from '../api/queryKeys';
-import { startIntradaySnapshot } from '../api/intraday';
-import { useActiveTaskPolling } from '../hooks/useActiveTaskPolling';
-import { useHeavyTaskLock } from '../hooks/useHeavyTaskLock';
 import { useTaskTerminalInvalidation } from '../hooks/useTaskTerminalInvalidation';
 import type { TaskRun } from '../types';
 import { normalizeRows } from '../utils/metrics';
 
-const productNavigationLabels = ['市场总览', '策略选股', '分析结果', '盘中雷达', '观察池', '回测', '数据中心', '任务状态'];
+const productNavigationLabels = routes.map(route => route.label);
 const activeRefreshInterval = 2600;
 const standbyRefreshInterval = 60_000;
 
 export function AppShell() {
   const [activeRoute, setActiveRoute] = useState<RouteId>(() => parseRouteHash(window.location.hash));
-  const queryClient = useQueryClient();
-  const { showToast } = useToast();
   const selectedRoute = findRoute(activeRoute);
   const Page = selectedRoute.component;
   const activeTasks = useQuery({
@@ -32,43 +24,13 @@ export function AppShell() {
       hasActiveRows(normalizeRows<TaskRun>(query.state.data as { rows?: TaskRun[] } | TaskRun[] | undefined)) ? activeRefreshInterval : standbyRefreshInterval,
   });
   const activeRows = normalizeRows<TaskRun>(activeTasks.data);
-  const taskLock = useHeavyTaskLock(activeRows);
-  const taskActive = useActiveTaskPolling(null, activeRows, activeRefreshInterval);
+  const taskActive = hasActiveRows(activeRows);
   const recentTasks = useQuery({
     queryKey: queryKeys.tasks.recent(),
     queryFn: () => getTasks({ status: 'completed_full,completed_partial,failed', limit: 50 }),
     refetchInterval: taskActive ? activeRefreshInterval : standbyRefreshInterval,
   });
   useTaskTerminalInvalidation(normalizeRows<TaskRun>(recentTasks.data), recentTasks.isFetched);
-
-  const invalidate = () => {
-    void queryClient.invalidateQueries();
-  };
-  const goToStatus = () => {
-    setActiveRoute('status');
-    window.history.replaceState(null, '', '#status');
-  };
-  const handleTaskStarted = (message = '任务已开始，可在任务状态查看进度') => {
-    invalidate();
-    goToStatus();
-    showToast(message, 'success');
-  };
-  const handleTaskError = (error: unknown) => {
-    showToast(error instanceof Error ? error.message : '任务启动失败', 'danger');
-  };
-
-  const marketEnvMutation = useMutation({
-    mutationFn: () => startUpdate({ mode: 'market_environment' }),
-    onSuccess: () => handleTaskStarted('市场环境重算已开始，可在任务状态查看进度'),
-    onError: handleTaskError,
-  });
-  const sampleMutation = useMutation({
-    mutationFn: () => startIntradaySnapshot(),
-    onSuccess: () => handleTaskStarted('盘中采样已开始，可在任务状态查看进度'),
-    onError: handleTaskError,
-  });
-
-  const busy = marketEnvMutation.isPending || sampleMutation.isPending;
 
   useEffect(() => {
     const handleHashChange = () => setActiveRoute(parseRouteHash(window.location.hash));
@@ -80,11 +42,6 @@ export function AppShell() {
     setActiveRoute(id);
     window.history.replaceState(null, '', `#${id}`);
   };
-  const openDataHealth = () => {
-    setActiveRoute('data-map');
-    window.history.replaceState(null, '', '#data-map?tab=health');
-    window.dispatchEvent(new CustomEvent('data-map-tab', { detail: 'health' }));
-  };
 
   return (
     <div className="workbench-shell">
@@ -93,7 +50,7 @@ export function AppShell() {
           <div className="brand-mark">A</div>
           <div>
             <h1 className="brand-title">astock</h1>
-            <p className="brand-subtitle">A 股量化工作台</p>
+            <p className="brand-subtitle">收盘选股与复盘</p>
           </div>
         </div>
         <nav className="nav-stack" aria-label={productNavigationLabels.join(' / ')}>
@@ -116,32 +73,13 @@ export function AppShell() {
             <p>{selectedRoute.description}</p>
           </div>
           <div className="topbar-actions">
-            <Popover.Root>
-              <Popover.Trigger asChild>
-                <Button aria-label="更多操作" icon={<MoreHorizontal size={16} />} variant="ghost">
-                  <ChevronDown size={14} />
-                </Button>
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content align="end" className="popover-content" sideOffset={8} style={{ padding: 8, width: 220 }}>
-                  <div className="list-stack">
-                    <Button disabled={busy} onClick={openDataHealth} variant="ghost">
-                      打开数据中心
-                    </Button>
-                    <Button disabled={taskLock.locked || busy} onClick={() => marketEnvMutation.mutate()} variant="ghost">
-                      重算市场环境
-                    </Button>
-                    <Button disabled={taskLock.locked || busy} onClick={() => sampleMutation.mutate()} variant="ghost">
-                      盘中采样一次
-                    </Button>
-                  </div>
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
+            <Button variant="secondary" onClick={() => selectRoute('data-map')}>
+              {taskActive ? `任务运行中 · ${activeRows.length}` : '更新数据'}
+            </Button>
           </div>
         </header>
         <div className="page-content">
-          <Page />
+          <Suspense fallback={<p role="status">正在加载…</p>}><Page /></Suspense>
         </div>
       </main>
     </div>
@@ -153,8 +91,9 @@ function hasActiveRows(rows: TaskRun[]) {
 }
 
 function parseRouteHash(hash: string): RouteId {
-  const value = hash.replace(/^#\/?/, '').split('?')[0] as RouteId;
-  return routes.some((route) => route.id === value) ? value : 'overview';
+  const raw = hash.replace(/^#\/?/, '').split('?')[0];
+  const value = (raw === 'status' ? 'data-map' : raw) as RouteId;
+  return routes.some((route) => route.id === value) ? value : 'results';
 }
 
 function NavButton({ routeId, active, onClick }: { routeId: RouteId; active: boolean; onClick: (id: RouteId) => void }) {

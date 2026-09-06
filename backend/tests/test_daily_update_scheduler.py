@@ -36,20 +36,13 @@ def test_daily_update_scheduler_enqueues_daily_light_once(tmp_path, monkeypatch)
     assert '"scheduled": true' in rows[0]["summary_json"]
 
 
-def test_runtime_health_reports_daily_update_schedule(tmp_path):
+def test_review_overview_reports_daily_update_schedule(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from backend.app.services import data_service
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
-    now = datetime(2026, 5, 22, 16, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
-
-    health = DataService(db).runtime_health(
-        now=now,
-        daily_update_scheduler_enabled=True,
-        daily_update_schedule_time="17:10",
-        daily_update_poll_seconds=60,
-    )
-
-    assert health["daily_update_scheduler"]["enabled"] is True
-    assert health["daily_update_scheduler"]["timezone"] == "Asia/Shanghai"
-    assert health["daily_update_scheduler"]["next_slot"]["time"] == "17:10"
-    assert health["daily_update_scheduler"]["remaining_count"] == 1
-    assert health["daily_update_scheduler"]["latest_slot"] is None
+    monkeypatch.setattr(data_service, "settings", SimpleNamespace(daily_update_scheduler_enabled=True, daily_update_schedule_time="18:30"))
+    overview = DataService(db).review_overview()
+    assert overview["schedule_enabled"] is True
+    assert overview["schedule_time"] == "18:30"
+    assert overview["trade_date"] is None

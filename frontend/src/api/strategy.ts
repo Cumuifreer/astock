@@ -40,42 +40,7 @@ export function getAnalysisReports(): Promise<AnalysisReportsResponse> {
 }
 
 export function getAnalysisReport(id: string): Promise<AnalysisReportDetail> {
-  return request<AnalysisReportDetail>(`/api/analysis/reports/${encodeURIComponent(id)}?limit=300`);
-}
-
-export type CandidateAiSummaryStatus = 'not_requested' | 'queued' | 'running' | 'completed_full' | 'completed_partial' | 'failed' | 'stale';
-
-export type CandidateAiSummaryContent = {
-  enabled?: boolean;
-  summary?: string | null;
-  opportunities?: string[];
-  risks?: string[];
-  watch_plan?: string[];
-  generated_at?: string | null;
-  prompt_version?: string | null;
-  fallback_reason?: 'missing_api_key' | 'llm_error' | 'invalid_response' | null;
-  error_message?: string | null;
-};
-
-export type CandidateAiSummary = {
-  status?: CandidateAiSummaryStatus;
-  task_id?: string | null;
-  run_id?: string;
-  code?: string;
-  input_hash?: string | null;
-  enabled?: boolean;
-  summary?: string | CandidateAiSummaryContent | null;
-  opportunities?: string[];
-  risks?: string[];
-  watch_plan?: string[];
-  generated_at?: string | null;
-  prompt_version?: string | null;
-  fallback_reason?: 'missing_api_key' | 'llm_error' | 'invalid_response' | null;
-  error_message?: string | null;
-};
-
-export function getCandidateAiSummary(runId: string, code: string): Promise<CandidateAiSummary> {
-  return request<CandidateAiSummary>(`/api/analysis/candidates/${encodeURIComponent(runId)}/${encodeURIComponent(code)}/ai-summary`);
+  return request<AnalysisReportDetail>(`/api/analysis/reports/${encodeURIComponent(id)}?limit=500`);
 }
 
 export function saveStrategy(payload: Record<string, unknown>): Promise<{ preset: StrategyPreset }> {

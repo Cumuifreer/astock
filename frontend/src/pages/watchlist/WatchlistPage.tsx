@@ -34,7 +34,6 @@ export function WatchlistPage() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['watchlist'] });
-    void queryClient.invalidateQueries({ queryKey: ['bootstrap'] });
   };
   const updateMutation = useMutation({
     mutationFn: ({ item, changes }: { item: HypothesisItem; changes: Record<string, unknown> }) =>

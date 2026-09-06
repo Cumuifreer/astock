@@ -213,7 +213,7 @@ def test_watchlist_soft_corrects_existing_report_items_with_late_entry_date(tmp_
     assert item["return_1d"] == pytest.approx(0.05)
 
 
-def test_watchlist_latest_return_uses_realtime_snapshot_when_history_has_no_future_bar(tmp_path):
+def test_watchlist_waits_for_daily_bar_when_only_intraday_snapshot_exists(tmp_path):
     db = Database(tmp_path / "ashare_test.duckdb")
     migrate(db)
     _seed_stock_with_bars(db, closes=[10.0])
@@ -250,9 +250,9 @@ def test_watchlist_latest_return_uses_realtime_snapshot_when_history_has_no_futu
 
     item = service.result()["batches"][0]["items"][0]
 
-    assert item["latest_date"] == date(2026, 5, 21)
-    assert item["latest_close"] == pytest.approx(10.7)
-    assert item["return_latest"] == pytest.approx(0.07)
+    assert item["latest_date"] is None
+    assert item["latest_close"] is None
+    assert item["return_latest"] is None
     assert item["return_1d"] is None
 
 
