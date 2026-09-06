@@ -151,7 +151,7 @@ class DataService:
     def analysis_reports(self, per_mode_limit: int = 100) -> Dict[str, Any]:
         rows = self.db.query(
             """
-            SELECT *
+            SELECT id, status, started_at, finished_at, task_id, summary_json, config_json, error_message
             FROM analysis_runs
             WHERE status LIKE 'completed%'
             ORDER BY finished_at DESC NULLS LAST, started_at DESC
@@ -160,8 +160,12 @@ class DataService:
         )
         groups: Dict[str, List[Dict[str, Any]]] = {}
         for row in rows:
-            decoded = self._decode_analysis_row(row)
-            strategy_name = decoded.get("summary", {}).get("strategy_name") or decoded.get("config", {}).get("name") or "未命名策略"
+            decoded = _decode_analysis_report_row(row)
+            strategy_name = self._analysis_strategy_name(decoded["summary"], decoded["config"], match_preset=False)
+            decoded["summary"]["strategy_name"] = strategy_name
+            decoded["config"]["strategy_name"] = strategy_name
+            decoded["config"]["name"] = strategy_name
+            decoded["config"]["preset_name"] = strategy_name
             reports = groups.setdefault(strategy_name, [])
             if len(reports) < max(1, min(per_mode_limit, 100)):
                 reports.append(decoded)
@@ -233,13 +237,15 @@ class DataService:
             decoded["config"]["preset_name"] = strategy_name
         return decoded
 
-    def _analysis_strategy_name(self, summary: Dict[str, Any], config: Dict[str, Any]) -> str:
+    def _analysis_strategy_name(self, summary: Dict[str, Any], config: Dict[str, Any], match_preset: bool = True) -> str:
         for source in (summary, config):
             for key in ("strategy_name", "name", "preset_name"):
                 value = str(source.get(key) or "").strip()
                 if value and value != "未命名策略":
                     return value
-        return self._strategy_name_from_matching_preset(config) or "未命名策略"
+        if match_preset:
+            return self._strategy_name_from_matching_preset(config) or "未命名策略"
+        return "未命名策略"
 
     def _strategy_name_from_matching_preset(self, config: Dict[str, Any]) -> Optional[str]:
         target = _config_signature(config)
@@ -280,3 +286,15 @@ def _config_signature(config: Dict[str, Any]) -> str:
         return value
 
     return json.dumps(clean(config), ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _decode_analysis_report_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    decoded = dict(row)
+    decoded["summary"] = json.loads(decoded.pop("summary_json") or "{}")
+    raw_config = json.loads(decoded.pop("config_json") or "{}")
+    decoded["config"] = {
+        key: raw_config.get(key)
+        for key in ("name", "strategy_name", "preset_name", "analysis_mode")
+        if raw_config.get(key) is not None
+    }
+    return decoded
