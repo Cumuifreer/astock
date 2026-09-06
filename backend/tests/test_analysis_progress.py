@@ -113,102 +113,6 @@ def test_update_service_analysis_task_uses_progress_callback(tmp_path):
     assert patches[-1]["total"] == 7
 
 
-def test_analysis_task_auto_enqueues_candidate_ai_summaries_after_run(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-
-    class NoopExecutor:
-        def submit(self, *args, **kwargs):
-            return None
-
-    class AnalysisRunner:
-        def run(self, config, progress=None, run_id=None, task_id=None):
-            assert task_id == "analyze-test"
-            run_id = run_id or "run-1"
-            db.upsert(
-                "candidate_results",
-                [
-                    {
-                        "run_id": run_id,
-                        "rank": 1,
-                        "code": "000001.SZ",
-                        "name": "平安银行",
-                        "signal_score": 88,
-                        "reasons_json": json.dumps(["放量突破"], ensure_ascii=False),
-                        "metrics_json": json.dumps({"strategy_rule_results": [{"indicator_name": "量能", "matched": True}]}, ensure_ascii=False),
-                        "created_at": datetime.utcnow(),
-                    },
-                    {
-                        "run_id": run_id,
-                        "rank": 2,
-                        "code": "000002.SZ",
-                        "name": "万科A",
-                        "signal_score": 82,
-                        "reasons_json": json.dumps(["趋势延续"], ensure_ascii=False),
-                        "metrics_json": json.dumps({"strategy_rule_results": [{"indicator_name": "趋势", "matched": True}]}, ensure_ascii=False),
-                        "created_at": datetime.utcnow(),
-                    },
-                ],
-                ["run_id", "code"],
-            )
-            return run_id
-
-    class CandidateSummaryRunner:
-        def prepare_from_result(self, run_id, code, require_existing=False):
-            assert require_existing is True
-            return {
-                "run_id": run_id,
-                "code": code,
-                "input_hash": f"hash-{code}",
-                "prompt_version": "candidate-ai-v2",
-                "llm_model": "model-a",
-                "evidence": {"candidate": {"code": code}},
-            }
-
-        def read_summary(self, run_id, code, input_hash=None):
-            return {"status": "not_requested", "run_id": run_id, "code": code, "summary": None}
-
-        def mark_queued(self, identity, task_id):
-            db.upsert(
-                "candidate_ai_summaries",
-                [
-                    {
-                        "run_id": identity["run_id"],
-                        "code": identity["code"],
-                        "summary_json": None,
-                        "llm_model": identity["llm_model"],
-                        "generated_at": None,
-                        "status": "queued",
-                        "task_id": task_id,
-                        "input_hash": identity["input_hash"],
-                        "prompt_version": identity["prompt_version"],
-                        "evidence_json": json.dumps(identity["evidence"], ensure_ascii=False),
-                    }
-                ],
-                ["run_id", "code"],
-            )
-
-    monkeypatch.setattr(service, "executor", NoopExecutor())
-    service.candidate_summary_runner = CandidateSummaryRunner()
-    service._write_task(
-        "analyze-test",
-        kind="analyze",
-        status="running",
-        stage="准备分析",
-        source="本地仓库",
-        summary={},
-        payload={},
-    )
-
-    service._run_analysis("analyze-test", {}, AnalysisRunner(), run_id="run-1")
-
-    tasks = db.query("SELECT kind, status, payload_json FROM task_runs WHERE kind = 'candidate_ai_summary' ORDER BY payload_json")
-    summaries = db.query("SELECT code, status FROM candidate_ai_summaries ORDER BY code")
-    assert len(tasks) == 2
-    assert {json.loads(row["payload_json"])["code"] for row in tasks} == {"000001.SZ", "000002.SZ"}
-    assert {row["status"] for row in tasks} == {"queued"}
-    assert summaries == [{"code": "000001.SZ", "status": "queued"}, {"code": "000002.SZ", "status": "queued"}]
 
 
 def test_analysis_task_completion_publishes_result_for_polling(tmp_path):
@@ -383,8 +287,8 @@ def test_task_queue_runs_queued_tasks_in_fifo_order(tmp_path, monkeypatch):
         payload={"mode": "daily_light"},
     )
     service._write_task(
-        "intraday-test",
-        kind="intraday",
+        "analyze-test",
+        kind="analyze",
         status="queued",
         stage="排队等待",
         source="本地仓库",
@@ -393,11 +297,12 @@ def test_task_queue_runs_queued_tasks_in_fifo_order(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(service, "_run_update", lambda task_id, payload: seen.append((task_id, payload["mode"])))
-    monkeypatch.setattr(service, "_run_intraday_sample", lambda task_id, payload: seen.append((task_id, "intraday")))
+    service.analysis_runner = object()
+    monkeypatch.setattr(service, "_run_analysis", lambda task_id, config, runner, **kwargs: seen.append((task_id, "analyze")))
 
     service._drain_queue()
 
-    assert seen == [("update-test", "daily_light"), ("intraday-test", "intraday")]
+    assert seen == [("update-test", "daily_light"), ("analyze-test", "analyze")]
 
 
 def test_latest_task_hides_internal_queue_payload(tmp_path):
@@ -498,65 +403,6 @@ def test_task_runs_lists_terminal_tasks_by_latest_time_not_queue_order(tmp_path)
     assert [row["id"] for row in rows] == ["update-new", "update-old"]
 
 
-def test_candidate_ai_summary_task_enqueues_and_marks_result_queued(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-
-    class NoopExecutor:
-        def submit(self, *args, **kwargs):
-            return None
-
-    class Runner:
-        def prepare_from_result(self, run_id, code, require_existing=False):
-            assert require_existing is True
-            return {
-                "run_id": run_id,
-                "code": code,
-                "input_hash": "hash-1",
-                "prompt_version": "candidate-ai-v2",
-                "llm_model": "model-a",
-                "evidence": {"candidate": {"code": code}},
-            }
-
-        def read_summary(self, run_id, code, input_hash=None):
-            return {"status": "not_requested", "run_id": run_id, "code": code, "summary": None}
-
-        def mark_queued(self, identity, task_id):
-            db.upsert(
-                "candidate_ai_summaries",
-                [
-                    {
-                        "run_id": identity["run_id"],
-                        "code": identity["code"],
-                        "summary_json": None,
-                        "llm_model": identity["llm_model"],
-                        "generated_at": None,
-                        "status": "queued",
-                        "task_id": task_id,
-                        "input_hash": identity["input_hash"],
-                        "prompt_version": identity["prompt_version"],
-                        "evidence_json": json.dumps(identity["evidence"], ensure_ascii=False),
-                    }
-                ],
-                ["run_id", "code"],
-            )
-
-    monkeypatch.setattr(service, "executor", NoopExecutor())
-
-    task_id, identity = service.start_candidate_ai_summary(
-        {"run_id": "run-1", "code": "000001.SZ", "force": False},
-        Runner(),
-    )
-
-    task = db.query("SELECT id, kind, status, payload_json FROM task_runs WHERE id = ?", [task_id])[0]
-    row = db.query("SELECT status, task_id, input_hash FROM candidate_ai_summaries WHERE run_id = ? AND code = ?", ["run-1", "000001.SZ"])[0]
-    assert task_id.startswith("ai-summary-")
-    assert identity["input_hash"] == "hash-1"
-    assert task["kind"] == "candidate_ai_summary"
-    assert task["status"] == "queued"
-    assert '"input_hash": "hash-1"' in task["payload_json"]
-    assert row == {"status": "queued", "task_id": task_id, "input_hash": "hash-1"}
 
 
 def test_core_task_starters_reuse_active_matching_payloads(tmp_path, monkeypatch):
@@ -574,15 +420,11 @@ def test_core_task_starters_reuse_active_matching_payloads(tmp_path, monkeypatch
     update_second = service.start_update({"mode": "full", "force": True})
     analyze_first = service.start_analysis({"candidate_limit": 5}, AnalysisService(db))
     analyze_second = service.start_analysis({"candidate_limit": 5}, AnalysisService(db))
-    backtest_first = service.start_backtest({"config": {"candidate_limit": 3}}, object())
-    backtest_second = service.start_backtest({"config": {"candidate_limit": 3}}, object())
 
     assert update_second == update_first
     assert analyze_second == analyze_first
-    assert backtest_second == backtest_first
     assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'update'") == 1
     assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'analyze'") == 1
-    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'backtest'") == 1
 
 
 def test_core_task_starters_store_canonical_payload_hashes(tmp_path, monkeypatch):
@@ -598,16 +440,13 @@ def test_core_task_starters_store_canonical_payload_hashes(tmp_path, monkeypatch
 
     update_id = service.start_update({"mode": "daily_light", "force": False})
     analyze_id, analyze_run = service.start_analysis({"candidate_limit": 5}, AnalysisService(db))
-    backtest_id, backtest_run = service.start_backtest({"config": {"candidate_limit": 3}}, object())
 
     rows = db.query("SELECT id, payload_hash FROM task_runs ORDER BY id")
     hashes = {row["id"]: row["payload_hash"] for row in rows}
 
     assert hashes[update_id]
     assert hashes[analyze_id]
-    assert hashes[backtest_id]
     assert service.start_analysis({"candidate_limit": 5}, AnalysisService(db)) == (analyze_id, analyze_run)
-    assert service.start_backtest({"config": {"candidate_limit": 3}}, object()) == (backtest_id, backtest_run)
 
 
 def test_analysis_task_runs_without_memory_floor(tmp_path, monkeypatch):
@@ -644,34 +483,6 @@ def test_analysis_task_runs_without_memory_floor(tmp_path, monkeypatch):
     assert row["error_message"] is None
 
 
-def test_daily_light_update_runs_without_memory_floor(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-    calls = []
-    monkeypatch.setattr(service, "_available_memory_mb", lambda: 1000, raising=False)
-    monkeypatch.setattr(service, "_min_available_memory_mb", lambda: 1200, raising=False)
-    monkeypatch.setattr(
-        service,
-        "_run_update",
-        lambda task_id, payload: calls.append((task_id, payload.get("mode"))) or service._patch_task(task_id, status="completed_full", stage="轻量日更完成"),
-    )
-    service._write_task(
-        "update-default-floor",
-        kind="update",
-        status="queued",
-        stage="准备更新",
-        source="Tushare",
-        summary={},
-        payload={"mode": "daily_light"},
-    )
-
-    service._drain_queue()
-
-    row = db.query("SELECT status, warning FROM task_runs WHERE id = 'update-default-floor'")[0]
-    assert calls == [("update-default-floor", "daily_light")]
-    assert row["status"] == "completed_full"
-    assert row["warning"] is None
 
 
 def test_next_queued_task_claims_task_once_across_service_instances(tmp_path):
@@ -768,289 +579,14 @@ def test_queue_worker_logs_claim_failure_without_spinning(tmp_path, monkeypatch,
     assert "claim failed" in caplog.text
 
 
-def test_candidate_ai_summary_task_rejects_missing_candidate(tmp_path):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-
-    class Runner:
-        def prepare_from_result(self, run_id, code, require_existing=False):
-            assert require_existing is True
-            raise ValueError("候选不存在，无法生成解释。")
-
-    try:
-        service.start_candidate_ai_summary({"run_id": "missing-run", "code": "000001.SZ"}, Runner())
-    except ValueError as exc:
-        assert "候选不存在" in str(exc)
-    else:
-        raise AssertionError("missing candidate should not enqueue a task")
-
-    assert db.scalar("SELECT COUNT(*) FROM task_runs") == 0
-    assert db.scalar("SELECT COUNT(*) FROM candidate_ai_summaries") == 0
 
 
-def test_candidate_ai_summary_orphan_running_result_can_reenqueue(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-
-    class NoopExecutor:
-        def submit(self, *args, **kwargs):
-            return None
-
-    class Runner:
-        def prepare_from_result(self, run_id, code, require_existing=False):
-            return {
-                "run_id": run_id,
-                "code": code,
-                "input_hash": "hash-1",
-                "prompt_version": "candidate-ai-v2",
-                "llm_model": "model-a",
-                "evidence": {"candidate": {"code": code}},
-            }
-
-        def read_summary(self, run_id, code, input_hash=None):
-            return {"status": "running", "run_id": run_id, "code": code, "task_id": "missing-task", "summary": None}
-
-        def mark_queued(self, identity, task_id):
-            db.upsert(
-                "candidate_ai_summaries",
-                [
-                    {
-                        "run_id": identity["run_id"],
-                        "code": identity["code"],
-                        "summary_json": None,
-                        "llm_model": identity["llm_model"],
-                        "generated_at": None,
-                        "status": "queued",
-                        "task_id": task_id,
-                        "input_hash": identity["input_hash"],
-                        "prompt_version": identity["prompt_version"],
-                        "evidence_json": json.dumps(identity["evidence"], ensure_ascii=False),
-                    }
-                ],
-                ["run_id", "code"],
-            )
-
-    monkeypatch.setattr(service, "executor", NoopExecutor())
-
-    task_id, identity = service.start_candidate_ai_summary(
-        {"run_id": "run-1", "code": "000001.SZ"},
-        Runner(),
-    )
-
-    assert task_id.startswith("ai-summary-")
-    assert task_id != "missing-task"
-    assert identity["status"] == "queued"
-    assert db.scalar("SELECT status FROM task_runs WHERE id = ?", [task_id]) == "queued"
 
 
-def test_candidate_ai_summary_force_reuses_active_owner(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-
-    class NoopExecutor:
-        def submit(self, *args, **kwargs):
-            return None
-
-    class Runner:
-        def prepare_from_result(self, run_id, code, require_existing=False):
-            return {
-                "run_id": run_id,
-                "code": code,
-                "input_hash": "hash-1",
-                "prompt_version": "candidate-ai-v2",
-                "llm_model": "model-a",
-                "evidence": {"candidate": {"code": code}},
-            }
-
-        def read_summary(self, run_id, code, input_hash=None):
-            return {
-                "status": "running",
-                "run_id": run_id,
-                "code": code,
-                "task_id": "ai-existing",
-                "input_hash": input_hash,
-                "summary": None,
-            }
-
-        def mark_queued(self, *_args, **_kwargs):
-            raise AssertionError("force must not overwrite an active candidate summary owner")
-
-    monkeypatch.setattr(service, "executor", NoopExecutor())
-    service._write_task(
-        "ai-existing",
-        kind="candidate_ai_summary",
-        status="running",
-        stage="生成候选解释",
-        source="LLM",
-        summary={},
-        payload={"run_id": "run-1", "code": "000001.SZ", "input_hash": "hash-1"},
-    )
-
-    task_id, identity = service.start_candidate_ai_summary(
-        {"run_id": "run-1", "code": "000001.SZ", "force": True},
-        Runner(),
-    )
-
-    assert task_id == "ai-existing"
-    assert identity["status"] == "running"
-    assert db.scalar("SELECT COUNT(*) FROM task_runs WHERE kind = 'candidate_ai_summary'") == 1
 
 
-def test_candidate_ai_summary_dispatch_persists_result_and_completes_task(tmp_path):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-    task_id = "ai-summary-test"
-    identity = {
-        "run_id": "run-1",
-        "code": "000001.SZ",
-        "input_hash": "hash-1",
-        "prompt_version": "candidate-ai-v2",
-        "llm_model": "model-a",
-        "evidence": {"candidate": {"code": "000001.SZ"}},
-    }
-
-    class Runner:
-        def prepare_from_result(self, run_id, code, require_existing=False):
-            assert require_existing is True
-            assert (run_id, code) == ("run-1", "000001.SZ")
-            return identity
-
-        def mark_running(self, identity, task_id):
-            db.upsert(
-                "candidate_ai_summaries",
-                [
-                    {
-                        "run_id": identity["run_id"],
-                        "code": identity["code"],
-                        "summary_json": None,
-                        "llm_model": identity["llm_model"],
-                        "generated_at": None,
-                        "status": "running",
-                        "task_id": task_id,
-                        "input_hash": identity["input_hash"],
-                        "prompt_version": identity["prompt_version"],
-                    }
-                ],
-                ["run_id", "code"],
-            )
-
-        def generate_and_store(self, identity, task_id):
-            db.upsert(
-                "candidate_ai_summaries",
-                [
-                    {
-                        "run_id": identity["run_id"],
-                        "code": identity["code"],
-                        "summary_json": json.dumps({"summary": "规则解释", "fallback_reason": "missing_api_key"}, ensure_ascii=False),
-                        "llm_model": identity["llm_model"],
-                        "generated_at": datetime.utcnow(),
-                        "status": "completed_partial",
-                        "task_id": task_id,
-                        "input_hash": identity["input_hash"],
-                        "prompt_version": identity["prompt_version"],
-                    }
-                ],
-                ["run_id", "code"],
-            )
-            return {
-                "status": "completed_partial",
-                "task_id": task_id,
-                "run_id": identity["run_id"],
-                "code": identity["code"],
-                "input_hash": identity["input_hash"],
-                "summary": {"summary": "规则解释", "fallback_reason": "missing_api_key"},
-            }
-
-    service.candidate_summary_runner = Runner()
-    service._write_task(
-        task_id,
-        kind="candidate_ai_summary",
-        status="running",
-        stage="准备生成候选解释",
-        source="LLM",
-        summary={},
-        payload={"run_id": "run-1", "code": "000001.SZ", "input_hash": "hash-1"},
-    )
-
-    service._dispatch_queued_task({"id": task_id, "kind": "candidate_ai_summary"}, {"run_id": "run-1", "code": "000001.SZ", "input_hash": "hash-1"})
-
-    task = db.query("SELECT status, stage, summary_json FROM task_runs WHERE id = ?", [task_id])[0]
-    row = db.query("SELECT status, task_id FROM candidate_ai_summaries WHERE run_id = ? AND code = ?", ["run-1", "000001.SZ"])[0]
-    summary = json.loads(task["summary_json"] or "{}")
-    assert task["status"] == "completed_partial"
-    assert task["stage"] == "候选解释完成"
-    assert summary["run_id"] == "run-1"
-    assert summary["code"] == "000001.SZ"
-    assert row == {"status": "completed_partial", "task_id": task_id}
 
 
-def test_candidate_ai_summary_dispatch_fails_when_input_hash_changed(tmp_path):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-    task_id = "ai-summary-test"
-
-    class Runner:
-        def prepare_from_result(self, run_id, code, require_existing=False):
-            assert require_existing is True
-            return {
-                "run_id": run_id,
-                "code": code,
-                "input_hash": "hash-new",
-                "prompt_version": "candidate-ai-v2",
-                "llm_model": "model-a",
-                "evidence": {"candidate": {"code": code}},
-            }
-
-        def mark_running(self, *_args, **_kwargs):
-            raise AssertionError("stale task must fail before marking result running")
-
-        def generate_and_store(self, *_args, **_kwargs):
-            raise AssertionError("stale task must not call the LLM path")
-
-        def mark_failed(self, identity, task_id, error_message):
-            db.upsert(
-                "candidate_ai_summaries",
-                [
-                    {
-                        "run_id": identity["run_id"],
-                        "code": identity["code"],
-                        "summary_json": None,
-                        "llm_model": identity["llm_model"],
-                        "generated_at": None,
-                        "status": "failed",
-                        "task_id": task_id,
-                        "input_hash": identity["input_hash"],
-                        "prompt_version": identity["prompt_version"],
-                        "error_message": error_message,
-                    }
-                ],
-                ["run_id", "code"],
-            )
-
-    service.candidate_summary_runner = Runner()
-    service._write_task(
-        task_id,
-        kind="candidate_ai_summary",
-        status="running",
-        stage="准备生成候选解释",
-        source="LLM",
-        summary={},
-        payload={"run_id": "run-1", "code": "000001.SZ", "input_hash": "hash-old"},
-    )
-
-    service._dispatch_queued_task({"id": task_id, "kind": "candidate_ai_summary"}, {"run_id": "run-1", "code": "000001.SZ", "input_hash": "hash-old"})
-
-    task = db.query("SELECT status, error_message FROM task_runs WHERE id = ?", [task_id])[0]
-    result = db.query("SELECT status, input_hash, error_message FROM candidate_ai_summaries WHERE run_id = ? AND code = ?", ["run-1", "000001.SZ"])[0]
-    assert task["status"] == "failed"
-    assert "输入已变化" in task["error_message"]
-    assert result["status"] == "failed"
-    assert result["input_hash"] == "hash-new"
 
 
 def test_recover_interrupted_tasks_syncs_result_tables(tmp_path):
@@ -1114,143 +650,3 @@ def test_recover_interrupted_tasks_syncs_result_tables(tmp_path):
     assert db.scalar("SELECT status FROM candidate_ai_summaries WHERE run_id = 'run-1' AND code = '000001.SZ'") == "failed"
     assert db.scalar("SELECT status FROM backtest_runs WHERE id = 'backtest-run'") == "failed"
     assert db.scalar("SELECT status FROM portfolio_backtest_runs WHERE id = 'portfolio-run'") == "failed"
-
-
-def test_stale_running_watchdog_fails_old_tasks_and_syncs_result_tables(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-
-    class NoopExecutor:
-        def submit(self, *args, **kwargs):
-            return None
-
-    monkeypatch.setattr(service, "executor", NoopExecutor())
-    now = datetime(2026, 1, 1, 11, 0)
-    stale_at = now - timedelta(hours=2)
-    fresh_at = now - timedelta(minutes=5)
-
-    task_payloads = {
-        "update-stale": ("update", {"mode": "daily_light"}),
-        "analysis-task": ("analyze", {"run_id": "analysis-stale"}),
-        "backtest-task": ("backtest", {"run_id": "backtest-stale"}),
-        "portfolio-task": ("backtest", {"run_id": "portfolio-stale", "backtest_mode": "portfolio"}),
-        "ai-task": ("candidate_ai_summary", {"run_id": "run-1", "code": "000001.SZ", "input_hash": "hash-1"}),
-    }
-    for task_id, (kind, payload) in task_payloads.items():
-        service._write_task(task_id, kind=kind, status="running", stage="测试", payload=payload)
-        db.execute("UPDATE task_runs SET updated_at = ? WHERE id = ?", [stale_at, task_id], write=True)
-    service._write_task("fresh-running", kind="update", status="running", stage="测试", payload={"mode": "fresh"})
-    db.execute("UPDATE task_runs SET updated_at = ? WHERE id = ?", [fresh_at, "fresh-running"], write=True)
-
-    db.upsert(
-        "analysis_runs",
-        [
-            {
-                "id": "analysis-stale",
-                "status": "running",
-                "started_at": stale_at,
-                "finished_at": None,
-                "config_json": "{}",
-                "summary_json": "{}",
-                "error_message": None,
-                "task_id": "analysis-task",
-            }
-        ],
-        ["id"],
-    )
-    db.upsert(
-        "backtest_runs",
-        [
-            {
-                "id": "backtest-stale",
-                "status": "running",
-                "started_at": stale_at,
-                "finished_at": None,
-                "config_json": "{}",
-                "summary_json": "{}",
-                "error_message": None,
-            }
-        ],
-        ["id"],
-    )
-    db.upsert(
-        "portfolio_backtest_runs",
-        [
-            {
-                "id": "portfolio-stale",
-                "status": "running",
-                "started_at": stale_at,
-                "finished_at": None,
-                "config_json": "{}",
-                "summary_json": "{}",
-                "error_message": None,
-            }
-        ],
-        ["id"],
-    )
-    db.upsert(
-        "candidate_ai_summaries",
-        [
-            {
-                "run_id": "run-1",
-                "code": "000001.SZ",
-                "summary_json": None,
-                "llm_model": "model-a",
-                "generated_at": None,
-                "status": "running",
-                "task_id": "ai-task",
-                "input_hash": "hash-1",
-                "prompt_version": "candidate-ai-v2",
-                "updated_at": stale_at,
-            }
-        ],
-        ["run_id", "code"],
-    )
-
-    failed_count = service.fail_stale_running_tasks(stale_after=timedelta(minutes=30), now=now)
-    restarted_update = service.start_update({"mode": "daily_light"})
-
-    assert failed_count == len(task_payloads)
-    assert db.scalar("SELECT status FROM task_runs WHERE id = 'update-stale'") == "failed"
-    assert db.scalar("SELECT status FROM task_runs WHERE id = 'fresh-running'") == "running"
-    assert db.scalar("SELECT status FROM analysis_runs WHERE id = 'analysis-stale'") == "failed"
-    assert db.scalar("SELECT status FROM backtest_runs WHERE id = 'backtest-stale'") == "failed"
-    assert db.scalar("SELECT status FROM portfolio_backtest_runs WHERE id = 'portfolio-stale'") == "failed"
-    assert db.scalar("SELECT status FROM candidate_ai_summaries WHERE run_id = 'run-1' AND code = '000001.SZ'") == "failed"
-    assert restarted_update != "update-stale"
-
-
-def test_market_environment_update_mode_uses_fast_path_without_full_update(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-    service._write_task(
-        "market-env-test",
-        kind="update",
-        status="running",
-        stage="准备更新",
-        source="本地仓库",
-        summary={},
-        payload={"mode": "market_environment"},
-    )
-    seen_targets = []
-
-    def fake_market_environment(target_date):
-        seen_targets.append(target_date)
-        return 1
-
-    def fail_full_update(*_args, **_kwargs):
-        raise AssertionError("market_environment mode must not enter the full update flow")
-
-    monkeypatch.setattr(service, "_update_market_environment", fake_market_environment)
-    monkeypatch.setattr(service, "_update_basics", fail_full_update)
-
-    service._run_update("market-env-test", {"mode": "market_environment"})
-
-    task = DataService(db).latest_task("update")
-    checkpoints = DataService(db).task_checkpoints("market-env-test")
-    assert seen_targets
-    assert task["status"] == "completed_full"
-    assert task["summary"]["mode"] == "market_environment"
-    assert [row["job_id"] for row in checkpoints] == ["market_environment", "capability_refresh"]

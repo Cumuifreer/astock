@@ -298,7 +298,7 @@ class WatchlistService:
             return self._analysis_date_cache[run_id]
         rows = self.db.query(
             """
-            SELECT finished_at, started_at
+            SELECT summary_json, finished_at, started_at
             FROM analysis_runs
             WHERE id = ?
             LIMIT 1
@@ -307,7 +307,12 @@ class WatchlistService:
         )
         value = None
         if rows:
-            value = rows[0].get("finished_at") or rows[0].get("started_at")
+            summary = json.loads(rows[0].get("summary_json") or "{}")
+            value = summary.get("trade_date")
+            if not value:
+                metrics = self.db.scalar("SELECT metrics_json FROM candidate_results WHERE run_id = ? LIMIT 1", [run_id])
+                value = json.loads(metrics or "{}").get("bar_date")
+            value = value or rows[0].get("finished_at") or rows[0].get("started_at")
         parsed = _date_value(value)
         self._analysis_date_cache[run_id] = parsed
         return parsed
@@ -354,7 +359,7 @@ class WatchlistService:
             """,
             [item["code"], entry_date],
         )
-        snapshot = self._latest_snapshot_after(str(item["code"]), entry_date)
+        snapshot = None
         if not future and not snapshot:
             return {
                 **item,

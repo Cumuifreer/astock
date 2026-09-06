@@ -24,3 +24,7 @@ export function deleteWatchlistItem(batchId: string, code: string): Promise<Reco
 export function deleteWatchlistBatch(batchId: string): Promise<Record<string, unknown>> {
   return del(`/api/watchlist/batches/${encodeURIComponent(batchId)}`);
 }
+
+export function getWatchlistCodes(): Promise<{ codes: string[] }> {
+  return request('/api/watchlist/codes');
+}

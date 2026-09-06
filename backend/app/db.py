@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import duckdb
+import pandas as pd
 
 from backend.app.config import settings
 
@@ -20,7 +21,10 @@ class Database:
 
     @contextmanager
     def connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        conn = duckdb.connect(str(self.path))
+        conn = duckdb.connect(str(self.path), config={
+            "threads": settings.db_threads,
+            "memory_limit": settings.db_memory_limit,
+        })
         try:
             yield conn
         finally:
@@ -75,8 +79,18 @@ class Database:
             with self.connect() as conn:
                 conn.execute("BEGIN TRANSACTION")
                 try:
-                    for row in materialized:
-                        conn.execute(insert_sql, [row[column] for column in columns])
+                    if len(materialized) == 1:
+                        conn.execute(insert_sql, [materialized[0][column] for column in columns])
+                    else:
+                        # One vectorized write per batch; repeated keys keep the last value.
+                        batch = pd.DataFrame(materialized, columns=columns).drop_duplicates(
+                            subset=list(key_columns), keep="last",
+                        )
+                        conn.register("upsert_batch", batch)
+                        conn.execute(insert_sql.replace(
+                            f"VALUES ({placeholders})",
+                            f"SELECT {column_sql} FROM upsert_batch",
+                        ))
                     conn.execute("COMMIT")
                 except Exception:
                     conn.execute("ROLLBACK")

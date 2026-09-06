@@ -1,151 +1,27 @@
-import { useQuery } from '@tanstack/react-query';
 import type { Candidate } from '../../types';
 import { Badge } from '../../design/Badge';
-import { getCandidateAiSummary } from '../../api/strategy';
-import { queryKeys } from '../../api/queryKeys';
-import type { CandidateAiSummary, CandidateAiSummaryContent, CandidateAiSummaryStatus } from '../../api/strategy';
-import { formatMoney, formatPercent, formatRatio, formatRatioPercent } from '../../utils/format';
+import { formatRatio } from '../../utils/format';
 
-type CandidateEvidencePanelProps = {
-  candidate: Candidate | null;
-  runId?: string | null;
-};
-
-export function CandidateEvidencePanel({ candidate, runId }: CandidateEvidencePanelProps) {
-  const ruleResults = candidate ? extractRuleResults(candidate) : [];
-  const matchedRules = ruleResults
-    .filter((item) => item.matched)
-    .slice(0, 6)
-    .map((item) => `${item.indicator_name || '指标'}：${item.value ?? '已命中'}${item.adjustment ? `（${item.adjustment}）` : ''}`);
-  const riskRules = ruleResults
-    .filter((item) => item.action === 'risk' || item.missing || item.reason)
-    .slice(0, 6)
-    .map((item) => `${item.indicator_name || '指标'}：${item.reason || (item.matched ? '命中' : '未命中')}`);
-  const aiSummary = useQuery({
-    queryKey: queryKeys.analysis.candidateAiSummary(runId || undefined, candidate?.code),
-    queryFn: () =>
-      candidate && runId
-        ? getCandidateAiSummary(runId, candidate.code)
-        : Promise.resolve({
-            status: 'not_requested' as const,
-            summary: null,
-          }),
-    enabled: Boolean(candidate && runId),
-    refetchInterval: (query) => (isAiSummaryActive(query.state.data as CandidateAiSummary | undefined) ? 2600 : false),
-    staleTime: 30 * 1000,
-  });
-  if (!candidate) {
-    return (
-      <section className="surface pad">
-        <div className="section-heading">
-          <div>
-            <h2>选股解释</h2>
-            <p>选择候选后展示为什么入选、风险和后续观察动作。</p>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  const aiData = aiSummary.data;
-  const aiContent = normalizeAiSummary(aiData);
-  const aiStatus = aiSummary.isError ? 'failed' : aiData?.status || 'not_requested';
-  const aiText = typeof aiContent.summary === 'string' ? aiContent.summary : null;
-  const useAiEvidence = Boolean(aiText && (aiStatus === 'completed_full' || aiStatus === 'completed_partial'));
-  const aiReady = Boolean(aiText && aiStatus === 'completed_full');
-  const primaryExplanation = useAiEvidence
-    ? [aiText || '']
-    : [fallbackExplanation(aiStatus, aiContent.fallback_reason, aiContent.error_message, aiSummary.isError)];
-  const opportunityItems =
-    useAiEvidence && aiContent.opportunities?.length ? aiContent.opportunities : candidate.reasons?.length ? candidate.reasons : matchedRules;
-  const riskItems = useAiEvidence && aiContent.risks?.length
-    ? aiContent.risks
-    : riskRules.length
-      ? riskRules
-      : [`换手率 ${formatPercent(candidate.turnover_rate)}`, `振幅 ${formatRatioPercent(candidate.amplitude)}`, `流通市值 ${formatMoney(candidate.float_market_value)}`];
-  const watchPlan = useAiEvidence && aiContent.watch_plan?.length
-    ? aiContent.watch_plan
-    : ['观察 1-3 个交易日的量价延续', '失效条件：跌破 5 日线或放量跌破平台', '复盘 T+1 / T+3 / T+5 收益'];
-
-  return (
-    <section className="surface pad">
-      <div className="section-heading">
-        <div>
-          <h2>{candidate.name} 选股解释</h2>
-          <p>
-            {candidate.code} · 总分 {formatRatio(candidate.signal_score)}
-          </p>
-        </div>
-        <Badge tone={aiReady ? 'info' : 'watch'}>{aiReady ? '自然语言解释' : '规则解释'}</Badge>
-      </div>
-      <div className="grid-2 evidence-grid">
-        <EvidenceBlock title="AI 解读" items={primaryExplanation} />
-        <EvidenceBlock title="入选理由" items={opportunityItems.length ? opportunityItems : matchedRules} />
-        <EvidenceBlock title="风险提示" items={riskItems} />
-        <EvidenceBlock title="后续观察" items={watchPlan} />
-      </div>
-    </section>
-  );
-}
-
-function normalizeAiSummary(data?: CandidateAiSummary): CandidateAiSummaryContent {
-  const nested = isAiSummaryContent(data?.summary) ? data?.summary : {};
-  return {
-    enabled: data?.enabled ?? nested.enabled,
-    summary: typeof data?.summary === 'string' ? data.summary : nested.summary || null,
-    opportunities: data?.opportunities?.length ? data.opportunities : nested.opportunities,
-    risks: data?.risks?.length ? data.risks : nested.risks,
-    watch_plan: data?.watch_plan?.length ? data.watch_plan : nested.watch_plan,
-    generated_at: data?.generated_at ?? nested.generated_at,
-    prompt_version: data?.prompt_version ?? nested.prompt_version,
-    fallback_reason: data?.fallback_reason ?? nested.fallback_reason,
-    error_message: data?.error_message ?? nested.error_message,
-  };
-}
-
-function isAiSummaryContent(value: CandidateAiSummary['summary']): value is CandidateAiSummaryContent {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-function isAiSummaryActive(data?: CandidateAiSummary) {
-  return data?.status === 'queued' || data?.status === 'running';
-}
-
-function EvidenceBlock({ title, items }: { title: string; items: string[] }) {
-  return (
-    <article className="rule-card evidence-block">
-      <strong>{title}</strong>
-      <div className="list-stack">
-        {items.map((item, index) => (
-          <p className="card-copy" key={`${item}-${index}`}>
-            {item}
-          </p>
-        ))}
-      </div>
-    </article>
-  );
-}
-
-function fallbackExplanation(
-  status?: CandidateAiSummaryStatus,
-  reason?: CandidateAiSummaryContent['fallback_reason'],
-  errorMessage?: string | null,
-  requestFailed?: boolean,
-) {
-  if (requestFailed) return 'AI 解读状态暂不可用，当前显示规则证据。';
-  if (status === 'queued') return '候选解释已排队，当前先显示规则证据。';
-  if (status === 'running') return '候选解释生成中，当前先显示规则证据。';
-  if (status === 'stale') return '候选解释已过期，当前显示规则证据。';
-  if (status === 'failed') return errorMessage ? `候选解释生成失败，当前显示规则证据：${errorMessage}` : '候选解释生成失败，当前显示规则证据。';
-  if (status === 'not_requested') return 'AI 解读由后台自动生成，当前显示规则证据。';
-  if (reason === 'missing_api_key') return '模型未启用，当前显示规则证据。';
-  if (reason === 'llm_error') return errorMessage ? `模型请求失败，当前显示规则证据：${errorMessage}` : '模型请求失败，当前显示规则证据。';
-  if (reason === 'invalid_response') return '模型返回格式异常，当前显示规则证据。';
-  return 'AI 解读暂不可用，当前显示规则证据。';
-}
-
-function extractRuleResults(candidate: Candidate): Array<Record<string, unknown>> {
-  const key = ['strategy', 'rule', 'results'].join('_');
-  const value = candidate.metrics?.[key];
-  return Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+export function CandidateEvidencePanel({ candidate }: { candidate: Candidate | null }) {
+  if (!candidate) return null;
+  const results = candidate.metrics?.strategy_rule_results;
+  const rules = Array.isArray(results) ? results as Array<Record<string, unknown>> : [];
+  const risks = rules.filter(rule => rule.missing || (rule.action === 'risk' && rule.matched));
+  return <section className="surface pad">
+    <div className="section-heading">
+      <div><h2>{candidate.name} · 入选依据</h2><p>{candidate.code} · 策略分 {formatRatio(candidate.signal_score)}（用于本次候选排序）</p></div>
+      <Badge>规则计算</Badge>
+    </div>
+    <div className="grid-2 evidence-grid">
+      <article className="rule-card evidence-block"><strong>入选理由</strong>
+        {(candidate.reasons?.length ? candidate.reasons : ['满足当前策略筛选条件']).map((reason, i) => <p className="card-copy" key={i}>{reason}</p>)}
+      </article>
+      <article className="rule-card evidence-block"><strong>风险与缺失数据</strong>
+        {risks.length ? risks.map((rule, i) => <p className="card-copy" key={i}>{String(rule.indicator_name || rule.indicator_id)}：{String(rule.reason || (rule.missing ? '缺少数据' : '命中风险条件'))}</p>) : <p className="card-copy">本次已启用的规则未记录风险命中或数据缺失。</p>}
+      </article>
+    </div>
+    {rules.length > 0 && <details style={{ marginTop: 16 }}><summary>查看全部规则计算（{rules.length} 项）</summary>
+      {rules.map((rule, i) => <p className="card-copy" key={i}>{String(rule.indicator_name || rule.indicator_id)} · {String(rule.value ?? '无数据')} · {rule.matched ? '命中' : '未命中'}{rule.adjustment ? ` · 分值 ${rule.adjustment}` : ''}</p>)}
+    </details>}
+  </section>;
 }

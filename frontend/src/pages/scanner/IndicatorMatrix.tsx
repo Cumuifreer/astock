@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Star } from 'lucide-react';
 import type { IndicatorDefinition, RuleAction, StrategyConfig, StrategyRule } from '../../types';
 import { Badge } from '../../design/Badge';
 import { Select } from '../../design/Select';
 import { Switch } from '../../design/Switch';
+import { Button } from '../../design/Button';
 import {
   defaultValueForIndicator,
   indicatorParameterKeys,
@@ -41,10 +42,21 @@ const alwaysOnKeys = new Set(['candidate_limit', 'sort_by', 'analysis_mode', 'si
 
 export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchRule, onPatchConfig }: IndicatorMatrixProps) {
   const parameterByKey = useMemo(() => buildParameterMap(indicators), [indicators]);
-  const displayIndicators = useMemo(() => dedupeIndicators(indicators), [indicators]);
-  const groups = useMemo(() => groupIndicators(displayIndicators), [displayIndicators]);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
-  const expandedGroups = useMemo(() => new Set(groups.map(([group]) => group).filter((group) => !collapsedGroups.has(group))), [collapsedGroups, groups]);
+  const displayIndicators = useMemo(() => dedupeIndicators(indicators).filter(indicator =>
+    indicator.status !== 'planned' && !['planned', 'unavailable'].includes(indicator.data_status || '')
+  ), [indicators]);
+  const [search, setSearch] = useState('');
+  const [view, setView] = useState('all');
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    try { const saved = JSON.parse(localStorage.getItem('astock.indicator-favorites') || '[]'); return Array.isArray(saved) ? saved : []; }
+    catch { return []; }
+  });
+  const toggleFavorite = (id: string) => {
+    const next = favorites.includes(id) ? favorites.filter(value => value !== id) : [...favorites, id];
+    setFavorites(next);
+    try { localStorage.setItem('astock.indicator-favorites', JSON.stringify(next)); } catch { /* Preferences remain usable in memory. */ }
+  };
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set(sectionOrder));
   const ruleByIndicator = useMemo(() => {
     const map = new Map<string, StrategyRule>();
     rules.forEach((rule) => {
@@ -58,20 +70,35 @@ export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchR
     return parameterKeys.length ? parameterEnabled(config, parameterKeys, parameterByKey) : Boolean(rule?.enabled);
   });
 
+  const enabledIds = new Set(enabledIndicators.map(indicator => indicator.id));
+  const term = search.trim().toLowerCase();
+  const groups = groupIndicators(displayIndicators.filter(indicator =>
+    (!term || `${indicator.name} ${indicator.id} ${indicator.description || ''}`.toLowerCase().includes(term)) &&
+    (view !== 'enabled' || enabledIds.has(indicator.id)) &&
+    (view !== 'favorites' || favorites.includes(indicator.id))
+  ));
+
   return (
     <section className="surface pad indicator-matrix">
       <div className="section-heading">
         <div>
-          <h2>指标配置矩阵</h2>
+          <h2>指标库</h2>
           <p>直接开启需要的指标，并在卡片里填写条件、分值或风险阈值。</p>
         </div>
         <Badge tone="info">{displayIndicators.length} 个指标</Badge>
       </div>
+      <div className="data-toolbar">
+        <label className="search-box"><input aria-label="搜索指标" placeholder="搜索指标名称、说明，如 RPS、均线…" value={search} onChange={event => setSearch(event.target.value)} /></label>
+        <Select label="显示范围" value={view} onChange={setView} options={[{value: 'all', label: '全部可用'}, {value: 'enabled', label: '已启用'}, {value: 'favorites', label: '我的常用'}]} />
+        <Button variant="ghost" onClick={() => setCollapsedGroups(new Set())}>展开全部</Button>
+        <Button variant="ghost" onClick={() => setCollapsedGroups(new Set(sectionOrder))}>折叠全部</Button>
+      </div>
+      {groups.length === 0 && <p className="card-copy">没有匹配的指标。可以调整关键词或显示范围。</p>}
       <div className="indicator-active-strip" aria-label="已启用指标">
         <strong>已启用指标</strong>
         <div className="indicator-active-list">
           {enabledIndicators.length ? (
-            enabledIndicators.slice(0, 18).map((indicator) => (
+            enabledIndicators.map((indicator) => (
               <span className="indicator-active-chip" key={indicator.id}>
                 {indicator.name}
               </span>
@@ -83,7 +110,7 @@ export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchR
       </div>
       <div className="list-stack">
         {groups.map(([group, rows]) => {
-          const expanded = expandedGroups.has(group);
+          const expanded = Boolean(term) || view !== 'all' || !collapsedGroups.has(group);
           return (
             <section className="indicator-group" key={group}>
               <div className="indicator-group-header">
@@ -137,6 +164,9 @@ export function IndicatorMatrix({ indicators, rules, config, onAddRule, onPatchR
                             <strong>{indicator.name}</strong>
                             <small>{sectionForIndicator(indicator)}</small>
                           </div>
+                          <button type="button" className="button button-ghost" aria-label={`${favorites.includes(indicator.id) ? '取消常用' : '设为常用'} ${indicator.name}`} aria-pressed={favorites.includes(indicator.id)} onClick={() => toggleFavorite(indicator.id)}>
+                            <Star size={16} fill={favorites.includes(indicator.id) ? 'currentColor' : 'none'} />
+                          </button>
                           <Badge tone={statusTone(indicator)}>{statusLabel(indicator)}</Badge>
                         </div>
                         <div className="indicator-card-body">

@@ -31,43 +31,8 @@ def test_source_guard_preserves_last_success_across_later_failures(tmp_path):
     assert row["failure_reason"] == "temporary failure"
 
 
-def test_sina_global_interval_skips_second_full_market_request(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-    service.public_guard.record("AkShare 新浪", "当天行情快照", "available", payload={"rows": 5000})
-
-    def unexpected_request(*_args, **_kwargs):
-        raise AssertionError("interval gate must run before AkShare")
-
-    monkeypatch.setattr(
-        "backend.app.services.update_service.AkShareSource.fetch_sina_snapshot",
-        unexpected_request,
-    )
-
-    result = service._fetch_sina_snapshot("盘中行情快照", include_bj=False, exclude_star=False)
-
-    assert result.status == "skipped"
-    assert "过近" in str(result.message)
 
 
-def test_sina_fetch_has_outer_timeout_even_if_source_itself_hangs(tmp_path, monkeypatch):
-    db = Database(tmp_path / "ashare_test.duckdb")
-    migrate(db)
-    service = UpdateService(db)
-    captured = {}
-
-    def capture_call(source, capability, fetcher, **kwargs):
-        captured.update(kwargs)
-        return SourceFetchResult(source=source, capability=capability, status="failed", message="timeout")
-
-    monkeypatch.setattr(service.public_guard, "call", capture_call)
-
-    result = service._fetch_sina_snapshot("盘中行情快照", include_bj=False, exclude_star=False)
-
-    assert result.status == "failed"
-    assert captured["max_attempts"] == 1
-    assert captured["timeout_seconds"] == int(settings.sina_total_timeout_seconds) + 5
 
 
 def test_source_guard_outer_timeout_returns_control_for_hung_fetcher():

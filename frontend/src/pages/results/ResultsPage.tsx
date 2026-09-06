@@ -2,62 +2,54 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Candidate } from '../../types';
 import { getAnalysisReport, getAnalysisReports } from '../../api/strategy';
-import { addWatchlistItems } from '../../api/watchlist';
+import { addWatchlistItems, getWatchlistCodes } from '../../api/watchlist';
 import { Badge } from '../../design/Badge';
 import { Button } from '../../design/Button';
 import { EmptyState } from '../../design/EmptyState';
 import { LoadingState } from '../../design/LoadingState';
 import { Select } from '../../design/Select';
 import { useToast } from '../../design/Toast';
-import { useBootstrap } from '../../hooks/useBootstrap';
-import { queryKeys } from '../../api/queryKeys';
+import { ReviewDataStatus } from './ReviewDataStatus';
 import { formatDateTime } from '../../utils/date';
 import { CandidateTable } from './CandidateTable';
 import { CandidateEvidencePanel } from './CandidateEvidencePanel';
 import { StrictFunnelPanel } from './StrictFunnelPanel';
 
 type SortKey = 'signal_score' | 'rps20' | 'amount' | 'pct_chg' | 'turnover_rate' | 'risk';
-const latestRunKey = ['run', 'id'].join('_');
 
 export function ResultsPage() {
-  const bootstrap = useBootstrap();
+  const watchlist = useQuery({ queryKey: ['watchlist', 'codes'], queryFn: getWatchlistCodes });
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const reports = useQuery({ queryKey: ['result-reports'], queryFn: getAnalysisReports });
   const flattenedReports = useMemo(
-    () => (reports.data?.groups || []).flatMap((group) => group.reports),
+    () => (reports.data?.groups || []).flatMap((group) => group.reports).sort((a, b) => String(b.finished_at || b.started_at).localeCompare(String(a.finished_at || a.started_at))),
     [reports.data],
   );
   const [selectedRunId, setSelectedRunId] = useState<string>('');
   const [manualRunSelection, setManualRunSelection] = useState(false);
-  const [selected, setSelected] = useState<Candidate | null>(null);
+  const [selectedCode, setSelectedCode] = useState<string>('');
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('signal_score');
-  const latestRunId = flattenedReports[0]?.id || getLatestRunId(bootstrap.data?.candidates) || '';
+  const latestRunId = flattenedReports[0]?.id || '';
   const reportDetail = useQuery({
     queryKey: ['result-report', selectedRunId],
     queryFn: () => getAnalysisReport(selectedRunId),
     enabled: Boolean(selectedRunId),
   });
-  const selectedIsLatest = Boolean(selectedRunId && selectedRunId === latestRunId);
-  const bootstrapCandidateRows = getLatestRunId(bootstrap.data?.candidates) === selectedRunId ? bootstrap.data?.candidates?.rows : undefined;
-  const bootstrapLatestReport = bootstrap.data?.latest_analysis?.id === selectedRunId ? bootstrap.data.latest_analysis : null;
-  const activeCandidates = reportDetail.data?.candidates?.rows || (selectedIsLatest ? bootstrapCandidateRows : []) || [];
-  const activeReport = reportDetail.data?.analysis || (selectedIsLatest ? bootstrapLatestReport : null) || flattenedReports.find((report) => report.id === selectedRunId) || null;
-  const activeFunnel = reportDetail.data?.candidates?.funnel || activeReport?.funnel || (selectedIsLatest ? bootstrap.data?.candidates?.funnel : []) || [];
+  const activeCandidates = useMemo(() => reportDetail.data?.candidates?.rows || [], [reportDetail.data]);
+  const activeReport = reportDetail.data?.analysis || flattenedReports.find(report => report.id === selectedRunId) || null;
+  const activeFunnel = reportDetail.data?.candidates?.funnel || [];
   const activeReportDate = reportDateValue(activeReport);
   const activeStrategyName = strategyLabel(activeReport?.summary, activeReport?.config);
-  const observedCodes = useMemo(
-    () => new Set((bootstrap.data?.watchlist?.batches || []).flatMap((batch) => batch.items.map((item) => item.code))),
-    [bootstrap.data],
-  );
+  const observedCodes = useMemo(() => new Set(watchlist.data?.codes || []), [watchlist.data]);
   const filteredCandidates = useMemo(() => {
     const term = search.trim().toLowerCase();
     return [...activeCandidates]
       .filter((candidate) => !term || candidate.code.toLowerCase().includes(term) || candidate.name.toLowerCase().includes(term))
       .sort((left, right) => candidateSortValue(right, sortKey) - candidateSortValue(left, sortKey));
   }, [activeCandidates, search, sortKey]);
-  const selectedCandidate = selected || filteredCandidates[0] || null;
+  const selectedCandidate = filteredCandidates.find(candidate => candidate.code === selectedCode) || filteredCandidates[0] || null;
   const selectedInWatchlist = Boolean(selectedCandidate && observedCodes.has(selectedCandidate.code));
   const addSelectedMutation = useMutation({
     mutationFn: () =>
@@ -86,7 +78,7 @@ export function ResultsPage() {
         : Promise.resolve({}),
     onSuccess: () => {
       showToast('已加入观察池', 'success');
-      void queryClient.invalidateQueries({ queryKey: queryKeys.bootstrap() });
+      void queryClient.invalidateQueries({ queryKey: ['watchlist'] });
     },
     onError: (error) => showToast(error instanceof Error ? error.message : '加入观察池失败', 'danger'),
   });
@@ -97,10 +89,10 @@ export function ResultsPage() {
   }, [latestRunId, manualRunSelection]);
 
   useEffect(() => {
-    setSelected(filteredCandidates[0] || null);
-  }, [selectedRunId, filteredCandidates]);
+    setSelectedCode('');
+  }, [selectedRunId]);
 
-  if (bootstrap.isLoading) return <LoadingState label="读取候选结果" />;
+  if (reports.isLoading) return <LoadingState label="读取候选结果" />;
 
   const reportOptions = flattenedReports.length
     ? flattenedReports.map((report) => ({
@@ -112,6 +104,8 @@ export function ResultsPage() {
       : [{ value: 'none', label: '暂无历史报告' }];
   return (
     <div className="page-grid">
+      <ReviewDataStatus />
+      {reports.isError && <p role="alert">报告列表读取失败：{reports.error.message}</p>}
       <section className="surface pad">
         <div className="section-heading">
           <div>
@@ -120,7 +114,7 @@ export function ResultsPage() {
           </div>
           <div className="rule-chip-grid">
             <Badge tone="info">{filteredCandidates.length} 个候选</Badge>
-            <Badge>{reports.data?.groups?.length || 0} 组报告</Badge>
+            <Badge>{flattenedReports.length} 份报告</Badge>
           </div>
         </div>
         <div className="data-toolbar">
@@ -152,7 +146,7 @@ export function ResultsPage() {
           />
         </div>
         <div className="grid-4">
-          <Metric label="当前报告" value={activeReport ? `${formatDateTime(activeReport.finished_at || activeReport.started_at)} · ${activeStrategyName}` : '暂无'} />
+          <Metric label="行情交易日" value={activeReportDate || '旧报告未记录'} />
           <Metric label="运行时间" value={activeReport ? formatDateTime(activeReport.finished_at || activeReport.started_at) : '暂无'} />
           <Metric label="候选数量" value={String(activeCandidates.length)} />
           <Metric label="策略" value={activeStrategyName} />
@@ -174,20 +168,20 @@ export function ResultsPage() {
             {selectedInWatchlist ? '已在观察池' : '加入观察池'}
           </Button>
         </div>
-        {reportDetail.isLoading ? (
+        {reportDetail.isError ? <p role="alert">报告读取失败：{reportDetail.error.message}</p> : reportDetail.isLoading ? (
           <LoadingState label="读取历史报告" />
         ) : (
           <>
             <StrictFunnelPanel funnel={activeFunnel} analysisMode={activeReport?.config?.analysis_mode} />
             {filteredCandidates.length ? (
-              <CandidateTable candidates={filteredCandidates} observedCodes={observedCodes} selectedCode={selectedCandidate?.code} onSelect={setSelected} />
+              <CandidateTable candidates={filteredCandidates} observedCodes={observedCodes} selectedCode={selectedCandidate?.code} onSelect={candidate => setSelectedCode(candidate.code)} />
             ) : (
-              <EmptyState title="暂无候选" description="运行策略后，这里会展示候选表和结构化证据。" />
+              <EmptyState title="暂无候选" description={reportDetail.data?.candidates?.zero_reason || "运行策略后，这里会展示候选表和结构化证据。"} />
             )}
           </>
         )}
       </section>
-      <CandidateEvidencePanel candidate={selectedCandidate} runId={selectedRunId || latestRunId} />
+      <CandidateEvidencePanel candidate={selectedCandidate} />
     </div>
   );
 }
@@ -205,9 +199,8 @@ function reportLabel(report: { started_at?: string; finished_at?: string | null;
   return `${formatDateTime(report.finished_at || report.started_at)} · ${strategyLabel(report.summary, report.config)} · ${report.summary?.candidate_count ?? 0} 个候选`;
 }
 
-function reportDateValue(report?: { started_at?: string; finished_at?: string | null } | null): string | null {
-  const value = report?.finished_at || report?.started_at;
-  return value ? String(value).slice(0, 10) : null;
+function reportDateValue(report?: { summary?: Record<string, unknown> } | null): string | null {
+  return report?.summary?.trade_date ? String(report.summary.trade_date) : null;
 }
 
 function strategyLabel(summary: unknown, config: unknown): string {
@@ -222,8 +215,4 @@ function candidateSortValue(candidate: Candidate, sortKey: SortKey): number {
     return Number(candidate.metrics?.risk_score || flags || 0);
   }
   return Number(candidate[sortKey] || 0);
-}
-
-function getLatestRunId(bundle: unknown) {
-  return String((bundle as Record<string, unknown> | undefined)?.[latestRunKey] || '');
 }

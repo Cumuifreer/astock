@@ -4,7 +4,7 @@ import { queryKeys } from '../api/queryKeys';
 import type { TaskRun } from '../types';
 import { normalizeRows } from '../utils/metrics';
 
-const heavyTaskKinds = new Set(['update', 'analyze', 'backtest', 'intraday', 'intraday_strategy_tracking']);
+const heavyTaskKinds = new Set(['update', 'analyze']);
 const activeTaskStatuses = new Set(['queued', 'running']);
 const activeRefreshInterval = 2600;
 const standbyRefreshInterval = 60_000;

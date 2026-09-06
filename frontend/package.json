@@ -20,17 +20,19 @@
     "@tanstack/react-virtual": "latest",
     "@vitejs/plugin-react": "^4.3.4",
     "clsx": "latest",
-    "echarts": "latest",
-    "echarts-for-react": "latest",
-    "vite": "^6.0.7",
-    "typescript": "^5.7.2",
+    "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "lucide-react": "^0.468.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
     "zustand": "latest"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5"
+    "@types/react-dom": "^18.3.5",
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.0.1"
   }
 }
